@@ -808,3 +808,13 @@ Rezidentas gali:
 Prenumerata apima visus paskelbtus ACTUAL mėnesius ir atnaujinama po naujo grafiko publikavimo bei svarbių faktinio grafiko pakeitimų (apsikeitimų, emergency pakeitimų, repairs, dublio faktinio pakeitimo). Jei `Nustatymuose` įjungtas dublių rodymas kalendoriuje, atnaujinamas ir šis pasirinkimas.
 
 Privati kalendoriaus nuoroda turi ilgą atsitiktinį kodą ir turi būti saugoma kaip slaptažodis. Viešame URL nėra rezidento inicialų ar paskyros UUID.
+
+
+## V2.5.66 — keli vienu metu vykstantys apsikeitimai
+
+Rezidentas gali turėti kelis laukiančius apsikeitimus, jeigu jie liečia skirtingas pamainas. Ta pati konkreti pamaina vienu metu gali būti tik viename aktyviame apsikeitimo pasiūlyme. Jei pamaina jau pasiūlyta kitame swape, sistema parodo aiškią žinutę ir neleidžia sukurti antro konkuruojančio pasiūlymo. Tas pats principas taikomas dublių apsikeitimams. Savo dar nepriimtą pasiūlymą autorius gali atšaukti. Po pritaikyto swapo pamaina vėl gali būti keičiama pagal naują ACTUAL grafiką.
+
+
+## V2.5.67 — tikslus mėnesio krūvis ir Onko poros
+
+Mėnesio krūvio targetas yra privalomas ir tikslus (nuokrypis 0.0). Onko 08:00–17:00 trunka 9 val., todėl skaičiuojamas kaip 1.5 standartinės 6 val. pamainos. Kad targetas liktų sveikas ir tikslus, Onko SYSTEM grafike skiriamas lyginėmis poromis (0, 2, 4...). To paties mėnesio Onko skirtumas tarp rezidentų negali viršyti 2. Rezidentai, kurie šį mėnesį gauna mažiau Onko, turi prioritetą kitais mėnesiais pagal publikuotą cumulative Onko istoriją.

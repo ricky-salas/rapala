@@ -1,6 +1,6 @@
-# Radiology Scheduler Web V2.5.65 BETA
+# Radiology Scheduler Web V2.5.67 BETA
 
-> **Dabartinis užrakintas checkpointas: V2.5.65 FIRST-EXPOSURE + VACATION + AUTO CALENDAR FEEDS FINAL.**  
+> **Dabartinis užrakintas checkpointas: V2.5.67 EXACT WORKLOAD + ONKO PAIRS FINAL.**  
 > V2.5.65 išlaiko dviejų etapų generatorių (pirma darbo dienos / blokai, po to konkrečios darbo vietos), bet retoms edukacinėms pozicijoms pirmiausia siekia, kad visi tinkami rezidentai gautų bent po vieną ekspoziciją prieš skiriant išvengiamą antrą. Realiame 2026 m. rugsėjo 16 rezidentų regresiniame teste: HARD 0; SPS RO skirtumas 1; SPS UG 1; savaitgaliai 0; Onko RO 1; Centro UG 1; Vaikų UG 1; kiti pagrindiniai postai ≤2; quality gate PASS. Taip pat pridėtos patvirtintos atostogos su proporcingu darbo tikslo mažinimu, aiškesni pageidavimų termino priminimai ir automatiškai atnaujinama privati kelių mėnesių iCalendar prenumerata.
 
 Tai pirmoji bendro naudojimo beta versija su realiomis paskyromis ir Supabase duomenų baze.
@@ -137,6 +137,18 @@ Seniūnės Dubliai lange prieš rankinį dublio perėmimą ir aktyvavimą rodoma
 
 
 
+
+## V2.5.66 LOCKED — keli apsikeitimai, bet viena aktyvi užklausa vienai pamainai
+
+- Vienas rezidentas gali turėti kelis vienu metu laukiančius apsikeitimus, jei jie liečia skirtingas pamainas.
+- Ta pati konkreti normali pamaina negali būti įtraukta į du aktyvius pasiūlymus vienu metu.
+- Ta pati dublio vieta negali būti įtraukta į du laukiančius dublių apsikeitimus.
+- Jei antras pasiūlymas bando panaudoti jau rezervuotą pamainą, vartotojas gauna aiškią žinutę, o duomenų bazė transakciniu lygiu blokuoja konfliktą.
+- Pasiūlymo autorius gali atšaukti savo dar nepriimtą pasiūlymą.
+- Jau pritaikytas arba atmestas swapas neberezervuoja senos pamainos; ją galima vėliau keisti dar kartą pagal dabartinį ACTUAL grafiką.
+- Emergency faktiniai pakeitimai lieka atskiras audito srautas ir nėra laikomi konkuruojančiu būsimu pasiūlymu.
+- V2.5.65 solverio/fairness logika nepakeista.
+
 ## V2.5.65 LOCKED — pirmoji ekspozicija, atostogos ir automatinis kalendorius
 
 - Generatorius pirmiausia sprendžia, **kada** žmogus dirba, o darbo vietas paskirsto antrame etape.
@@ -164,3 +176,14 @@ Seniūnės Dubliai lange prieš rankinį dublio perėmimą ir aktyvavimą rodoma
 - Jei fairness paieška baigiasi timeout be patvirtinto tinkamo sprendinio, generavimas baigiasi aiškia žinute ir nelygus SYSTEM grafikas nepateikiamas publikavimui.
 - SPS / kitų postų LYGYBĖ saugo mėnesio kiekį, bet konkrečios datos lieka lanksčios. Todėl SOFT laisvadienis gali būti įvykdytas perkeliant lygiavertę pamainą kitam tinkamam rezidentui ar kitai dienai, jei bendras pasiskirstymas išlieka toks pat lygus.
 - Naujos Supabase migracijos nereikia.
+
+
+## V2.5.67 LOCKED — tikslus mėnesio krūvis + Onko poros
+
+- Kiekvieno rezidento apskaičiuotas mėnesio workload targetas yra ABSOLIUTUS: leidžiamas SYSTEM nuokrypis = 0.0.
+- Onko 08:00–17:00 = 9 h = 1.5 standartinės 6 h pamainos.
+- Todėl individualus Onko skaičius SYSTEM grafike yra lyginis: 0, 2, 4...
+- Onko mėnesio spread tarp rezidentų negali viršyti 2.
+- Jei vieną mėnesį dalis rezidentų gauna 0, o kiti 2, kitą mėnesį mažiau Onko turintys gauna cumulative catch-up prioritetą.
+- Sparse first-exposure logika lieka Centro UG / Vaikų UG ir kitiems 1.0-unit postams, bet nebegali laužyti workload targeto dėl Onko.
+- 27.5 / 28.5 / 25.5 SYSTEM workload laikomas HARD ERROR ir negali būti publikuojamas.

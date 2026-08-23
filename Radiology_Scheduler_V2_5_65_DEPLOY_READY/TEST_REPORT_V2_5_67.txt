@@ -1,0 +1,68 @@
+Radiology Scheduler Web V2.5.67 — FINAL TEST REPORT
+==================================================
+
+Build label:
+2.5.67 EXACT WORKLOAD + ONKO PAIRS
+
+1) Python compile
+PASS
+- app.py
+- scheduler_engine.py
+- db.py
+- reminder_worker.py
+
+2) September 2026 / 16-resident exact-workload regression
+PASS
+- generated: YES
+- HARD errors: 0
+- ordinary resident target: 28 -> actual workload exactly 28.0 for every ordinary resident
+- G.M. target: 26 -> actual workload exactly 26.0
+- all workload_target_delta values: 0.0
+- Onko counts: only 0 or 2
+- Onko monthly spread: 2
+- SPS RO spread: 1
+- SPS UG spread: 1
+- Centro UG spread: 1
+- Vaikų UG spread: 1
+- CENTRO RO / ADC144 / ADC145 / Mamografija: <=2
+- solve stage: V2567_EXACT_WORKLOAD_ONKO_PAIRS_TWO_PHASE
+
+3) Longitudinal Onko catch-up regression
+PASS
+- seeded 5 residents with cumulative Onko=0 and 11 residents with cumulative Onko=2
+- all 5 lower-exposure residents received the next 2-Onko pair
+- current-month Onko spread remained 2
+- HARD errors: 0
+
+4) Vacation regression
+PASS
+- A.P. approved vacation 2026-09-07..11
+- adjusted target: 22
+- actual workload: exactly 22.0
+- workload delta: 0.0
+- assignments on vacation dates: 0
+- Onko spread: 2
+- HARD errors: 0
+
+5) Legacy V2.5.66 schedule rejection regression
+PASS
+- generated a V2.5.66 September schedule containing 27.5 / 28.5 / 26.5 workloads and odd Onko counts
+- V2.5.67 validator rejected it with HARD errors
+- example: 27.5 vs target 28 -> HARD ERROR
+- odd 1x Onko -> HARD ERROR
+- exact_workload_targets_passed: FALSE for legacy schedule
+- onko_even_pairs_passed: FALSE for legacy schedule
+
+6) V2.5.66 swap protection preservation
+PASS
+- db.py byte-identical to V2.5.66
+- V2.5.66 multi-swap conflict migration retained unchanged
+- no Supabase migration required for V2.5.67 workload/Onko engine change
+
+Constitution now enforced
+-------------------------
+- SYSTEM monthly workload target deviation allowed: 0.0
+- Onko = 1.5 workload units
+- individual Onko count: even only (0,2,4...)
+- monthly Onko spread: <=2
+- cumulative published Onko history selects catch-up priority in following months

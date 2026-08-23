@@ -558,3 +558,13 @@ A resident can:
 The subscription contains all published ACTUAL months and is refreshed after a new publication and important ACTUAL changes (normal swaps, emergency changes, repairs, and actual backup changes). Changing the setting that includes backups in the personal calendar refreshes the feed as well.
 
 The private calendar URL contains a long random bearer token and must be treated like a password. Resident initials and the account UUID are not exposed in the public feed path.
+
+
+## V2.5.66 — multiple simultaneous swaps
+
+A resident may have several pending swap requests when they involve different shifts. The same concrete shift may be part of only one active future swap offer at a time. If a shift is already reserved by another pending offer, the system shows a clear message and refuses the competing request. The same rule applies to backup-duty swaps. The requester may cancel their own still-pending offer. After a swap is applied, the resulting ACTUAL shift may be swapped again later.
+
+
+## V2.5.67 — exact monthly workload and Onko pairs
+
+The calculated monthly workload target is mandatory and exact (allowed SYSTEM deviation 0.0). Onko 08:00–17:00 lasts 9 hours and therefore counts as 1.5 standard 6-hour shifts. To preserve an integer exact target, SYSTEM assigns Onko in even pairs (0, 2, 4...). The monthly Onko spread between residents may not exceed 2. Residents who receive fewer Onko exposures this month receive catch-up priority in later months using the published cumulative Onko history.

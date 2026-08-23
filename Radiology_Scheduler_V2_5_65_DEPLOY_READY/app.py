@@ -40,7 +40,7 @@ from scheduler_engine import (
 )
 import db
 
-APP_VERSION = "2.5.65 FIRST-EXPOSURE + VACATION + AUTO CALENDAR FEEDS"
+APP_VERSION = "2.5.67 EXACT WORKLOAD + ONKO PAIRS"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "G.M."
 DEFAULT_SUPABASE_URL = "https://gqdlwhjgwqmuoolybusy.supabase.co"
@@ -183,6 +183,28 @@ TR["EN"].update({
     "swap_note":"Voluntary swaps change only the ACTUAL schedule. Each affected resident sees a consequence table before consent. The swap is blocked by ABSOLUTE/operational and labour-time guardrails: overlap, approved absence, >12h/day, <11h rest, >6 workdays/7d or the active swap hard cap (up to 60h/7d). New 12h doubles, >40/>48h load, six-day streaks, post-double recovery patterns and self-overridden Resident-HARD requests are ACK warnings. SYSTEM fairness remains frozen.",
     "labour_hard_summary":"Generation: ≤12h/day; ≥11h between workdays; at least 1 fully free day per rolling 7d; ≤48 known hours/7d; target ~40h/7d; after 2 consecutive doubles the next day is PM-only or off. Post-publication voluntary swaps use a separate consequence + ACK mode: >48h is not an automatic blocker, while >12h/day, <11h rest, >6 workdays/7d, the active swap hard cap and ABSOLUTE/overlap/coverage remain blockers.",
     "fairness_hierarchy_intro":"During generation, absolute safety/work rules come first. SPS RO, SPS UG and weekends are then distributed as evenly as possible, followed by resident required unavailability, rest/workload protection and other preferences. After publication, voluntary swaps use a separate consequence table and explicit acknowledgement.",
+})
+
+# V2.5.66 — multiple swaps are allowed, but one concrete shift can have only
+# one active future offer at a time. Plain-language UX; DB trigger is the
+# authoritative concurrency guard.
+TR["LT"].update({
+    "swap_shift_busy":"Ši pamaina jau įtraukta į kitą laukiantį apsikeitimą. Galite turėti kelis apsikeitimus vienu metu, tačiau kiekviena konkreti pamaina gali būti tik viename aktyviame pasiūlyme. Pirmiausia užbaikite arba atšaukite esamą pasiūlymą.",
+    "backup_swap_shift_busy":"Šis dublio slotas jau įtrauktas į kitą laukiantį dublių apsikeitimą. Pasirinkite kitą slotą arba pirmiausia atšaukite / užbaikite esamą pasiūlymą.",
+    "my_outgoing_swaps":"Mano laukiantys pasiūlymai",
+    "cancel_my_swap":"ATŠAUKTI MANO PASIŪLYMĄ",
+    "swap_cancelled":"Apsikeitimo pasiūlymas atšauktas.",
+    "swap_cancel_failed":"Šio pasiūlymo atšaukti nepavyko — jis galėjo būti ką tik priimtas arba pakeistas.",
+    "multiple_swap_help":"Galite turėti kelis aktyvius apsikeitimus, jei jie liečia skirtingas pamainas. Ta pati konkreti pamaina vienu metu gali būti tik viename aktyviame pasiūlyme.",
+})
+TR["EN"].update({
+    "swap_shift_busy":"This shift is already part of another pending swap. You may have several swaps at the same time, but each concrete shift can be in only one active offer. Finish or cancel the existing offer first.",
+    "backup_swap_shift_busy":"This backup duty is already part of another pending backup swap. Choose another duty or finish/cancel the existing offer first.",
+    "my_outgoing_swaps":"My pending offers",
+    "cancel_my_swap":"CANCEL MY OFFER",
+    "swap_cancelled":"Swap offer cancelled.",
+    "swap_cancel_failed":"This offer could not be cancelled — it may already have been accepted or changed.",
+    "multiple_swap_help":"You may have several active swaps when they involve different shifts. The same concrete shift can be in only one active offer at a time.",
 })
 
 
@@ -1584,7 +1606,7 @@ def build_ics(y,m,result,initials):
     calname=f"{name} — Radiologija" if lang=="LT" else f"{name} — Radiology"
     lines=[
         "BEGIN:VCALENDAR","VERSION:2.0",
-        "PRODID:-//Radiology Scheduler//V2.5.65//EN",
+        "PRODID:-//Radiology Scheduler//V2.5.67//EN",
         "CALSCALE:GREGORIAN","METHOD:PUBLISH",
         f"X-WR-CALNAME:{ics_escape(calname)}",
         "X-WR-TIMEZONE:Europe/Vilnius",
@@ -1678,7 +1700,7 @@ def build_calendar_subscription_ics(initials, published_rows=None):
     calname=f"{name} — Radiologija" if cal_lang=="LT" else f"{name} — Radiology"
     lines=[
         "BEGIN:VCALENDAR","VERSION:2.0",
-        "PRODID:-//Radiology Scheduler//V2.5.65//EN",
+        "PRODID:-//Radiology Scheduler//V2.5.67//EN",
         "CALSCALE:GREGORIAN","METHOD:PUBLISH",
         f"X-WR-CALNAME:{ics_escape(calname)}",
         "X-WR-TIMEZONE:Europe/Vilnius",
@@ -3531,6 +3553,9 @@ with tabs[pos]:
         return SWAP_META_PREFIX+json.dumps(meta,ensure_ascii=False,separators=(",",":"))
     def _impact_acks(meta):
         return {str(k):str(v) for k,v in ((meta or {}).get("impact_ack") or {}).items()}
+    def _is_swap_slot_conflict(exc):
+        msg=str(exc or "")
+        return "SWAP_SLOT_ALREADY_PENDING" in msg or "BACKUP_SWAP_SLOT_ALREADY_PENDING" in msg
     def _impact_rows(stats,initials):
         return list((((stats or {}).get("global",{}) or {}).get("swap_warning_rows") or {}).get(initials,[]) or [])
     def _render_impact_table(stats,initials,title=None):
@@ -3550,7 +3575,7 @@ with tabs[pos]:
         } for r in rows])
         st.dataframe(df,use_container_width=True,hide_index=True)
 
-    st.subheader(tr("swap_title")); st.write(tr("swap_note")); currentp=db.load_schedule(year,month,"current")
+    st.subheader(tr("swap_title")); st.write(tr("swap_note")); st.caption(tr("multiple_swap_help")); currentp=db.load_schedule(year,month,"current")
     if not currentp: st.info(tr("not_published"))
     elif not resident_ok: st.error(tr("bad_pin"))
     else:
@@ -3591,10 +3616,29 @@ with tabs[pos]:
                 meta={"phase":"pending","impact_ack":{}}
                 if my_fp and my_ack:
                     meta["impact_ack"][active_user]=str(my_fp)
-                db.create_swap_request(year,month,sa,sb,active_user,target_person,reason=_swap_meta_encode(meta))
-                st.success(tr("request_sent")); st.rerun()
+                try:
+                    db.create_swap_request(year,month,sa,sb,active_user,target_person,reason=_swap_meta_encode(meta))
+                    st.success(tr("request_sent")); st.rerun()
+                except Exception as exc:
+                    if _is_swap_slot_conflict(exc):
+                        st.warning(tr("swap_shift_busy"))
+                    else:
+                        st.error(tr("swap_preview_invalid").format(reason=("Nepavyko išsaugoti pasiūlymo." if lang=="LT" else "Could not save the offer.")))
 
         reqs=db.list_swap_requests(year,month,active_user)
+        outgoing=[r for r in reqs if r["person_a"]==active_user and r["status"]=="pending" and _swap_meta_decode(r.get("reason")).get("kind")!="emergency_actual"]
+        if outgoing:
+            st.markdown(f"### {tr('my_outgoing_swaps')}")
+            for r in outgoing:
+                oc1,oc2=st.columns([4,1])
+                with oc1:
+                    st.write(f"{r['person_a']} → {r['person_b']} · #{r['slot_a']} ↔ #{r['slot_b']}")
+                with oc2:
+                    if st.button(tr("cancel_my_swap"),key=f"cancel_swap_{r['id']}",use_container_width=True):
+                        try:
+                            db.cancel_swap_request(r["id"]); st.success(tr("swap_cancelled")); st.rerun()
+                        except Exception:
+                            st.error(tr("swap_cancel_failed"))
         incoming=[r for r in reqs if r["person_b"]==active_user and r["status"]=="pending"]
         st.markdown(f"### {tr('incoming')}")
         for r in incoming:
@@ -3625,8 +3669,12 @@ with tabs[pos]:
                     if target_fp and target_ack:
                         meta.setdefault("impact_ack",{})[active_user]=str(target_fp)
                     meta["phase"]="accepted_pending_senior_apply"
-                    db.update_swap_request(r["id"],"approved",_swap_meta_encode(meta))
-                    st.success(tr("accepted_pending")); st.rerun()
+                    try:
+                        db.update_swap_request(r["id"],"approved",_swap_meta_encode(meta))
+                        st.success(tr("accepted_pending")); st.rerun()
+                    except Exception as exc:
+                        if _is_swap_slot_conflict(exc): st.warning(tr("swap_shift_busy"))
+                        else: st.error(tr("swap_finalize_failed"))
             with c2:
                 if st.button(tr("reject"),key=f"rj{r['id']}",use_container_width=True):
                     db.update_swap_request(r["id"],"rejected","declined")
@@ -3645,8 +3693,26 @@ with tabs[pos]:
             with bb: other_br=st.selectbox(tr("their_backup_duty"),other_b,format_func=blabel,key="backup_swap_other")
             if st.button(tr("request_backup_swap"),key="request_backup_swap_btn"):
                 target=other_br.get("actual_backup") or other_br.get("planned_backup")
-                db.create_backup_swap_request(year,month,active_user,int(my_br["covered_slot"]),target,int(other_br["covered_slot"])); st.success(tr("backup_swap_sent")); st.rerun()
+                try:
+                    db.create_backup_swap_request(year,month,active_user,int(my_br["covered_slot"]),target,int(other_br["covered_slot"]))
+                    st.success(tr("backup_swap_sent")); st.rerun()
+                except Exception as exc:
+                    if _is_swap_slot_conflict(exc): st.warning(tr("backup_swap_shift_busy"))
+                    else: st.error(tr("backup_swap_invalid"))
         breqs=db.list_backup_swap_requests(year,month,None if senior_mode else active_user)
+        backup_outgoing=[r for r in breqs if r.get("requester")==active_user and r.get("status")=="pending"]
+        if backup_outgoing:
+            st.markdown(f"#### {tr('my_outgoing_swaps')} · {tr('backup_swap_title')}")
+            for r in backup_outgoing:
+                boc1,boc2=st.columns([4,1])
+                with boc1:
+                    st.write(f"{r['requester']} → {r['target']} · #{r['requester_slot']} ↔ #{r['target_slot']}")
+                with boc2:
+                    if st.button(tr("cancel_my_swap"),key=f"cancel_backup_swap_{r['id']}",use_container_width=True):
+                        try:
+                            db.cancel_backup_swap_request(r["id"]); st.success(tr("swap_cancelled")); st.rerun()
+                        except Exception:
+                            st.error(tr("swap_cancel_failed"))
         for r in [x for x in breqs if x["target"]==active_user and x["status"]=="pending"]:
             st.write(f"{r['requester']} ↔ {r['target']} · #{r['requester_slot']} ↔ #{r['target_slot']}"); bc1,bc2=st.columns(2)
             with bc1:
@@ -7793,6 +7859,8 @@ with tabs[pos]:
             {"Tipas":"NEBLOKUOJA VOLUNTARY SWAP","Pavyzdžiai":"SYSTEM post spread, weekend/double fairness, Onko parity, mėnesio target equality, SOFT satisfaction","ACK":"SYSTEM baseline frozen; ACTUAL perskaičiuojamas"},
         ]),use_container_width=True,hide_index=True)
         st.caption("ACK nėra teisinė išimtis: jis tik patvirtina rezidentui parodytas pasekmes. Darbo laiko režimo ir apskaitinio laikotarpio teisinį taikymą galutinai nustato darbdavys.")
+        st.info("V2.5.66 — vienas rezidentas gali turėti kelis laukiančius apsikeitimus, jei jie liečia skirtingas pamainas. Ta pati konkreti pamaina vienu metu gali būti tik viename aktyviame pasiūlyme. Ta pati taisyklė taikoma dublių apsikeitimams. Savo dar nepriimtą pasiūlymą galima atšaukti. Jau pritaikytas ar atmestas pasiūlymas pamainos neberezervuoja.")
+        st.info("V2.5.67 — mėnesio darbo krūvio targetas yra ABSOLIUTUS: 28 reiškia tiksliai 28.0, 26 reiškia tiksliai 26.0. Onko diena = 1.5 pamainos, todėl Onko skiriamas poromis (0, 2, 4...) ir mėnesio skirtumas tarp rezidentų negali viršyti 2. Kas šį mėnesį gauna mažiau Onko, turi catch-up prioritetą kitais mėnesiais pagal publikuotą istoriją.")
 
         st.markdown("### Emergency — jau įvykusio pakeitimo registravimas")
         st.dataframe(pd.DataFrame([
@@ -7872,9 +7940,10 @@ with tabs[pos]:
             f"max. darbo dienų per 7 d.: {min(int(rule_value('max_workdays_rolling7')), int(FATIGUE_MAX_WORKDAYS_ROLLING7))}; "
             f"GENERATION HARD max. valandų per 7 d.: {min(float(rule_value('max_hours_rolling7')), float(FATIGUE_ROLLING7_HARD_CEILING_HOURS)):g}; voluntary swap >48 = ACK, absoliutus guardrail ≤{float(SWAP_ABSOLUTE_MAX_HOURS_ROLLING7):g}; "
             f"planavimo tikslas ~{float(WEEKLY_LOAD_SOFT_TARGET_HOURS):g} val./7 d. "
-            f"Onko lyginis skaičius: {'TAIP' if rule_value('onko_even_required') else 'NE'}; "
+            f"Mėnesio krūvio targetas: TIKSLUS HARD (leidžiamas nuokrypis 0.0). "
+            f"Onko: 1.5 pamainos, tik lyginės poros (0/2/4...), mėnesio skirtumas ≤2 + istorinis catch-up; "
             f"savaitgalio unikalumo taisyklė: {'TAIP' if rule_value('weekend_unique_required') else 'NE'}. "
-            f"Struktūrinis guardrail: SPS RO / SPS UG / savaitgaliai raw 0–1; kiti postai normaliai ≤2, exceptional ≤3 + post debt. "
+            f"Struktūrinis guardrail: SPS RO / SPS UG / savaitgaliai raw 0–1; Onko ≤2; kiti postai normaliai ≤2, exceptional ≤3 + post debt. "
             f"Kiti pagrindiniai burden spread baseline +{int(rule_value('general_guardrail_tolerance'))}. "
             f"Pageidavimų pateikimo terminas: ankstesnio mėnesio {int(rule_value('deadline_day'))} d."
         )
@@ -7887,9 +7956,10 @@ with tabs[pos]:
             f"max workdays/7d: {min(int(rule_value('max_workdays_rolling7')), int(FATIGUE_MAX_WORKDAYS_ROLLING7))}; "
             f"GENERATION HARD max hours/7d: {min(float(rule_value('max_hours_rolling7')), float(FATIGUE_ROLLING7_HARD_CEILING_HOURS)):g}; voluntary swap >48 = ACK, absolute guardrail ≤{float(SWAP_ABSOLUTE_MAX_HOURS_ROLLING7):g}; "
             f"planning target ~{float(WEEKLY_LOAD_SOFT_TARGET_HOURS):g}h/7d. "
-            f"Even Onko count: {'YES' if rule_value('onko_even_required') else 'NO'}; "
+            f"Monthly workload target: EXACT HARD (allowed deviation 0.0). "
+            f"Onko: 1.5 shift units, even pairs only (0/2/4...), monthly spread ≤2 + historical catch-up; "
             f"weekend uniqueness: {'YES' if rule_value('weekend_unique_required') else 'NO'}. "
-            f"Structural guardrail: SPS RO / SPS UG / weekends raw 0–1; other posts normally ≤2, exceptional ≤3 + post debt. "
+            f"Structural guardrail: SPS RO / SPS UG / weekends raw 0–1; Onko ≤2; other posts normally ≤2, exceptional ≤3 + post debt. "
             f"Other main burden spreads baseline +{int(rule_value('general_guardrail_tolerance'))}. "
             f"Preference deadline: day {int(rule_value('deadline_day'))} of the preceding month."
         )
@@ -7920,6 +7990,8 @@ with tabs[pos]:
             "V2.5.65 — WORKDAYS FIRST, THEN WORKPLACES. The engine first chooses when each resident works while protecting Resident-HARD, recovery and personal requests. It then assigns workplaces. When a post has relatively few monthly slots but enough for at least one exposure per resident, the system gives everyone a first exposure before anyone moves to the second where mathematically feasible. For example, 22 Onko / Centro UG / pediatric US slots across 16 residents should normally distribute 1–2 rather than 0–2. SPS RO, SPS UG and weekends remain as equal as possible. A specific SPS date is not locked to one resident if the same monthly amount can be preserved with another placement that honors the resident's request. Approved vacation is an absolute no-work period and proportionally lowers that resident's monthly workload target. "
             "V2.5.63 FAIRNESS FAILSAFE. A SYSTEM draft is returned only after the solver verifies an acceptably even distribution: SPS RO, SPS UG and weekends normally differ by no more than one assignment between residents; other main workplaces normally differ by no more than two. A timeout is not treated as proof that a wider imbalance is necessary. Concrete SPS dates remain flexible, so personal requests may still be honored whenever the same overall equality can be preserved."
         )
+        st.info("V2.5.66 — a resident may have several pending swaps when they involve different shifts. The same concrete shift may be in only one active future offer at a time; the same rule applies to backup swaps. A requester may cancel their own still-pending offer. Applied/rejected offers release the shift.")
+        st.info("V2.5.67 — the calculated monthly workload target is ABSOLUTE: 28 means exactly 28.0 and 26 means exactly 26.0. One Onko day = 1.5 shift units, so Onko is assigned in pairs (0, 2, 4...) with a monthly resident spread no greater than 2. Residents with fewer Onko exposures receive catch-up priority in later months using published history.")
         workflow_rows=[
             {"Stage":"0. Request pre-check","System":"Freezes ORIGINAL request ledger and removes non-whitelisted/gaming SOFT signals.","Evaluates":"Resident-HARD, exact SOFT dates, recovery/month-shape; generic weekday/weekend patterns and station avoidance are excluded.","Principle":"More raw requests do not buy more priority."},
             {"Stage":"1. TRUE ABSOLUTE HARD","System":"Finds only safe/physically feasible schedules; generation applies <=48h/7d.","Evaluates":"Rest, hours, approved absence, coverage/overlap, etc.","Principle":"Generation is strict. Voluntary swaps convert >48h and recovery-pattern issues into ACK warnings, while >12h/day, <11h rest, >6 workdays/7d, >60h/7d and ABSOLUTE/overlap/coverage remain hard blockers."},
@@ -7984,7 +8056,7 @@ with tabs[pos]:
 
                 st.markdown("#### Struktūrinės taisyklės" if lang=="LT" else "#### Structural rules")
                 s1,s2=st.columns(2)
-                onko_v=s1.toggle("Onko even required",value=bool(active_cfg["onko_even_required"]))
+                onko_v=s1.toggle("Onko even pairs — exact workload HARD",value=True,disabled=True,help=("V2.5.67: Onko = 1.5 pamainos, todėl lyginis skaičius yra privalomas, kad mėnesio targetas liktų tikslus." if lang=="LT" else "V2.5.67: Onko = 1.5 shift units, so an even count is mandatory to preserve the exact monthly target."))
                 weekend_unique_v=s2.toggle("Weekend uniqueness required",value=bool(active_cfg["weekend_unique_required"]))
                 weekend_cap_v=st.number_input("Weekend max assignments/resident",1,4,int(active_cfg["weekend_max_assignments_per_resident"]),1)
 
@@ -8016,7 +8088,7 @@ with tabs[pos]:
                     "max_workdays_rolling7":maxdays7_v,
                     "max_hours_rolling7":maxhours7_v,
                     "swap_max_hours_rolling7":swap_cap_v,
-                    "onko_even_required":onko_v,
+                    "onko_even_required":True,
                     "weekend_unique_required":weekend_unique_v,
                     "weekend_max_assignments_per_resident":weekend_cap_v,
                     "backup_weekends":backup_weekends_v,

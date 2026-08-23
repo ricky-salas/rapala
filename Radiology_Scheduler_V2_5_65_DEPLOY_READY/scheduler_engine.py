@@ -29,7 +29,7 @@ DEFAULT_RULE_PROFILE = {
     "max_hours_rolling7": 48.0,
     "swap_max_hours_rolling7": 60.0,
     "onko_even_required": True,
-    "onko_first_exposure_required": True,
+    "onko_first_exposure_required": False,
     "weekend_unique_required": True,
     "weekend_max_assignments_per_resident": 1,
     "backup_weekends": True,
@@ -107,11 +107,14 @@ def validate_rule_profile(raw: Optional[dict] = None) -> Tuple[dict, List[str]]:
                 errors.append(f"{key}: must be between {lo} and {hi}")
         out[key] = value
 
-    # V2.5.65: educational first-exposure mode supersedes the legacy Onko-even rule.
-    # Onko is a 1.5-unit post; allowing 1–2 exposures may require a ±0.5 monthly
-    # workload deviation for some residents, balanced across the group.
-    if bool(out.get("onko_first_exposure_required", True)):
-        out["onko_even_required"] = False
+    # V2.5.67 constitution: the calculated monthly workload target is exact HARD.
+    # Onko is a 9h / 1.5-unit FULL shift, so odd individual Onko counts would force
+    # a half-unit workload deviation. Therefore Onko is allocated in pairs (0,2,4...)
+    # and its monthly resident-to-resident spread is capped at 2. The old sparse
+    # first-exposure override is kept only as a backwards-compatible profile key
+    # and is forcibly disabled here.
+    out["onko_first_exposure_required"] = False
+    out["onko_even_required"] = True
 
     if out["target_shift_hours"] <= 0:
         errors.append("target_shift_hours must be > 0")
@@ -1429,11 +1432,19 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     """Phase 1: choose dates/AM/PM/FULL without deciding weekday post labels."""
     n=len(people); ndays=calendar.monthrange(year,month)[1]
     mb=_V2564FastMB(); am={}; pm={}; full={}; work={}; dbl={}; rh_by_person={pi:[] for pi in range(n)}
+    # V2.5.67 longitudinal Onko catch-up: residents who have fewer published
+    # Onko exposures enter the next month with priority for the next 2-shift pair.
+    # Use prior-count DIFFERENCE from the cohort minimum so the coefficient does
+    # not grow unbounded over years; Resident-HARD remains lexically dominant.
+    prior_onko=[float(getattr(p,"prior_rotation_counts",{}).get("Onko RO",0) or 0) for p in people]
+    min_prior_onko=min(prior_onko) if prior_onko else 0.0
+    onko_catchup_unit=max(5000.0,float(rule_value("cumulative_post_catchup_weight"))*400.0)
     for pi,p in enumerate(people):
+        onko_prior_penalty=max(0.0,prior_onko[pi]-min_prior_onko)*onko_catchup_unit
         for d in range(1,ndays+1):
             am[(pi,d)]=mb.var(cost=(((pi+1)*31+d*7)%97)*1e-7)
             pm[(pi,d)]=mb.var(cost=(((pi+1)*29+d*11)%89)*1e-7)
-            full[(pi,d)]=mb.var(cost=(((pi+1)*23+d*13)%83)*1e-7)
+            full[(pi,d)]=mb.var(cost=onko_prior_penalty+(((pi+1)*23+d*13)%83)*1e-7)
             work[(pi,d)]=mb.var()
             dbl[(pi,d)]=mb.var(cost=15.0 if p.avoid_doubles else 3.0)
     # Coverage by time block; exact post labels are deferred to phase 2.
@@ -1458,39 +1469,24 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             if absolute_assignment_blocked(p,d,"FULL"): mb.constraint({full[(pi,d)]:1.0},0.0,0.0)
         co={}
         for d in range(1,ndays+1): co[am[(pi,d)]]=2.0; co[pm[(pi,d)]]=2.0; co[full[(pi,d)]]=3.0
-        if bool(rule_value("onko_first_exposure_required")):
-            # One Onko assignment contributes 1.5 normal shift-units. Requiring a
-            # first educational exposure for everyone makes an exact whole-unit
-            # target arithmetically impossible for residents with an odd Onko
-            # count. Allow at most ±0.5 unit; the fixed global coverage keeps the
-            # group total exact, while a tiny objective keeps deviations minimal.
-            dev_plus=mb.var(0,1,True,cost=250.0)
-            dev_minus=mb.var(0,1,True,cost=250.0)
-            co[dev_plus]=-1.0; co[dev_minus]=1.0
-            mb.constraint(co,targets[p.initials]*2,targets[p.initials]*2)
-        else:
-            mb.constraint(co,targets[p.initials]*2,targets[p.initials]*2)
-            if bool(rule_value("onko_even_required")):
-                k=mb.var(0,max(1,ndays//2),True)
-                eco={k:-2.0}; eco.update({full[(pi,d)]:1.0 for d in range(1,ndays+1)})
-                mb.constraint(eco,0.0,0.0)
+        # V2.5.67 ABSOLUTE workload equality. x2 arithmetic keeps 1.5-unit Onko
+        # integral, but no +/-0.5 escape is permitted.
+        mb.constraint(co,targets[p.initials]*2,targets[p.initials]*2)
+        # One Onko day = 1.5 units. Even individual counts keep an integer target
+        # reachable: 0,2,4... Onko days only.
+        k=mb.var(0,max(1,ndays//2),True)
+        eco={k:-2.0}; eco.update({full[(pi,d)]:1.0 for d in range(1,ndays+1)})
+        mb.constraint(eco,0.0,0.0)
 
-    onko_total=sum(1 for ss in slots if ss.department=="Onko RO centre" and not ss.blocked and ss.idx not in fixed_gaps)
-    if bool(rule_value("onko_first_exposure_required")) and onko_total>0:
-        olo=onko_total//max(1,n); ohi=int(math.ceil(onko_total/max(1,n)))
-        # For the current PGY1 structure this is normally 1–2. More generally,
-        # every resident receives the floor entitlement before anyone moves above
-        # the ceiling. This is the sparse-post first-exposure rule.
-        for pi in range(n):
-            mb.constraint({full[(pi,d)]:1.0 for d in range(1,ndays+1)},float(olo),float(ohi))
-    else:
-        # Legacy Onko corridor when first-exposure mode is disabled.
-        for i in range(n):
-            for j in range(i+1,n):
-                co={}
-                for d in range(1,ndays+1):
-                    co[full[(i,d)]]=1.0; co[full[(j,d)]]=co.get(full[(j,d)],0.0)-1.0
-                mb.constraint(co,-2.0,2.0)
+    # V2.5.67 Onko monthly fairness: pair allocation permits a spread of 2, never
+    # more. With 22 slots / 16 residents this naturally gives 11 residents x2 and
+    # 5 residents x0. Prior published Onko counts above determine who catches up.
+    for i in range(n):
+        for j in range(i+1,n):
+            co={}
+            for d in range(1,ndays+1):
+                co[full[(i,d)]]=1.0; co[full[(j,d)]]=co.get(full[(j,d)],0.0)-1.0
+            mb.constraint(co,-2.0,2.0)
     max_days7=min(int(rule_value("max_workdays_rolling7")),int(FATIGUE_MAX_WORKDAYS_ROLLING7))
     max_hours7=min(float(rule_value("max_hours_rolling7")),float(FATIGUE_ROLLING7_HARD_CEILING_HOURS))
     for pi,p in enumerate(people):
@@ -1668,13 +1664,13 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "WEEKENDS":int(g.get("weekend_monthly_spread",999) or 0),
     }
     noncritical={cat:int(rotation_spreads.get(cat,0) or 0) for cat in ROTATION_CATEGORIES if cat not in ("SPS RO","SPS UG")}
-    # Onko is solved in phase 1 and remains an ordinary <=2 category in the normal path.
+    # Onko is solved in phase 1 as even pairs with an absolute monthly spread <=2.
     worst_noncritical=max(list(noncritical.values())+[0])
     quality=bool(max(critical_spreads.values())<=int(critical_cap) and worst_noncritical<=max(2,int(noncritical_cap)))
     if not quality: return None
     g.update({
-        "solve_stage":"V2565_SPARSE_FIRST_EXPOSURE_TWO_PHASE",
-        "solver_strategy":"TWO_PHASE_SPARSE_FIRST_EXPOSURE",
+        "solve_stage":"V2567_EXACT_WORKLOAD_ONKO_PAIRS_TWO_PHASE",
+        "solver_strategy":"TWO_PHASE_EXACT_WORKLOAD_ONKO_PAIRS",
         "critical_structural_spreads":critical_spreads,
         "critical_worst_spread":max(critical_spreads.values()),
         "critical_01_status":"FOUND_TWO_PHASE_0_1" if int(critical_cap)<=1 else "PROVEN_NEEDS_2_TWO_PHASE",
@@ -1690,12 +1686,15 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "resident_hard_current_max_lock":int(pattern.get("resident_hard_max_loss",0)),
         "post_assignment_search_log":post_log,
         "fixed_gap_slot_ids":sorted(int(x) for x in fixed_gaps),
-        "count_date_separation":"Monthly post counts are equalized first; sparse posts give everyone a first exposure when mathematically feasible; concrete dates remain flexible for personal requests.",
+        "count_date_separation":"Monthly workload targets are exact HARD. Onko is assigned in even pairs with monthly spread <=2 and cumulative catch-up across published months; other sparse posts keep first-exposure fairness when mathematically feasible.",
         "sparse_first_exposure_required":True,
-        "onko_first_exposure_required":bool(rule_value("onko_first_exposure_required")),
+        "onko_first_exposure_required":False,
+        "exact_workload_targets_required":True,
+        "onko_even_pairs_required":True,
+        "onko_monthly_spread_ceiling":2,
     })
     msg=(
-        "OK — fairness-first two-phase schedule. Darbo dienos ir pageidavimai pirmiausia suderinti atskirai nuo konkrečių postų; "
+        "OK — exact-workload fairness-first two-phase schedule. Mėnesio krūvio targetas kiekvienam rezidentui išlaikytas tiksliai; Onko skiriamas poromis; "
         f"SPS RO / SPS UG / savaitgalių skirtumas ≤ {critical_cap}, kitų pagrindinių postų skirtumas ≤ {noncritical_cap}."
     )
     obj=float(pattern.get("objective_value",0.0) or 0.0)+float(post_obj or 0.0)
@@ -3806,13 +3805,12 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
 
         workload_delta=float(d["workload"])-float(targets[p.initials])
         d["workload_target_delta"]=round(workload_delta,1)
-        allowed_delta=0.5 if bool(rule_value("onko_first_exposure_required")) else 0.0
-        if (not voluntary_swap_mode) and abs(workload_delta) > allowed_delta + 1e-9:
-            errors.append(f"{p.initials}: workload {d['workload']} differs from target {targets[p.initials]} by more than {allowed_delta:g}")
+        if (not voluntary_swap_mode) and abs(workload_delta) > 1e-9:
+            errors.append(f"{p.initials}: workload {d['workload']} must equal exact target {targets[p.initials]}")
 
         onko_n = sum(s.department == "Onko RO centre" for s in pslots)
-        if (not voluntary_swap_mode) and (not bool(rule_value("onko_first_exposure_required"))) and bool(rule_value("onko_even_required")) and onko_n % 2 != 0:
-            errors.append(f"{p.initials}: odd Onko count")
+        if (not voluntary_swap_mode) and onko_n % 2 != 0:
+            errors.append(f"{p.initials}: odd Onko count violates 1.5-unit exact-workload pairing")
 
         worked_days: Set[int] = set()
         weekday_days: Set[int] = set()
@@ -4523,6 +4521,11 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
         "global": {
             "hard_errors": len(errors),
             "errors": errors,
+            "exact_workload_targets_required": True,
+            "exact_workload_targets_passed": all(abs(float(v.get("workload_target_delta",0.0) or 0.0)) <= 1e-9 for v in pdata.values()),
+            "onko_even_pairs_required": True,
+            "onko_even_pairs_passed": all(int(v.get("rotation_counts",{}).get("Onko RO",0) or 0) % 2 == 0 for v in pdata.values()),
+            "onko_monthly_spread_ceiling": 2,
             "weekday_count": weekday_count(year, month),
             "base_target": standard_target(year, month),
             "weekly_load_model":"V2555_GENERATION_48H_RECOVERY_STRICT__VOLUNTARY_SWAP_12H_11H_6D_60H_REALITY_GUARD",
