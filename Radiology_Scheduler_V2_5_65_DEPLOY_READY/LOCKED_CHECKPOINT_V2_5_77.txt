@@ -1,0 +1,24 @@
+V2.5.77 FRIDAY + ALL-POST STRUCTURAL WATERFILL
+
+SYSTEM:
+- exact monthly workload HARD
+- Onko even 0/2/4... HARD
+- Onko monthly spread <=2
+- SPS RO spread <=1
+- SPS UG spread <=1
+- weekend exposure spread <=1
+- FRIDAY assignment spread <=1 HARD
+- all ordinary non-Onko posts target raw spread <=1
+- Friday preferences are SOFT and cannot break Friday raw 0-1
+- Phase 1 balances Friday work blocks
+- Phase 2 jointly water-fills all non-Onko post labels
+
+ACTUAL VOLUNTARY SWAPS:
+- may unbalance Friday exposure
+- may unbalance workplace exposure
+- SYSTEM fairness remains frozen
+- true safety/work-time HARD still blocks
+- exact workload + even Onko parity remain non-relaxable
+
+V2.5.76 privacy-safe resident summary preserved.
+No DB migration.

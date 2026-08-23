@@ -118,3 +118,16 @@ SYSTEM generatorius po darbo datų / AM-PM blokų parinkimo visus ne-Onko postų
 Jei 0–1 koridorius neturi sprendinio, sistema gali pereiti į 0–2, o po to 0–3 tik tada, kai ankstesnis siauresnis koridorius yra **matematiškai įrodytas neįmanomas**. Timeout nėra toks įrodymas.
 
 Po publikavimo savanoriški bilateraliniai ACTUAL swapai yra fairness-neutral. Jei abu rezidentai sutinka ir nėra tikro saugos / darbo-laiko / fizinio HARD pažeidimo, postų ekspozicijos, UG/Mamografijos kiekiai, diversity ar SYSTEM water-fill nėra swapo blokatoriai. SYSTEM fairness ir postų matrica lieka užšaldyti publikavimo momentu. V2.5.73 tikslus mėnesio workload ir lyginė Onko parity lieka neperžengiami.
+
+
+## V2.5.77 — PENKTADIENIŲ STRUKTŪRINIS WATER-FILL
+
+SYSTEM generatoriuje penktadieniai yra **struktūrinė HARD fairness taisyklė**. Suskaičiavus visus užpildomus penktadienio priskyrimus, kiekvieno rezidento penktadienių skaičius turi patekti į matematinį `floor(total/rezidentai)..ceil(total/rezidentai)` koridorių. Todėl raw max−min spread turi būti **0–1**.
+
+Pavyzdys: 72 penktadienio priskyrimai / 16 rezidentų = 4.5, todėl teisingas water-fill yra **8 rezidentai po 4 ir 8 rezidentai po 5**, o ne 2–8.
+
+Ši taisyklė taikoma **visiems** SYSTEM penktadienio priskyrimams, įskaitant pageidautas penktadienio datas. Pageidavimas yra SOFT ir negali pralaužti structural 0–1.
+
+Architektūra: Phase 1 subalansuoja darbo datas/blokus ir penktadienius; Phase 2 ant jau subalansuotų blokų kartu water-fill'ina visus ne-Onko postus. Taip penktadienio darbo perkėlimas kartu suteikia postų solveriui galimybę gerinti Mamografijos / ADC / UG / kitų postų matricą.
+
+Po publikavimo abipusis savanoriškas ACTUAL swapas gali išbalansuoti penktadienius ar postus, jei nepažeidžiami tikri saugos / darbo-laiko HARD reikalavimai ir V2.5.73 exact workload + Onko parity. SYSTEM fairness baseline lieka toks, kokį paskyrė algoritmas.

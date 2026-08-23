@@ -621,3 +621,14 @@ After work dates / AM-PM blocks are chosen, SYSTEM generation solves all non-Onk
 The model may widen to 0–2 and then 0–3 only after the tighter corridor is **mathematically proven infeasible**. A timeout is not proof of infeasibility.
 
 After publication, mutually accepted bilateral ACTUAL swaps are fairness-neutral. If the swap passes true safety/work-time/physical HARD checks, workplace exposure, US/Mammography counts, diversity and SYSTEM water-fill do not block it. SYSTEM fairness and the publication post matrix remain frozen. V2.5.73 exact monthly workload and even Onko parity remain non-relaxable.
+
+
+## V2.5.77 — STRUCTURAL FRIDAY WATER-FILL
+
+In SYSTEM generation, Friday exposure is a **structural HARD fairness rule**. After counting all Friday assignments that will be filled, every resident must fall inside the mathematical `floor(total/residents)..ceil(total/residents)` entitlement band. Raw max-min Friday spread must therefore be **0–1**.
+
+Example: 72 Friday assignments / 16 residents = 4.5, so the correct water-fill is **eight residents with 4 and eight residents with 5**, not a 2–8 distribution.
+
+All SYSTEM Friday assignments count, including explicitly preferred Friday dates. A Friday preference is SOFT and cannot break the structural 0–1 corridor.
+
+Architecture: Phase 1 water-fills work dates/blocks and Friday exposure; Phase 2 then jointly water-fills every non-Onko workplace on those balanced blocks. Post-publication mutually accepted ACTUAL swaps may unbalance Friday or workplace exposure while SYSTEM fairness remains frozen, provided true safety/work-time HARD rules and V2.5.73 exact workload + even Onko parity remain satisfied.

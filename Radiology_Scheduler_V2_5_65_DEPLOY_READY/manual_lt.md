@@ -67,7 +67,7 @@ Konkrečiam mėnesiui galima pažymėti:
 
 - **Negaliu dirbti** – privaloma taisyklė visai dienai, rytui arba popietei;
 - **Noriu laisvos** – minkštas pageidavimas konkrečioms datoms;
-- **Pageidauju dirbti** – pageidavimas konkrečioms datoms. Jei pasirinkta penktadienio ar savaitgalio data, tai laikoma aiškiu savanorišku nepopuliaraus darbo pasirinkimu: ji vykdoma prieš teisingumo balansavimą, jei nepažeidžiamos privalomos taisyklės ir poilsio sauga;
+- **Pageidauju dirbti** – pageidavimas konkrečioms datoms. Jei pasirinkta penktadienio ar savaitgalio data, tai yra SOFT savanoriškas pasirinkimas. Penktadienio pageidavimas vykdomas tik jei kartu išlaikomas SYSTEM penktadienių structural water-fill raw spread 0–1; po publikavimo abipusis ACTUAL swapas gali šį balansą pakeisti;
 - kiek RYTO ir / arba POPIETĖS poilsio kreditų norima panaudoti tam mėnesiui (bendra riba – 2 dieniniai kreditai per mėnesį);
 - papildomą komentarą.
 
@@ -251,8 +251,8 @@ Fairness **niekada nėra aukščiau už kietas taisykles**. V2.5.6 grafikas vert
 | Lygis | Ką sistema tikrina | Kaip interpretuoti |
 |---|---|---|
 | **1. Privalomų taisyklių atitiktis** | Teisinės, fizinės, prieinamumo ir poilsio saugos taisyklės | **Privaloma 0 klaidų.** Jei yra bent viena privalomos taisyklės klaida, grafiko skelbti negalima. |
-| **2. Savanoriškas nepopuliarus darbas** | Aiškiai pageidautą penktadienio ar savaitgalio darbo datą | **„Savanoriškas pasirinkimas dirbti nepopuliarią pamainą neturi bloginti teisingumo balanso ir turi būti vykdomas prioritetiškai, jei nepažeidžiami Darbo kodekso bei poilsio saugos reikalavimai.“** |
-| **3. Kaupiamasis teisingumas** | Sistemos paskirtą nesavanorišką nepopuliarų krūvį per mėnesius | Balansuojamas tik algoritminis krūvis; aiškiai savanoriškai pasirinktas penktadienis ar savaitgalis į šią naštą neįskaičiuojamas. |
+| **2. Savanoriškas nepopuliarus darbas** | Aiškiai pageidautą penktadienio ar savaitgalio darbo datą | **„Savanoriškas pageidavimas dirbti penktadienį vykdomas tik structural Friday raw spread 0–1 viduje; savaitgalio pageidavimas taip pat negali pralaužti aukštesnių SYSTEM struktūrinių taisyklių.“** |
+| **3. Kaupiamasis teisingumas** | Sistemos paskirtą nesavanorišką nepopuliarų krūvį per mėnesius | SYSTEM penktadienių struktūrinėje taisyklėje skaičiuojami VISI užpildyti penktadienio priskyrimai, net jei data buvo pageidauta. Po publikavimo savanoriški ACTUAL swapai SYSTEM istorijos neperrašo. |
 | **4. Mėnesio teisingumas** | Pasirinkto mėnesio sistemos paskirtą krūvį | Einamojo mėnesio balansas tvarkomas po savanoriškų nepopuliarių pasirinkimų. |
 | **5. Kiti pageidavimai** | Likusius individualius norus | Tenkinami maksimaliai, kai aukštesni lygiai leidžia. |
 | **4. Soft preferences / kosmetika** | Asmeninius norus, darbo stilių, išsklaidymą ir pan. | Optimizuojama tik tada, kai aukštesni lygiai leidžia. |
@@ -871,3 +871,16 @@ SYSTEM generatorius po darbo datų / AM-PM blokų parinkimo visus ne-Onko postų
 Jei 0–1 koridorius neturi sprendinio, sistema gali pereiti į 0–2, o po to 0–3 tik tada, kai ankstesnis siauresnis koridorius yra **matematiškai įrodytas neįmanomas**. Timeout nėra toks įrodymas.
 
 Po publikavimo savanoriški bilateraliniai ACTUAL swapai yra fairness-neutral. Jei abu rezidentai sutinka ir nėra tikro saugos / darbo-laiko / fizinio HARD pažeidimo, postų ekspozicijos, UG/Mamografijos kiekiai, diversity ar SYSTEM water-fill nėra swapo blokatoriai. SYSTEM fairness ir postų matrica lieka užšaldyti publikavimo momentu. V2.5.73 tikslus mėnesio workload ir lyginė Onko parity lieka neperžengiami.
+
+
+## V2.5.77 — PENKTADIENIŲ STRUKTŪRINIS WATER-FILL
+
+SYSTEM generatoriuje penktadieniai yra **struktūrinė HARD fairness taisyklė**. Suskaičiavus visus užpildomus penktadienio priskyrimus, kiekvieno rezidento penktadienių skaičius turi patekti į matematinį `floor(total/rezidentai)..ceil(total/rezidentai)` koridorių. Todėl raw max−min spread turi būti **0–1**.
+
+Pavyzdys: 72 penktadienio priskyrimai / 16 rezidentų = 4.5, todėl teisingas water-fill yra **8 rezidentai po 4 ir 8 rezidentai po 5**, o ne 2–8.
+
+Ši taisyklė taikoma **visiems** SYSTEM penktadienio priskyrimams, įskaitant pageidautas penktadienio datas. Pageidavimas yra SOFT ir negali pralaužti structural 0–1.
+
+Architektūra: Phase 1 subalansuoja darbo datas/blokus ir penktadienius; Phase 2 ant jau subalansuotų blokų kartu water-fill'ina visus ne-Onko postus. Taip penktadienio darbo perkėlimas kartu suteikia postų solveriui galimybę gerinti Mamografijos / ADC / UG / kitų postų matricą.
+
+Po publikavimo abipusis savanoriškas ACTUAL swapas gali išbalansuoti penktadienius ar postus, jei nepažeidžiami tikri saugos / darbo-laiko HARD reikalavimai ir V2.5.73 exact workload + Onko parity. SYSTEM fairness baseline lieka toks, kokį paskyrė algoritmas.

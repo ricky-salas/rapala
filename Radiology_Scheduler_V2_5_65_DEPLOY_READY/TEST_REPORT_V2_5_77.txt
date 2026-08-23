@@ -1,0 +1,53 @@
+V2.5.77 FRIDAY + ALL-POST STRUCTURAL WATERFILL — TEST REPORT
+=============================================================
+
+1) Python compilation
+PASS: app.py, db.py, scheduler_engine.py
+
+2) September 2026 neutral generation
+PASS
+- generated: YES
+- HARD errors: 0
+- Friday total assignments: 72
+- Friday resident counts: only 4 or 5
+- Friday raw max-min spread: 1
+- exact workload: preserved for every resident
+- Onko counts: only 0 or 2
+- Onko spread: 2
+- CENTRO RO: spread 1
+- SPS RO: spread 1
+- SPS UG: spread 1
+- Centro UG: spread 1
+- ADC 144: spread 1
+- ADC 145: spread 1
+- Vaikų UG: spread 1
+- Mamografijos: spread 1
+- elapsed in regression environment: ~33.5 s
+
+3) Friday entitlement arithmetic
+72 / 16 = 4.5
+Therefore structural floor/ceil water-fill is:
+- 8 residents x4 Friday assignments
+- 8 residents x5 Friday assignments
+
+4) SYSTEM fail-closed test
+PASS
+- created a same-workload ordinary reassignment producing Friday spread 3
+- generation validation added:
+  Friday structural water-fill violated: raw resident spread 3 > 1
+- SYSTEM candidate rejected
+
+5) ACTUAL voluntary swap freedom
+PASS
+- same assignment exchange in voluntary_swap validation
+- Friday spread became 3
+- HARD errors remained 0
+- therefore resident-agreed ACTUAL swaps may unbalance Friday exposure
+- SYSTEM fairness baseline remains frozen
+
+6) Preservation
+PASS
+- V2.5.74 all-post water-fill preserved
+- V2.5.73 exact workload / even Onko preserved
+- V2.5.76 privacy-safe summary preserved
+- no Supabase migration required
