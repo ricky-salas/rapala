@@ -192,6 +192,11 @@ class Person:
     # Consecutive weekends worked at the tail of the immediately preceding
     # published SYSTEM month. Used only as a fatigue/spacing tie-breaker.
     prior_consecutive_weekend_streak: int = 0
+    # Whether the resident worked Onko RO on the immediately preceding calendar
+    # day (the last day of the previous published SYSTEM month). V2.5.68 uses
+    # this to enforce the absolute "no Onko on consecutive calendar days" rule
+    # across month boundaries as well as inside the month.
+    prior_last_day_onko: bool = False
     # Cumulative count of RESIDENT-HARD losses in prior published SYSTEM months.
     prior_resident_hard_loss_count: int = 0
 
@@ -537,6 +542,7 @@ def serialize_people_request_snapshot(people: List[Person]) -> dict:
             "prior_weekday_day_count":int(p.prior_weekday_day_count),
             "prior_rotation_counts":dict(p.prior_rotation_counts),
             "prior_consecutive_weekend_streak":int(p.prior_consecutive_weekend_streak),
+            "prior_last_day_onko":bool(getattr(p,"prior_last_day_onko",False)),
             "request_items":[dict(x) for x in (p.request_items or [])],
             "reserved_backup":[[int(d),str(b)] for d,b in sorted(p.reserved_backup)],
         }
@@ -586,6 +592,7 @@ def people_from_request_snapshot(snapshot: Optional[dict]) -> List[Person]:
                 prior_weekday_day_count=int(r.get("prior_weekday_day_count") or 0),
                 prior_rotation_counts=dict(r.get("prior_rotation_counts") or {}),
                 prior_consecutive_weekend_streak=int(r.get("prior_consecutive_weekend_streak") or 0),
+                prior_last_day_onko=bool(r.get("prior_last_day_onko",False)),
             ))
         except Exception:
             continue
@@ -1477,6 +1484,14 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         k=mb.var(0,max(1,ndays//2),True)
         eco={k:-2.0}; eco.update({full[(pi,d)]:1.0 for d in range(1,ndays+1)})
         mb.constraint(eco,0.0,0.0)
+        # V2.5.68 ABSOLUTE recovery rule: Onko RO is a 9h FULL day and may not
+        # be followed by another Onko RO assignment on the next calendar day.
+        # This is a hard feasibility rule, not a preference. It also crosses the
+        # month boundary when the previous published SYSTEM month ended with Onko.
+        if bool(getattr(p,"prior_last_day_onko",False)):
+            mb.constraint({full[(pi,1)]:1.0},0.0,0.0)
+        for d in range(1,ndays):
+            mb.constraint({full[(pi,d)]:1.0,full[(pi,d+1)]:1.0},-np.inf,1.0)
 
     # V2.5.67 Onko monthly fairness: pair allocation permits a spread of 2, never
     # more. With 22 slots / 16 residents this naturally gives 11 residents x2 and
@@ -1686,15 +1701,16 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "resident_hard_current_max_lock":int(pattern.get("resident_hard_max_loss",0)),
         "post_assignment_search_log":post_log,
         "fixed_gap_slot_ids":sorted(int(x) for x in fixed_gaps),
-        "count_date_separation":"Monthly workload targets are exact HARD. Onko is assigned in even pairs with monthly spread <=2 and cumulative catch-up across published months; other sparse posts keep first-exposure fairness when mathematically feasible.",
+        "count_date_separation":"Monthly workload targets are exact HARD. Onko is assigned in even pairs with monthly spread <=2, no consecutive calendar-day Onko for the same resident, and cumulative catch-up across published months; other sparse posts keep first-exposure fairness when mathematically feasible.",
         "sparse_first_exposure_required":True,
         "onko_first_exposure_required":False,
         "exact_workload_targets_required":True,
         "onko_even_pairs_required":True,
         "onko_monthly_spread_ceiling":2,
+        "onko_consecutive_days_forbidden":True,
     })
     msg=(
-        "OK — exact-workload fairness-first two-phase schedule. Mėnesio krūvio targetas kiekvienam rezidentui išlaikytas tiksliai; Onko skiriamas poromis; "
+        "OK — exact-workload fairness-first two-phase schedule. Mėnesio krūvio targetas kiekvienam rezidentui išlaikytas tiksliai; Onko skiriamas poromis ir ne dvi kalendorines dienas iš eilės; "
         f"SPS RO / SPS UG / savaitgalių skirtumas ≤ {critical_cap}, kitų pagrindinių postų skirtumas ≤ {noncritical_cap}."
     )
     obj=float(pattern.get("objective_value",0.0) or 0.0)+float(post_obj or 0.0)
@@ -2352,6 +2368,21 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
             co = {x[(pi, s.idx)]: 1 for s in onko_slots}
             co[pairs] = -2
             mb.constraint(co, 0, 0, f"Onko even {p.initials}")
+
+    # V2.5.68 ABSOLUTE Onko recovery guard, mirrored in the legacy rescue path.
+    onko_by_day={d:[s for s in onko_slots if s.day==d] for d in range(1,ndays+1)}
+    for pi,p in enumerate(people):
+        if bool(getattr(p,"prior_last_day_onko",False)) and onko_by_day.get(1):
+            mb.constraint(
+                {x[(pi,s.idx)]:1 for s in onko_by_day[1]},
+                0,0,f"Onko previous-month recovery {p.initials}"
+            )
+        for d in range(1,ndays):
+            co={}
+            for s in onko_by_day.get(d,[])+onko_by_day.get(d+1,[]):
+                co[x[(pi,s.idx)]]=1
+            if co:
+                mb.constraint(co,0,1,f"Onko no consecutive days {p.initials} {d}-{d+1}")
 
     # Weekend hard structure from active Rule Profile.
     if bool(rule_value("weekend_unique_required")):
@@ -3663,6 +3694,8 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                 1 if p.avoid_doubles else 0,
             ]),
             "prior_consecutive_weekend_streak": int(getattr(p,"prior_consecutive_weekend_streak",0) or 0),
+            "prior_last_day_onko": bool(getattr(p,"prior_last_day_onko",False)),
+            "consecutive_onko_pairs": [],
             "max_consecutive_weekends": 0,
             "max_consecutive_days": 0,
             "max_rolling7_hours": 0.0,
@@ -3811,6 +3844,21 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
         onko_n = sum(s.department == "Onko RO centre" for s in pslots)
         if (not voluntary_swap_mode) and onko_n % 2 != 0:
             errors.append(f"{p.initials}: odd Onko count violates 1.5-unit exact-workload pairing")
+
+        onko_days=sorted({s.day for s in pslots if s.department=="Onko RO centre"})
+        consecutive_onko=[]
+        if bool(getattr(p,"prior_last_day_onko",False)) and 1 in onko_days:
+            consecutive_onko.append([0,1])
+        consecutive_onko += [[a,b] for a,b in zip(onko_days,onko_days[1:]) if b==a+1]
+        d["consecutive_onko_pairs"]=consecutive_onko
+        if consecutive_onko and (not voluntary_swap_mode):
+            # V2.5.69: consecutive Onko RO remains a HARD generation rule so the
+            # algorithm itself never creates back-to-back 9 h Onko days. A later
+            # bilateral voluntary swap may override this generator rule with an
+            # explicit consequence acknowledgement; true ABSOLUTE legal/physical
+            # blockers (rest, overlap, justified absence, etc.) still remain blocks.
+            pretty=", ".join(f"{a or 'prev'}→{b}" for a,b in consecutive_onko)
+            errors.append(f"{p.initials}: consecutive Onko RO days are forbidden in SYSTEM generation ({pretty})")
 
         worked_days: Set[int] = set()
         weekday_days: Set[int] = set()
@@ -4689,6 +4737,23 @@ def _swap_warning_rows(year: int, month: int, people: List[Person], before: Solv
                 "before":str(bpair),"after":str(apair),
                 "explanation":"Swapas sukuria papildomą dviejų dvigubų dienų seką; tai nebeblokuoja savanoriško swapo, bet rodoma kaip nuovargio rizika."
             })
+        b_onko_pairs=list(b.get("consecutive_onko_pairs") or [])
+        a_onko_pairs=list(a.get("consecutive_onko_pairs") or [])
+        if len(a_onko_pairs)>len(b_onko_pairs):
+            def _fmt_onko_pair(pair):
+                try:
+                    x,y=int(pair[0]),int(pair[1])
+                    if x==0:
+                        return f"ankstesnio mėn. paskutinė d. → {year:04d}-{month:02d}-{y:02d}"
+                    return f"{year:04d}-{month:02d}-{x:02d} → {year:04d}-{month:02d}-{y:02d}"
+                except Exception:
+                    return str(pair)
+            new_pairs=a_onko_pairs[len(b_onko_pairs):]
+            rows.append({
+                "severity":"ACK","kind":"CONSECUTIVE_ONKO","date":"; ".join(_fmt_onko_pair(x) for x in new_pairs),
+                "before":str(len(b_onko_pairs)),"after":str(len(a_onko_pairs)),
+                "explanation":"Swapas sukuria dvi Onko RO 9 val. dienas iš eilės. SYSTEM generatorius taip planuoti negali, tačiau abipusiu savanorišku apsikeitimu tai leidžiama, jei abu rezidentai aiškiai sutinka ir nepažeidžiamos tikros ABSOLUTE HARD poilsio / persidengimo taisyklės."
+            })
         bpost=int(b.get("worked_after_two_doubles",0) or 0); apost=int(a.get("worked_after_two_doubles",0) or 0)
         if apost>bpost:
             rows.append({
@@ -4723,9 +4788,10 @@ def preview_swap(year: int, month: int, people: List[Person], result: SolveResul
     HARD blockers for a swap are deliberately narrow: ABSOLUTE-HARD/justified
     absence, overlapping assignments, >12h/day, <11h daily rest, >6 workdays in
     any rolling 7, >60h in any rolling 7, mandatory post-duty rest and operational
-    backup/coverage feasibility. Generator-only fatigue shaping, 48h ceiling,
-    workload target equality, Onko parity, weekend uniqueness, preference and post
-    spread are not blockers; affected residents see them as an acknowledgement table.
+    backup/coverage feasibility. Generator-only fatigue shaping, 48h ceiling, workload
+    target equality, Onko parity, consecutive Onko, weekend uniqueness, preference
+    and post spread are not blockers; affected residents see them as an acknowledgement
+    table and may accept them bilaterally.
     """
     if not result.ok:
         return False, "Nėra validžios bazinės versijos.", None, {}

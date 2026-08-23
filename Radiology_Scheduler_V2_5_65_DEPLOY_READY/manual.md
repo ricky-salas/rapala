@@ -87,3 +87,15 @@ A statutory holiday falling on a weekday uses the non-working-day SPS RO AM/PM d
 ## V2.5.67 — tikslus mėnesio krūvis ir Onko poros
 
 Mėnesio krūvio targetas yra privalomas ir tikslus (nuokrypis 0.0). Onko 08:00–17:00 trunka 9 val., todėl skaičiuojamas kaip 1.5 standartinės 6 val. pamainos. Kad targetas liktų sveikas ir tikslus, Onko SYSTEM grafike skiriamas lyginėmis poromis (0, 2, 4...). To paties mėnesio Onko skirtumas tarp rezidentų negali viršyti 2. Rezidentai, kurie šį mėnesį gauna mažiau Onko, turi prioritetą kitais mėnesiais pagal publikuotą cumulative Onko istoriją.
+
+
+## V2.5.68 — Onko RO recovery guard
+
+Onko RO (08:00–17:00) may not be assigned to the same resident on two consecutive calendar days. This is a non-relaxable generation rule and also applies across the boundary from the last day of the previous published SYSTEM month to day 1 of the new month.
+
+The existing exact-workload and Onko-pair rules remain: even individual Onko counts, monthly Onko spread ≤2, and longitudinal catch-up without consecutive-day Onko assignments.
+
+
+## V2.5.69 — voluntary Onko swap override
+
+Generator: consecutive Onko RO remains forbidden. Bilateral voluntary swaps: consecutive Onko RO is allowed with explicit acknowledgement, provided true ABSOLUTE HARD safety/feasibility rules remain satisfied. SYSTEM fairness remains frozen; ACTUAL changes.

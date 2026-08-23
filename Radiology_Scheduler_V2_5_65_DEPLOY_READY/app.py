@@ -40,7 +40,7 @@ from scheduler_engine import (
 )
 import db
 
-APP_VERSION = "2.5.67 EXACT WORKLOAD + ONKO PAIRS"
+APP_VERSION = "2.5.69 ONKO VOLUNTARY SWAP OVERRIDE"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "G.M."
 DEFAULT_SUPABASE_URL = "https://gqdlwhjgwqmuoolybusy.supabase.co"
@@ -541,6 +541,38 @@ def historical_weekend_tail_streak_before(y,m):
     return out
 
 
+def historical_previous_last_day_onko_before(y,m):
+    """Whether each resident worked Onko RO on the previous month's last calendar day.
+
+    V2.5.68 uses only the immediately preceding published SYSTEM baseline so the
+    no-consecutive-Onko HARD rule also works across a month boundary.
+    """
+    out={p["initials"]:False for p in DEFAULT_PEOPLE}
+    py,pm=(y-1,12) if m==1 else (y,m-1)
+    try:
+        rows=db.published_baselines_before(y,m)
+    except Exception:
+        return out
+    row=next((r for r in reversed(rows) if int(r.get("year",0))==py and int(r.get("month",0))==pm),None)
+    if not row:
+        return out
+    try:
+        payload=row.get("baseline_json") or {}
+        ass={int(k):v for k,v in (payload.get("assignments") or {}).items()}
+        slot_map={s.idx:s for s in make_slots(py,pm)}
+        last_day=calendar.monthrange(py,pm)[1]
+        for sid,ini in ass.items():
+            sl=slot_map.get(int(sid))
+            if (
+                sl is not None and ini in out and sl.day==last_day
+                and sl.department=="Onko RO centre"
+            ):
+                out[ini]=True
+    except Exception:
+        return {p["initials"]:False for p in DEFAULT_PEOPLE}
+    return out
+
+
 def historical_resident_hard_losses_before(y,m):
     """Cumulative unavoidable RESIDENT-HARD losses from prior published SYSTEM baselines."""
     out={p["initials"]:0 for p in DEFAULT_PEOPLE}
@@ -631,6 +663,7 @@ def load_people(y,m):
     rotation_prior=historical_rotation_counts_before(y,m)
     resident_hard_prior=historical_resident_hard_losses_before(y,m)
     weekend_tail=historical_weekend_tail_streak_before(y,m)
+    previous_last_day_onko=historical_previous_last_day_onko_before(y,m)
     claim_rows=db.list_backup_claims(y,m)
     claims_by_initials={}
     for r in claim_rows:
@@ -700,6 +733,7 @@ def load_people(y,m):
             prior_weekday_day_count=int(prior.get("weekday_day",0)),
             prior_rotation_counts=dict(rotation_prior.get(initials,{})),
             prior_consecutive_weekend_streak=int(weekend_tail.get(initials,0)),
+            prior_last_day_onko=bool(previous_last_day_onko.get(initials,False)),
             prior_resident_hard_loss_count=int(resident_hard_prior.get(initials,0))))
     return people
 
@@ -1606,7 +1640,7 @@ def build_ics(y,m,result,initials):
     calname=f"{name} — Radiologija" if lang=="LT" else f"{name} — Radiology"
     lines=[
         "BEGIN:VCALENDAR","VERSION:2.0",
-        "PRODID:-//Radiology Scheduler//V2.5.67//EN",
+        "PRODID:-//Radiology Scheduler//V2.5.68//EN",
         "CALSCALE:GREGORIAN","METHOD:PUBLISH",
         f"X-WR-CALNAME:{ics_escape(calname)}",
         "X-WR-TIMEZONE:Europe/Vilnius",
@@ -1700,7 +1734,7 @@ def build_calendar_subscription_ics(initials, published_rows=None):
     calname=f"{name} — Radiologija" if cal_lang=="LT" else f"{name} — Radiology"
     lines=[
         "BEGIN:VCALENDAR","VERSION:2.0",
-        "PRODID:-//Radiology Scheduler//V2.5.67//EN",
+        "PRODID:-//Radiology Scheduler//V2.5.68//EN",
         "CALSCALE:GREGORIAN","METHOD:PUBLISH",
         f"X-WR-CALNAME:{ics_escape(calname)}",
         "X-WR-TIMEZONE:Europe/Vilnius",
@@ -5222,6 +5256,7 @@ def _research_people_snapshot(people):
             "prior_double_count":p.prior_double_count,
             "prior_weekday_day_count":p.prior_weekday_day_count,
             "prior_rotation_counts":dict(p.prior_rotation_counts or {}),
+            "prior_last_day_onko":bool(getattr(p,"prior_last_day_onko",False)),
         })
     return _research_json_safe(rows)
 
@@ -5256,6 +5291,7 @@ def _research_people_from_snapshot(rows):
             prior_double_count=int(r.get("prior_double_count") or 0),
             prior_weekday_day_count=int(r.get("prior_weekday_day_count") or 0),
             prior_rotation_counts={str(k):int(v) for k,v in (r.get("prior_rotation_counts") or {}).items()},
+            prior_last_day_onko=bool(r.get("prior_last_day_onko",False)),
         ))
     return people
 
@@ -7861,6 +7897,7 @@ with tabs[pos]:
         st.caption("ACK nėra teisinė išimtis: jis tik patvirtina rezidentui parodytas pasekmes. Darbo laiko režimo ir apskaitinio laikotarpio teisinį taikymą galutinai nustato darbdavys.")
         st.info("V2.5.66 — vienas rezidentas gali turėti kelis laukiančius apsikeitimus, jei jie liečia skirtingas pamainas. Ta pati konkreti pamaina vienu metu gali būti tik viename aktyviame pasiūlyme. Ta pati taisyklė taikoma dublių apsikeitimams. Savo dar nepriimtą pasiūlymą galima atšaukti. Jau pritaikytas ar atmestas pasiūlymas pamainos neberezervuoja.")
         st.info("V2.5.67 — mėnesio darbo krūvio targetas yra ABSOLIUTUS: 28 reiškia tiksliai 28.0, 26 reiškia tiksliai 26.0. Onko diena = 1.5 pamainos, todėl Onko skiriamas poromis (0, 2, 4...) ir mėnesio skirtumas tarp rezidentų negali viršyti 2. Kas šį mėnesį gauna mažiau Onko, turi catch-up prioritetą kitais mėnesiais pagal publikuotą istoriją.")
+        st.info("V2.5.68 — Onko RO atsigavimo taisyklė yra ABSOLIUTI: tas pats rezidentas negali būti Onko RO dvi kalendorines dienas iš eilės. Jei dirbo Onko paskutinę ankstesnio mėnesio dieną, naujo mėnesio 1 d. Onko jam taip pat blokuojamas. Taisyklė negali būti paaukota dėl postų lygybės ar SOFT pageidavimų.")
 
         st.markdown("### Emergency — jau įvykusio pakeitimo registravimas")
         st.dataframe(pd.DataFrame([
@@ -7886,7 +7923,8 @@ with tabs[pos]:
         st.markdown("### Kaip lyginamas darbas skirtingose pozicijose")
         st.dataframe(pd.DataFrame([
             {"Grupė":"KRITINĖ","Pozicijos":"SPS RO, SPS UG, savaitgaliai","Taisyklė":"Pirmiausia stengiamasi, kad visi tinkami rezidentai gautų po vieną pamainą; tik tada skiriama antra ir trečia. Žmonių mėnesio skaičiai paprastai skiriasi ne daugiau kaip 1."},
-            {"Grupė":"KITI POSTAI","Pozicijos":"CENTRO RO, Onko RO, Centro UG, ADC 144, ADC 145, Vaikų UG, Mamografijos","Taisyklė":"Jei mėnesio vietų pakanka, pirmiausia kiekvienas turi gauti bent vieną galimybę. Toliau paskirstymas lyginamas kuo labiau; didesnis skirtumas leidžiamas tik kai lygesnis variantas neįmanomas arba būtinas svarbesnei taisyklei."},
+            {"Grupė":"ONKO RO — SPECIALI HARD","Pozicijos":"Onko RO 08:00–17:00","Taisyklė":"1 diena = 1.5 pamainos, todėl SYSTEM skiriama lyginėmis poromis (0/2/4...), mėnesio skirtumas ≤2. Tas pats rezidentas NEGALI būti Onko dvi kalendorines dienas iš eilės, įskaitant mėnesio ribą."},
+            {"Grupė":"KITI POSTAI","Pozicijos":"CENTRO RO, Centro UG, ADC 144, ADC 145, Vaikų UG, Mamografijos","Taisyklė":"Jei mėnesio vietų pakanka, pirmiausia kiekvienas turi gauti bent vieną galimybę. Toliau paskirstymas lyginamas kuo labiau; didesnis skirtumas leidžiamas tik kai lygesnis variantas neįmanomas arba būtinas svarbesnei taisyklei."},
             {"Grupė":"POST DEBT","Pozicijos":"Kiekvienas postas × rezidentas","Taisyklė":"Jei šį mėnesį žmogus konkrečioje darbo vietoje gavo mažiau nei kiti, kitą mėnesį sistema jam teikia pirmenybę pasivyti. Jei gavo daugiau, papildomas paskyrimas pirmiau siūlomas kitiems."},
             {"Grupė":"TEMPORAL SPACING","Pozicijos":"Ypač savaitgaliai, taip pat SPS RO/SPS UG","Taisyklė":"Vienodi skaičiai dar nereiškia vienodo nuovargio: tarp lygiaverčių variantų vengiami 2–3 savaitgaliai iš eilės ir bereikalingas SPS suspaudimas."},
         ]),use_container_width=True,hide_index=True)
@@ -7920,7 +7958,7 @@ with tabs[pos]:
             {"Rank":"3. RESIDENT HARD","Includes":"Unavailable date / AM / PM / recurring","Method":"Zero losses if possible; otherwise minimum + resident water-fill + historical burden"},
             {"Rank":"4. WEEKLY LOAD + RECOVERY","Includes":"Rolling-7 hours, calendar-week load, double-shift sequences","Method":"Aim ~40h/7d; equalize weekly load; after 2 consecutive doubles next day PM-only or off, preferring off"},
             {"Rank":"5. OTHER STRUCTURAL","Includes":"Total doubles, Fridays, other consecutive/fatigue","Method":"Balance without worsening higher locks"},
-            {"Rank":"6. OTHER POST CORE","Includes":"CENTRO RO, Onko RO, Centro UG, ADC 144/145, Paediatric UG, Mammography","Method":"Layered water-fill; ideal 0–1, normal <=2, exceptional <=3"},
+            {"Rank":"6. OTHER POST CORE","Includes":"CENTRO RO, Centro UG, ADC 144/145, Paediatric UG, Mammography; Onko has its own special HARD structure","Method":"Ordinary posts: layered water-fill, ideal 0–1, normal <=2, exceptional <=3. Onko: exact-workload even pairs, monthly spread <=2, never consecutive calendar days."},
             {"Rank":"7–9. SOFT","Includes":"SOFT-1 time/recovery; SOFT-2 exact desired work; SOFT-3 month shape","Method":"Vertical rank + horizontal resident water-fill"},
             {"Rank":"10. POST OPTIMAL + DEBT","Includes":"Residual ordinary-post spread + cumulative debt","Method":"Improve toward 0–1 without worsening locked SOFT; longitudinal catch-up"},
         ]),use_container_width=True,hide_index=True)
@@ -7941,7 +7979,7 @@ with tabs[pos]:
             f"GENERATION HARD max. valandų per 7 d.: {min(float(rule_value('max_hours_rolling7')), float(FATIGUE_ROLLING7_HARD_CEILING_HOURS)):g}; voluntary swap >48 = ACK, absoliutus guardrail ≤{float(SWAP_ABSOLUTE_MAX_HOURS_ROLLING7):g}; "
             f"planavimo tikslas ~{float(WEEKLY_LOAD_SOFT_TARGET_HOURS):g} val./7 d. "
             f"Mėnesio krūvio targetas: TIKSLUS HARD (leidžiamas nuokrypis 0.0). "
-            f"Onko: 1.5 pamainos, tik lyginės poros (0/2/4...), mėnesio skirtumas ≤2 + istorinis catch-up; "
+            f"Onko: 1.5 pamainos, tik lyginės poros (0/2/4...), mėnesio skirtumas ≤2 + istorinis catch-up, niekada dvi kalendorines dienas iš eilės tam pačiam rezidentui; "
             f"savaitgalio unikalumo taisyklė: {'TAIP' if rule_value('weekend_unique_required') else 'NE'}. "
             f"Struktūrinis guardrail: SPS RO / SPS UG / savaitgaliai raw 0–1; Onko ≤2; kiti postai normaliai ≤2, exceptional ≤3 + post debt. "
             f"Kiti pagrindiniai burden spread baseline +{int(rule_value('general_guardrail_tolerance'))}. "
@@ -7957,7 +7995,7 @@ with tabs[pos]:
             f"GENERATION HARD max hours/7d: {min(float(rule_value('max_hours_rolling7')), float(FATIGUE_ROLLING7_HARD_CEILING_HOURS)):g}; voluntary swap >48 = ACK, absolute guardrail ≤{float(SWAP_ABSOLUTE_MAX_HOURS_ROLLING7):g}; "
             f"planning target ~{float(WEEKLY_LOAD_SOFT_TARGET_HOURS):g}h/7d. "
             f"Monthly workload target: EXACT HARD (allowed deviation 0.0). "
-            f"Onko: 1.5 shift units, even pairs only (0/2/4...), monthly spread ≤2 + historical catch-up; "
+            f"Onko: 1.5 shift units, even pairs only (0/2/4...), monthly spread ≤2 + historical catch-up, never on consecutive calendar days for the same resident; "
             f"weekend uniqueness: {'YES' if rule_value('weekend_unique_required') else 'NO'}. "
             f"Structural guardrail: SPS RO / SPS UG / weekends raw 0–1; Onko ≤2; other posts normally ≤2, exceptional ≤3 + post debt. "
             f"Other main burden spreads baseline +{int(rule_value('general_guardrail_tolerance'))}. "
@@ -7967,7 +8005,7 @@ with tabs[pos]:
     if lang=="LT":
         workflow_rows=[
             {"Etapas":"0. Request pre-check","Sistema":"Užšaldo ORIGINAL request ledger ir pašalina nepriimamus/gaming SOFT signalus.","Vertina":"RESIDENT HARD, tikslias SOFT datas, recovery ir month-shape; generic weekday/weekend pattern ir postų vengimas neįeina.","Principas":"Pageidavimų skaičius nesuteikia daugiau balsų."},
-            {"Etapas":"1. TRUE ABSOLUTE HARD","Sistema":"Randa tik saugų/fiziškai įmanomą grafiką; generuojant taiko ≤48h/7d.","Vertina":"Poilsį, valandas, patvirtintą neatvykimą, coverage/overlap ir kt.","Principas":"Generuojant ≤48h/7d ir recovery griežti. Voluntary swap: 48h/recovery gali tapti ACK perspėjimu, bet >12h/d., <11h poilsio, >6 d./7d., >60h/7d., ABSOLUTE/overlap/coverage lieka blokai."},
+            {"Etapas":"1. TRUE ABSOLUTE HARD","Sistema":"Randa tik saugų/fiziškai įmanomą grafiką; generuojant taiko ≤48h/7d ir Onko recovery guard.","Vertina":"Poilsį, valandas, patvirtintą neatvykimą, coverage/overlap, consecutive Onko ir kt.","Principas":"Doubles recovery voluntary swape gali tapti ACK perspėjimu, bet Onko dvi kalendorines dienas iš eilės lieka BLOCK kartu su >12h/d., <11h poilsio, >6 d./7d., >60h/7d., ABSOLUTE/overlap/coverage."},
             {"Etapas":"2. Kritinių darbų lygybė","Sistema":"Kartu lygina SPS RO, SPS UG ir savaitgalių skaičių tarp rezidentų.","Vertina":"Kiek daugiausiai ir mažiausiai kartų šį darbą gauna skirtingi rezidentai.","Principas":"Įprastai skirtumas ≤1. Konkrečios datos lieka lanksčios, todėl pageidavimai tenkinami, jei bendras paskirstymas išlieka toks pat lygus."},
             {"Etapas":"3. RESIDENT HARD","Sistema":"Minimizuoja bendrą `Negaliu dirbti` praradimą, tada water-fill'ina naštą ir istoriją.","Vertina":"Whole-day, AM/PM ir recurring RESIDENT HARD.","Principas":"0 jei įmanoma; kitaip mažiausias būtinas ir kuo lygiau."},
             {"Etapas":"4. Critical spacing","Sistema":"Nejudindama kritinių count spreadų, išdėsto juos laike.","Vertina":"Consecutive weekends ir SPS dienų clustering, įskaitant ankstesnio mėnesio weekend tail.","Principas":"Vengti 2–3 savaitgalių iš eilės ir bereikalingo streso suspaudimo."},
@@ -7987,14 +8025,15 @@ with tabs[pos]:
             st.caption("Pilną generatoriaus workflow lentelę gali matyti Išplėstiniame režime.")
     else:
         st.info(
-            "V2.5.65 — WORKDAYS FIRST, THEN WORKPLACES. The engine first chooses when each resident works while protecting Resident-HARD, recovery and personal requests. It then assigns workplaces. When a post has relatively few monthly slots but enough for at least one exposure per resident, the system gives everyone a first exposure before anyone moves to the second where mathematically feasible. For example, 22 Onko / Centro UG / pediatric US slots across 16 residents should normally distribute 1–2 rather than 0–2. SPS RO, SPS UG and weekends remain as equal as possible. A specific SPS date is not locked to one resident if the same monthly amount can be preserved with another placement that honors the resident's request. Approved vacation is an absolute no-work period and proportionally lowers that resident's monthly workload target. "
+            "V2.5.65 — WORKDAYS FIRST, THEN WORKPLACES. The engine first chooses when each resident works while protecting Resident-HARD, recovery and personal requests. It then assigns workplaces. For ordinary 1.0-unit sparse posts such as Centro UG / pediatric US, the system gives everyone a first exposure before avoidable second exposures where mathematically feasible. Onko is now governed by the later V2.5.67–68 exact-workload pair + recovery rules, not by first-exposure 1–2 logic. SPS RO, SPS UG and weekends remain as equal as possible. A specific SPS date is not locked to one resident if the same monthly amount can be preserved with another placement that honors the resident's request. Approved vacation is an absolute no-work period and proportionally lowers that resident's monthly workload target. "
             "V2.5.63 FAIRNESS FAILSAFE. A SYSTEM draft is returned only after the solver verifies an acceptably even distribution: SPS RO, SPS UG and weekends normally differ by no more than one assignment between residents; other main workplaces normally differ by no more than two. A timeout is not treated as proof that a wider imbalance is necessary. Concrete SPS dates remain flexible, so personal requests may still be honored whenever the same overall equality can be preserved."
         )
         st.info("V2.5.66 — a resident may have several pending swaps when they involve different shifts. The same concrete shift may be in only one active future offer at a time; the same rule applies to backup swaps. A requester may cancel their own still-pending offer. Applied/rejected offers release the shift.")
         st.info("V2.5.67 — the calculated monthly workload target is ABSOLUTE: 28 means exactly 28.0 and 26 means exactly 26.0. One Onko day = 1.5 shift units, so Onko is assigned in pairs (0, 2, 4...) with a monthly resident spread no greater than 2. Residents with fewer Onko exposures receive catch-up priority in later months using published history.")
+        st.info("V2.5.68 — Onko RO recovery is ABSOLUTE: the same resident may not work Onko RO on two consecutive calendar days. If the resident worked Onko on the last day of the previous published month, day 1 of the new month is also blocked for Onko. Fairness or SOFT preferences may not override this rule.")
         workflow_rows=[
             {"Stage":"0. Request pre-check","System":"Freezes ORIGINAL request ledger and removes non-whitelisted/gaming SOFT signals.","Evaluates":"Resident-HARD, exact SOFT dates, recovery/month-shape; generic weekday/weekend patterns and station avoidance are excluded.","Principle":"More raw requests do not buy more priority."},
-            {"Stage":"1. TRUE ABSOLUTE HARD","System":"Finds only safe/physically feasible schedules; generation applies <=48h/7d.","Evaluates":"Rest, hours, approved absence, coverage/overlap, etc.","Principle":"Generation is strict. Voluntary swaps convert >48h and recovery-pattern issues into ACK warnings, while >12h/day, <11h rest, >6 workdays/7d, >60h/7d and ABSOLUTE/overlap/coverage remain hard blockers."},
+            {"Stage":"1. TRUE ABSOLUTE HARD","System":"Finds only safe/physically feasible schedules; generation applies <=48h/7d and the Onko recovery guard.","Evaluates":"Rest, hours, approved absence, coverage/overlap, consecutive Onko, etc.","Principle":"Double-shift recovery may become an ACK warning in a voluntary swap, but consecutive-calendar-day Onko remains BLOCK together with >12h/day, <11h rest, >6 workdays/7d, >60h/7d and ABSOLUTE/overlap/coverage."},
             {"Stage":"2. CRITICAL WATER-FILL","System":"Co-optimizes SPS RO, SPS UG and all weekend exposure.","Evaluates":"Raw max-min in the three critical categories.","Principle":"0–1; first unit for everyone before second; ordinary SOFT cannot widen to 2."},
             {"Stage":"3. RESIDENT HARD","System":"Minimizes total Unavailable losses, then resident water-fill and historical burden.","Evaluates":"Whole-day, AM/PM and recurring Resident-HARD.","Principle":"Zero if possible; otherwise unavoidable minimum distributed fairly."},
             {"Stage":"4. Critical spacing","System":"Places equivalent critical counts more evenly in time.","Evaluates":"Consecutive weekends and SPS clustering, including prior-month weekend tail.","Principle":"Avoid concentrated fatigue."},
@@ -8056,7 +8095,7 @@ with tabs[pos]:
 
                 st.markdown("#### Struktūrinės taisyklės" if lang=="LT" else "#### Structural rules")
                 s1,s2=st.columns(2)
-                onko_v=s1.toggle("Onko even pairs — exact workload HARD",value=True,disabled=True,help=("V2.5.67: Onko = 1.5 pamainos, todėl lyginis skaičius yra privalomas, kad mėnesio targetas liktų tikslus." if lang=="LT" else "V2.5.67: Onko = 1.5 shift units, so an even count is mandatory to preserve the exact monthly target."))
+                onko_v=s1.toggle("Onko pairs + recovery — HARD",value=True,disabled=True,help=("V2.5.68: Onko = 1.5 pamainos, todėl skiriamas lyginiu skaičiumi; be to, tam pačiam rezidentui Onko negalima dvi kalendorines dienas iš eilės." if lang=="LT" else "V2.5.68: Onko = 1.5 shift units, so counts are even; additionally, the same resident cannot work Onko on consecutive calendar days."))
                 weekend_unique_v=s2.toggle("Weekend uniqueness required",value=bool(active_cfg["weekend_unique_required"]))
                 weekend_cap_v=st.number_input("Weekend max assignments/resident",1,4,int(active_cfg["weekend_max_assignments_per_resident"]),1)
 

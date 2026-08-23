@@ -818,3 +818,17 @@ Rezidentas gali turėti kelis laukiančius apsikeitimus, jeigu jie liečia skirt
 ## V2.5.67 — tikslus mėnesio krūvis ir Onko poros
 
 Mėnesio krūvio targetas yra privalomas ir tikslus (nuokrypis 0.0). Onko 08:00–17:00 trunka 9 val., todėl skaičiuojamas kaip 1.5 standartinės 6 val. pamainos. Kad targetas liktų sveikas ir tikslus, Onko SYSTEM grafike skiriamas lyginėmis poromis (0, 2, 4...). To paties mėnesio Onko skirtumas tarp rezidentų negali viršyti 2. Rezidentai, kurie šį mėnesį gauna mažiau Onko, turi prioritetą kitais mėnesiais pagal publikuotą cumulative Onko istoriją.
+
+
+## V2.5.68 — Onko RO atsigavimo HARD taisyklė
+
+Onko RO yra 9 val. FULL darbo diena. Tas pats rezidentas negali būti paskirtas į Onko RO dvi kalendorines dienas iš eilės. Tai yra ABSOLIUTI generatoriaus taisyklė, ne SOFT pageidavimas ir ne lygybės tikslas.
+
+Taisyklė galioja ir per mėnesio ribą: jei rezidentas paskutinę ankstesnio paskelbto SYSTEM mėnesio kalendorinę dieną dirbo Onko RO, naujo mėnesio 1 d. Onko RO jam negalimas.
+
+Onko porų logika išlieka: individualus Onko skaičius SYSTEM grafike turi būti lyginis, mėnesio skirtumas tarp rezidentų negali viršyti 2, o mažiau Onko gavę rezidentai pasiveja kitais mėnesiais. Tačiau jokio catch-up ar posto lygybės tikslo negalima pasiekti skiriant dvi Onko dienas iš eilės.
+
+
+## V2.5.69 — savanoriškas Onko swapo override
+
+SYSTEM generavimo metu dvi Onko RO dienos iš eilės lieka draudžiamos: algoritmas jų pats nesudaro. Tačiau po paskelbimo abipusis savanoriškas dviejų rezidentų apsikeitimas gali sukurti dvi Onko RO dienas iš eilės. Tokiu atveju tai rodoma kaip aiškiai patvirtinama pasekmė, o ne kaip automatinis blokas. Tikros ABSOLUTE HARD taisyklės — persidengimas, pateisinama nebuvimo priežastis, minimalus poilsis ir kiti fizinio / teisinio įmanomumo blokai — lieka neapeinami. SYSTEM fairness istorija nuo savanoriško swapo nesikeičia; keičiasi tik ACTUAL grafikas.

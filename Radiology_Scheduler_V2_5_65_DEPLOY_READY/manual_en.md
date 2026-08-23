@@ -568,3 +568,17 @@ A resident may have several pending swap requests when they involve different sh
 ## V2.5.67 — exact monthly workload and Onko pairs
 
 The calculated monthly workload target is mandatory and exact (allowed SYSTEM deviation 0.0). Onko 08:00–17:00 lasts 9 hours and therefore counts as 1.5 standard 6-hour shifts. To preserve an integer exact target, SYSTEM assigns Onko in even pairs (0, 2, 4...). The monthly Onko spread between residents may not exceed 2. Residents who receive fewer Onko exposures this month receive catch-up priority in later months using the published cumulative Onko history.
+
+
+## V2.5.68 — Onko RO recovery HARD rule
+
+Onko RO is a 9-hour FULL workday. The same resident may not be assigned to Onko RO on two consecutive calendar days. This is an ABSOLUTE generation rule, not a SOFT preference and not a fairness objective.
+
+The rule also crosses month boundaries: if a resident worked Onko RO on the final calendar day of the immediately preceding published SYSTEM month, Onko RO is unavailable to that resident on day 1 of the new month.
+
+The Onko pair logic remains unchanged: each resident's SYSTEM Onko count is even, the monthly resident spread is at most 2, and underexposed residents receive catch-up priority in later months. Catch-up or fairness may never be achieved by scheduling consecutive Onko days.
+
+
+## V2.5.69 — voluntary Onko swap override
+
+Back-to-back Onko RO days remain forbidden during SYSTEM generation: the algorithm may not create them. After publication, however, a bilateral voluntary swap may create two consecutive Onko RO days when both residents explicitly acknowledge the consequence. True ABSOLUTE HARD blockers such as overlap, justified absence, minimum rest and other legal/physical feasibility rules remain non-overridable. SYSTEM fairness history stays frozen; only the ACTUAL schedule changes.
