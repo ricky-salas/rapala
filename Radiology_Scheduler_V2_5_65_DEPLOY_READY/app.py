@@ -40,7 +40,7 @@ from scheduler_engine import (
 )
 import db
 
-APP_VERSION = "2.5.75 PRE-PUBLICATION SUMMARY AUDIT + WATERFILL"
+APP_VERSION = "2.5.76 PRIVACY-SAFE SUMMARY AUDIT + WATERFILL"
 DISPLAY_VERSION = "3.0"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "G.M."
@@ -1488,50 +1488,111 @@ def resident_wishes_audit_df(result):
     return pd.DataFrame(rows)
 
 
-def render_resident_wishes_audit(result, *, draft_mode=False, key_suffix=""):
-    """Render all-resident request statistics + exact resident-level misses."""
-    if draft_mode:
-        st.markdown("### JUODRAŠČIO PAGEIDAVIMŲ AUDITAS" if lang=="LT" else "### DRAFT REQUEST AUDIT")
-        st.caption(
-            "Tai yra būtent dabar sugeneruoto JUODRAŠČIO rezultatas. Seniūnė gali įvertinti, ar pageidavimai maksimaliai išpildyti, prieš paspausdama PASKELBTI / PATVIRTINTI. Regeneravus lentelė persiskaičiuos iš naujo."
-            if lang=="LT" else
-            "This is the currently generated DRAFT. The senior can inspect whether requests are maximized before pressing PUBLISH / CONFIRM. Regeneration recalculates this table."
-        )
-    else:
-        st.markdown("### SYSTEM pageidavimų auditas" if lang=="LT" else "### SYSTEM request audit")
-        st.caption(
-            "Ši lentelė rodo publikavimo momento SYSTEM rezultatą; po publikavimo ACTUAL swapai jo neperrašo."
-            if lang=="LT" else
-            "This table shows the publication-time SYSTEM result; later ACTUAL swaps do not rewrite it."
-        )
 
-    audit_df=resident_wishes_audit_df(result)
-    if audit_df.empty:
-        st.caption("Nėra rezidentų audito duomenų." if lang=="LT" else "No resident audit data.")
-        return
-    st.dataframe(audit_df,use_container_width=True,hide_index=True,height=610)
+def resident_group_satisfaction_df(result):
+    """Privacy-safe group view for ordinary residents.
 
-    people=list((result.stats.get("people",{}) or {}).keys())
-    if not people:
-        return
-    selected=st.selectbox(
-        "Detaliai patikrinti rezidentą" if lang=="LT" else "Inspect resident in detail",
-        people,
-        key=f"summary_request_person_{key_suffix}",
-    )
-    pdict=(result.stats.get("people",{}).get(selected,{}) or {})
-    misses=list(pdict.get("unhonored_request_details") or [])
-    if misses:
-        st.markdown("#### Neįvykdyti prašymai" if lang=="LT" else "#### Missed requests")
-        st.dataframe(request_details_df(misses,selected),use_container_width=True,hide_index=True)
-    else:
-        st.success("Šiam rezidentui į score įtrauktų neįvykdytų prašymų nėra." if lang=="LT" else "This resident has no scored missed requests.")
-    with st.expander("Rodyti įvykdytus prašymus" if lang=="LT" else "Show honored requests",expanded=False):
-        honored=list(pdict.get("honored_request_details") or [])
-        if honored:
-            st.dataframe(request_details_df(honored,selected),use_container_width=True,hide_index=True)
+    Only initials, name and overall fulfillment percentage are exposed.
+    Peer HARD/SOFT counts, request dates/blocks, workstyle details, missed counts
+    and request-level rows are deliberately not serialized to the resident UI.
+    """
+    rows=[]
+    for initials,d in (result.stats.get("people",{}) or {}).items():
+        overall=d.get("overall_request_score")
+        rows.append({
+            ("Žmogus" if lang=="LT" else "Person"):initials,
+            ("Vardas" if lang=="LT" else "Name"):d.get("name",""),
+            ("Bendras išpildymas %" if lang=="LT" else "Overall satisfaction %"):(
+                "—" if overall is None else overall
+            ),
+        })
+    return pd.DataFrame(rows)
+
+
+def render_resident_wishes_audit(
+    result, *, draft_mode=False, key_suffix="", senior_view=False
+):
+    """Role-aware request audit.
+
+    Senior: full all-resident category + request-level audit.
+    Resident: only group overall satisfaction percentages.
+    """
+    if senior_view:
+        if draft_mode:
+            st.markdown("### JUODRAŠČIO PAGEIDAVIMŲ AUDITAS" if lang=="LT" else "### DRAFT REQUEST AUDIT")
+            st.caption(
+                "Tai yra būtent dabar sugeneruoto JUODRAŠČIO rezultatas. Seniūnė gali įvertinti, ar pageidavimai maksimaliai išpildyti, prieš paspausdama PASKELBTI / PATVIRTINTI. Regeneravus lentelė persiskaičiuos iš naujo."
+                if lang=="LT" else
+                "This is the currently generated DRAFT. The senior can inspect whether requests are maximized before pressing PUBLISH / CONFIRM. Regeneration recalculates this table."
+            )
         else:
-            st.caption("Nėra score įtrauktų struktūruotų prašymų." if lang=="LT" else "No scored structured requests.")
+            st.markdown("### SYSTEM pageidavimų auditas" if lang=="LT" else "### SYSTEM request audit")
+            st.caption(
+                "Ši lentelė rodo publikavimo momento SYSTEM rezultatą; po publikavimo ACTUAL swapai jo neperrašo."
+                if lang=="LT" else
+                "This table shows the publication-time SYSTEM result; later ACTUAL swaps do not rewrite it."
+            )
+
+        audit_df=resident_wishes_audit_df(result)
+        if audit_df.empty:
+            st.caption("Nėra rezidentų audito duomenų." if lang=="LT" else "No resident audit data.")
+            return
+        st.dataframe(audit_df,use_container_width=True,hide_index=True,height=610)
+
+        people=list((result.stats.get("people",{}) or {}).keys())
+        if not people:
+            return
+        selected=st.selectbox(
+            "Detaliai patikrinti rezidentą" if lang=="LT" else "Inspect resident in detail",
+            people,
+            key=f"summary_request_person_{key_suffix}",
+        )
+        pdict=(result.stats.get("people",{}).get(selected,{}) or {})
+        misses=list(pdict.get("unhonored_request_details") or [])
+        if misses:
+            st.markdown("#### Neįvykdyti prašymai" if lang=="LT" else "#### Missed requests")
+            st.dataframe(request_details_df(misses,selected),use_container_width=True,hide_index=True)
+        else:
+            st.success(
+                "Šiam rezidentui į score įtrauktų neįvykdytų prašymų nėra."
+                if lang=="LT" else
+                "This resident has no scored missed requests."
+            )
+        with st.expander(
+            "Rodyti įvykdytus prašymus" if lang=="LT" else "Show honored requests",
+            expanded=False
+        ):
+            honored=list(pdict.get("honored_request_details") or [])
+            if honored:
+                st.dataframe(
+                    request_details_df(honored,selected),
+                    use_container_width=True,hide_index=True
+                )
+            else:
+                st.caption(
+                    "Nėra score įtrauktų struktūruotų prašymų."
+                    if lang=="LT" else
+                    "No scored structured requests."
+                )
+        return
+
+    # Resident profile: privacy-safe group view only.
+    st.markdown(
+        "### Grupės pageidavimų išpildymas"
+        if lang=="LT" else
+        "### Group request satisfaction"
+    )
+    st.caption(
+        "Privatumo sumetimais čia rodoma tik kiekvieno rezidento bendra pageidavimų išpildymo procentinė reikšmė. Kitų rezidentų HARD/SOFT kiekiai, datos, workstyle ir konkretūs prašymai nėra rodomi. Savo detalų auditą matai savo asmeninėje patikroje."
+        if lang=="LT" else
+        "For confidentiality, this table shows only each resident's overall request-satisfaction percentage. Other residents' HARD/SOFT counts, dates, workstyle and individual requests are not shown. Your own detailed audit remains available in your personal proof view."
+    )
+    safe_df=resident_group_satisfaction_df(result)
+    if safe_df.empty:
+        st.caption("Nėra grupės statistikos." if lang=="LT" else "No group statistics.")
+        return
+    st.dataframe(safe_df,use_container_width=True,hide_index=True,height=610)
+
 
 
 def _plain_request_sentence(r, initials=""):
@@ -3179,6 +3240,7 @@ if advanced_mode:
                 base,
                 draft_mode=draft_mode,
                 key_suffix=f"{year}_{month}_{'draft' if draft_mode else 'system'}",
+                senior_view=bool(senior_mode),
             )
             st.divider()
 
