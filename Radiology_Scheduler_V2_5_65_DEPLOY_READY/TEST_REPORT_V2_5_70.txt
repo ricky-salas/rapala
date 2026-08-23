@@ -1,0 +1,40 @@
+V2.5.70 SHIFT-LENGTH WORKSTYLE — TEST REPORT
+
+NO_PREFERENCE: PASS
+- elapsed: 9.12s
+- A.P. doubles: 5
+- A.P. weekday days: 22
+- A.P. max rolling-7h: 48.0
+- exact workload all residents: True
+- Onko counts even / spread<=2: PASS
+
+PREFER_6H: PASS
+- elapsed: 5.36s
+- A.P. doubles: 4
+- A.P. weekday days: 22
+- A.P. max rolling-7h: 48.0
+- exact workload all residents: True
+- Onko counts even / spread<=2: PASS
+
+MIXED: PASS
+- elapsed: 5.36s
+- A.P. doubles: 9
+- A.P. weekday days: 18
+- A.P. max rolling-7h: 48.0
+- exact workload all residents: True
+- Onko counts even / spread<=2: PASS
+
+PREFER_12H: PASS
+- elapsed: 6.82s
+- A.P. doubles: 13
+- A.P. weekday days: 14
+- A.P. max rolling-7h: 48.0
+- exact workload all residents: True
+- Onko counts even / spread<=2: PASS
+
+BEHAVIORAL DIRECTION: PASS
+- 6h preference doubles 4 <= neutral 5
+- 12h preference doubles 13 >= neutral 5
+- mixed mode doubles 9 is behaviorally distinct from neutral 5
+
+Python compilation: PASS (app.py, db.py, scheduler_engine.py)

@@ -1,0 +1,53 @@
+V2.5.71 DOUBLE FAIRNESS + SHIFT-LENGTH ALLOCATION — TEST REPORT
+===============================================================
+
+1) Python compilation
+PASS: app.py, db.py, scheduler_engine.py
+
+2) September 2026 neutral regression
+PASS
+- HARD errors: 0
+- exact workload target delta: 0.0 for every resident
+- Onko counts: even only
+- Onko monthly spread: 2
+- neutral group double-days: 67
+- resident double-day range: 3..5
+- resident double-day spread: 2
+- double-days containing SPS RO / SPS UG: 62 / 67
+- ordinary-post-only double-days: 5 / 67
+
+3) 6h preference regression — A.P.
+PASS
+- neutral group double total remains locked at 67
+- group double spread remains 2
+- A.P. receives 4 double-days
+- HARD errors: 0
+- exact workload preserved
+- Onko even-pair rules preserved
+
+4) 12h preference regression — A.S.
+PASS
+- neutral group double total remains locked at 67
+- group double spread remains 2
+- A.S. receives 5 double-days
+- HARD errors: 0
+- exact workload preserved
+- Onko even-pair rules preserved
+
+5) Mixed preference regression — A.S.
+PASS
+- neutral group double total remains locked at 67
+- group double spread remains 2
+- A.S. receives 4 double-days
+- HARD errors: 0
+- exact workload preserved
+- Onko even-pair rules preserved
+
+Constitution enforced by V2.5.71
+--------------------------------
+- Personal 6h/12h preference cannot increase or decrease the total group AM+PM double-day pool.
+- Monthly resident double-day max-min spread <= 2.
+- Work-style preference redistributes only inside that fixed group pool.
+- Already-needed double-days are preferentially paired with SPS RO / SPS UG in phase 2.
+- Sunday duty is SPS RO and therefore naturally belongs to the critical double-placement preference.
+- Onko RO is a 9h FULL day and is not counted as an AM+PM double.

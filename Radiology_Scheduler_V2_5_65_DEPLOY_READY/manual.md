@@ -99,3 +99,8 @@ The existing exact-workload and Onko-pair rules remain: even individual Onko cou
 ## V2.5.69 — voluntary Onko swap override
 
 Generator: consecutive Onko RO remains forbidden. Bilateral voluntary swaps: consecutive Onko RO is allowed with explicit acknowledgement, provided true ABSOLUTE HARD safety/feasibility rules remain satisfied. SYSTEM fairness remains frozen; ACTUAL changes.
+
+
+## V2.5.71 — DUBLIŲ APSAUGA
+
+6/12 val. darbo pobūdžio pasirinkimas nekeičia bendro grupės AM+PM dublių skaičiaus. Neutralus dublių poreikis užrakinamas prieš individualų paskirstymą, mėnesio dublių max−min tarp rezidentų ≤2, o jau reikalingi dubliai pirmiausia derinami su SPS RO / SPS UG vietomis. Onko RO yra atskira 9 val. FULL pamaina, ne AM+PM dublis.

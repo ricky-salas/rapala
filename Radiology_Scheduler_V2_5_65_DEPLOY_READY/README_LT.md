@@ -1,4 +1,4 @@
-# Radiology Scheduler Web V2.5.67 BETA
+# Radiology Scheduler Web V2.5.71 / Shift Happens v3.0
 
 > **Dabartinis užrakintas checkpointas: V2.5.67 EXACT WORKLOAD + ONKO PAIRS FINAL.**  
 > V2.5.65 išlaiko dviejų etapų generatorių (pirma darbo dienos / blokai, po to konkrečios darbo vietos), bet retoms edukacinėms pozicijoms pirmiausia siekia, kad visi tinkami rezidentai gautų bent po vieną ekspoziciją prieš skiriant išvengiamą antrą. Realiame 2026 m. rugsėjo 16 rezidentų regresiniame teste: HARD 0; SPS RO skirtumas 1; SPS UG 1; savaitgaliai 0; Onko RO 1; Centro UG 1; Vaikų UG 1; kiti pagrindiniai postai ≤2; quality gate PASS. Taip pat pridėtos patvirtintos atostogos su proporcingu darbo tikslo mažinimu, aiškesni pageidavimų termino priminimai ir automatiškai atnaujinama privati kelių mėnesių iCalendar prenumerata.
@@ -187,3 +187,17 @@ Seniūnės Dubliai lange prieš rankinį dublio perėmimą ir aktyvavimą rodoma
 - Jei vieną mėnesį dalis rezidentų gauna 0, o kiti 2, kitą mėnesį mažiau Onko turintys gauna cumulative catch-up prioritetą.
 - Sparse first-exposure logika lieka Centro UG / Vaikų UG ir kitiems 1.0-unit postams, bet nebegali laužyti workload targeto dėl Onko.
 - 27.5 / 28.5 / 25.5 SYSTEM workload laikomas HARD ERROR ir negali būti publikuojamas.
+
+
+## V2.5.70 — pageidaujama darbo dienos trukmė
+- Nustatymų viršuje pridėtas individualus ilgalaikis 6 val. / 12 val. / mišrus / nesvarbu pasirinkimas.
+- Onko RO lieka atskira 9 val. FULL pamaina.
+
+## V2.5.71 — dublių kiekio apsauga + darbo trukmės paskirstymas
+- 6 / 12 val. pasirinkimas **nebegali didinti bendro grupės dublių skaičiaus**. Pirma randamas neutralus dublių poreikis, jis užrakinamas, o tik tada dubliai perskirstomi pagal individualų darbo pobūdį.
+- Mėnesio AM+PM dublių skaičiaus skirtumas tarp rezidentų yra struktūriškai ribojamas: **max−min ≤2**.
+- „Dažniausiai 6 val.“ reiškia: iš jau reikalingų dublių šiam žmogui jų skirti santykinai mažiau; tai nėra leidimas išnaikinti dublius iš viso grafiko.
+- „Dažniausiai 12 val.“ reiškia: iš jau reikalingų dublių šiam žmogui jų skirti santykinai daugiau, bet tik nepažeidžiant ≤2 skirtumo ir darbo/poilsio taisyklių.
+- Kai dublis jau reikalingas, antroje fazėje pirmiausia stengiamasi, kad tokia diena turėtų bent vieną svarbią SPS RO arba SPS UG vietą. Sekmadienio budėjimai jau yra SPS RO.
+- Onko RO 08:00–17:00 yra svarbi 9 val. pilnos dienos pamaina, tačiau techniškai **nėra** AM+PM dublis ir į dublių skirtumą neįskaičiuojama.
+- Shift Happens viešas versijos numeris lieka 3.0; vidinis solverio checkpointas — V2.5.71.

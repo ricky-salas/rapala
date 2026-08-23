@@ -582,3 +582,21 @@ The Onko pair logic remains unchanged: each resident's SYSTEM Onko count is even
 ## V2.5.69 — voluntary Onko swap override
 
 Back-to-back Onko RO days remain forbidden during SYSTEM generation: the algorithm may not create them. After publication, however, a bilateral voluntary swap may create two consecutive Onko RO days when both residents explicitly acknowledge the consequence. True ABSOLUTE HARD blockers such as overlap, justified absence, minimum rest and other legal/physical feasibility rules remain non-overridable. SYSTEM fairness history stays frozen; only the ACTUAL schedule changes.
+
+
+## V2.5.70–71 — persistent preferred workday length
+
+At the top of Settings, each resident has a private persistent **Preferred workday length** setting with four options:
+
+- **Mostly 6 hours** — receive relatively fewer of the AM+PM double-days that the group already needs.
+- **Mostly 12 hours** — receive relatively more of the AM+PM double-days that the group already needs.
+- **Mixed** — prefer a mixture of 6-hour and 12-hour days.
+- **No preference** — let the optimizer choose within the remaining rules.
+
+**V2.5.71 protection:** this preference may not manufacture extra doubles. The engine first solves a preference-neutral group double total and locks it. The same pool is then redistributed according to work-style preferences while keeping the monthly resident double-count spread at **max−min ≤2**. Thus “Mostly 6 hours” does not mean zero doubles, and “Mostly 12 hours” does not increase the group's total double burden.
+
+When a double-day is already required, phase 2 strongly prefers to place at least one **SPS RO or SPS UG** assignment on that day; Sunday duties are already SPS RO. Any remaining ordinary-post-only double-days are retained only when higher-ranked constraints leave no better placement.
+
+Onko RO 08:00–17:00 remains an important separate 9-hour FULL day, but technically is not an AM+PM double and is not counted in the double-spread metric. Mandatory work/rest safety, exact monthly workload and Onko-pair rules remain higher priority.
+
+The setting is individual and is not displayed to other residents or in group summary tables; the generator uses it when constructing that resident's schedule.

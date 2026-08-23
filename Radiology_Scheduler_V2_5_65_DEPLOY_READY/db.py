@@ -162,12 +162,16 @@ def get_account_settings(initials: str) -> dict:
     rows = _data(_retry_db(lambda: client().table("account_settings").select("*").eq("initials", initials).limit(1).execute()))
     if not rows:
         return {"email":"", "weekday_preference":0, "weekend_preference":0, "holiday_preference":0, "spread_preference":0,
-                "avoid_doubles":False, "notifications_on":True, "reminder_start_day":8,
+                "shift_length_preference":0, "avoid_doubles":False, "notifications_on":True, "reminder_start_day":8,
                 "preferred_language":"LT", "include_backups_in_calendar":False,
                 "backup_email_alerts":True, "phone_e164":"", "backup_sms_alerts":False,
                 "calendar_feed_token":"", "updated_at":""}
     r = rows[0]
     r["holiday_preference"] = max(-1,min(1,int(r.get("holiday_preference",0) or 0)))
+    r["shift_length_preference"] = max(0,min(3,int(r.get("shift_length_preference",0) or 0)))
+    # Preserve old residents who had only the legacy "avoid doubles" checkbox.
+    if r["shift_length_preference"] == 0 and bool(r.get("avoid_doubles", False)):
+        r["shift_length_preference"] = 1
     r["avoid_doubles"] = bool(r.get("avoid_doubles", False))
     r["notifications_on"] = bool(r.get("notifications_on", True))
     r["include_backups_in_calendar"] = bool(r.get("include_backups_in_calendar", False))
@@ -182,6 +186,7 @@ def all_account_settings() -> Dict[str, dict]:
     return {r["initials"]: {
         **r,
         "holiday_preference": max(-1,min(1,int(r.get("holiday_preference",0) or 0))),
+        "shift_length_preference": (1 if max(0,min(3,int(r.get("shift_length_preference",0) or 0)))==0 and bool(r.get("avoid_doubles",False)) else max(0,min(3,int(r.get("shift_length_preference",0) or 0)))),
         "avoid_doubles": bool(r.get("avoid_doubles", False)),
         "notifications_on": bool(r.get("notifications_on", True)),
         "include_backups_in_calendar": bool(r.get("include_backups_in_calendar", False)),
@@ -199,6 +204,7 @@ def save_account_settings(initials: str, payload: dict):
         "weekend_preference": int(payload.get("weekend_preference", 0)),
         "holiday_preference": max(-1,min(1,int(payload.get("holiday_preference",0) or 0))),
         "spread_preference": int(payload.get("spread_preference", 0)),
+        "shift_length_preference": max(0,min(3,int(payload.get("shift_length_preference",0) or 0))),
         "avoid_doubles": bool(payload.get("avoid_doubles", False)),
         "notifications_on": bool(payload.get("notifications_on", True)),
         "reminder_start_day": int(payload.get("reminder_start_day", 8)),

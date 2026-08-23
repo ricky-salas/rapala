@@ -180,7 +180,10 @@ class Person:
     # This is a structured SOFT signal used only on official Lithuanian public-holiday duty slots.
     holiday_preference: int = 0
     spread_preference: int = 0   # -2 clustered, +2 dispersed
-    avoid_doubles: bool = False
+    # V2.5.70 persistent workday-length preference:
+    # 0 = no preference, 1 = prefer 6h singles, 2 = mixed 6h/12h, 3 = prefer 12h AM+PM doubles.
+    shift_length_preference: int = 0
+    avoid_doubles: bool = False  # legacy compatibility; derived from shift_length_preference==1 in the app
 
     # Long-term fairness carry-in. These are totals from published prior months.
     prior_weekend_count: int = 0
@@ -493,13 +496,25 @@ def normalize_preferences_against_engine(
         q.weekday_preference=0
         q.weekend_preference=0
 
-        # V2.5.50: keep a structured "avoid doubles" request active. Group-wide
-        # double fairness remains structural, but this resident-facing recovery
-        # preference is one normalized SOFT-1 unit in the water-filling row.
-        if q.avoid_doubles:
+        # V2.5.70 persistent workday-length preference. It is personal and
+        # shapes AM+PM pairing only after absolute work/rest feasibility.
+        q.shift_length_preference=max(0,min(3,int(getattr(q,"shift_length_preference",0) or 0)))
+        if q.shift_length_preference==1:
+            q.avoid_doubles=True
+        elif q.shift_length_preference in (2,3):
+            q.avoid_doubles=False
+        if q.shift_length_preference:
             audit.append({
                 "initials":p.initials,
-                "type":"structured_soft1_preserved",
+                "type":"structured_workstyle_preserved",
+                "item":"shift_length_preference",
+                "value":q.shift_length_preference,
+                "days":[],
+            })
+        elif q.avoid_doubles:
+            audit.append({
+                "initials":p.initials,
+                "type":"legacy_structured_soft1_preserved",
                 "item":"avoid_doubles",
                 "days":[],
             })
@@ -531,6 +546,7 @@ def serialize_people_request_snapshot(people: List[Person]) -> dict:
             "weekend_preference":int(p.weekend_preference),
             "holiday_preference":int(p.holiday_preference),
             "spread_preference":int(p.spread_preference),
+            "shift_length_preference":int(getattr(p,"shift_length_preference",0) or 0),
             "avoid_doubles":bool(p.avoid_doubles),
             "rest_credit_am_to_use":int(p.rest_credit_am_to_use),
             "rest_credit_pm_to_use":int(p.rest_credit_pm_to_use),
@@ -583,6 +599,7 @@ def people_from_request_snapshot(snapshot: Optional[dict]) -> List[Person]:
                 weekend_preference=int(r.get("weekend_preference") or 0),
                 holiday_preference=max(-1,min(1,int(r.get("holiday_preference") or 0))),
                 spread_preference=int(r.get("spread_preference") or 0),
+                shift_length_preference=max(0,min(3,int(r.get("shift_length_preference") or 0))),
                 avoid_doubles=bool(r.get("avoid_doubles",False)),
                 prior_resident_hard_loss_count=int(r.get("prior_resident_hard_loss_count") or 0),
                 prior_weekend_count=int(r.get("prior_weekend_count") or 0),
@@ -621,7 +638,11 @@ def _fallback_request_items(person: Person, year: int, month: int) -> List[dict]
     if person.spread_preference: add("spread_preference","SOFT3_SCHEDULE_SHAPE",source="account_settings",value=int(person.spread_preference))
     if person.holiday_preference and public_holiday_days_in_month(year,month):
         add("holiday_preference","SOFT_HOLIDAY",source="account_settings",value=int(person.holiday_preference))
-    if person.avoid_doubles: add("avoid_doubles","SOFT1_TIME_PROTECTION",source="account_settings",value=True)
+    shift_len=max(0,min(3,int(getattr(person,"shift_length_preference",0) or 0)))
+    if shift_len:
+        add("shift_length_preference","SOFT1_TIME_PROTECTION" if shift_len==1 else "SOFT3_SCHEDULE_SHAPE",source="account_settings",value=shift_len)
+    elif person.avoid_doubles:
+        add("avoid_doubles","SOFT1_TIME_PROTECTION",source="account_settings",value=True)
     for d in sorted(person.vacation): add("vacation","ABSOLUTE_HARD",d,"FULL",score=False)
     for d in sorted(person.justified_absence): add("justified_absence","ABSOLUTE_HARD",d,"FULL",score=False)
     for d in sorted(person.long_duty): add("long_duty","ABSOLUTE_HARD",d,"FULL",score=False)
@@ -639,6 +660,7 @@ def _request_kind_label(kind: str) -> str:
         "weekend_preference":"Savaitgalių kryptis",
         "holiday_preference":"Švenčių dienų pasirinkimas",
         "spread_preference":"Išsklaidymas / koncentracija",
+        "shift_length_preference":"Pageidaujama darbo dienos trukmė",
         "avoid_doubles":"Vengti dublių",
         "backup_claim":"Pasirinktas dublis",
         "rest_credit":"Poilsio kredito panaudojimas",
@@ -670,6 +692,10 @@ NONCRITICAL_ROTATION_CATEGORIES = tuple(c for c in ROTATION_CATEGORIES if c not 
 CRITICAL_SPREAD_TARGET = 1
 NONCRITICAL_SPREAD_NORMAL_CEILING = 2
 NONCRITICAL_SPREAD_EXCEPTIONAL_CEILING = 3
+# V2.5.71: same-day AM+PM double burden is a structural group property.
+# Personal 6h/12h work-style preferences may redistribute existing doubles,
+# but may not widen the monthly resident-to-resident double spread beyond 2.
+DOUBLE_SPREAD_MAX = 2
 
 # V2.5.53 WEEKLY LOAD / RECOVERY CONSTITUTION.
 # These are safety/fatigue guardrails, not user-selectable SOFT preferences.
@@ -1439,6 +1465,9 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     """Phase 1: choose dates/AM/PM/FULL without deciding weekday post labels."""
     n=len(people); ndays=calendar.monthrange(year,month)[1]
     mb=_V2564FastMB(); am={}; pm={}; full={}; work={}; dbl={}; rh_by_person={pi:[] for pi in range(n)}
+    # V2.5.71: workday-length preference redistributes a neutral, group-level
+    # double pool. It must not manufacture extra AM+PM double-days.
+    mixed_dev_vars={}
     # V2.5.67 longitudinal Onko catch-up: residents who have fewer published
     # Onko exposures enter the next month with priority for the next 2-shift pair.
     # Use prior-count DIFFERENCE from the cohort minimum so the coefficient does
@@ -1453,7 +1482,9 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             pm[(pi,d)]=mb.var(cost=(((pi+1)*29+d*11)%89)*1e-7)
             full[(pi,d)]=mb.var(cost=onko_prior_penalty+(((pi+1)*23+d*13)%83)*1e-7)
             work[(pi,d)]=mb.var()
-            dbl[(pi,d)]=mb.var(cost=15.0 if p.avoid_doubles else 3.0)
+            # Neutral baseline cost only. Personal 6h/12h direction is added in a
+            # second solve after the neutral total number of doubles is locked.
+            dbl[(pi,d)]=mb.var(cost=3.0)
     # Coverage by time block; exact post labels are deferred to phase 2.
     for d in range(1,ndays+1):
         am_slots=[s for s in slots if s.day==d and not s.blocked and s.idx not in fixed_gaps and s.department!="Onko RO centre" and s.block=="AM"]
@@ -1493,6 +1524,20 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         for d in range(1,ndays):
             mb.constraint({full[(pi,d)]:1.0,full[(pi,d+1)]:1.0},-np.inf,1.0)
 
+        # V2.5.70/71 MIXED means a genuine mixture, not merely "no preference".
+        # The deviation variables exist during the neutral solve with zero cost;
+        # they become a small work-style objective only after total doubles lock.
+        if max(0,min(3,int(getattr(p,"shift_length_preference",0) or 0)))==2:
+            mix_pos=mb.var(0,ndays,False,cost=0.0)
+            mix_neg=mb.var(0,ndays,False,cost=0.0)
+            mixed_dev_vars[pi]=(mix_pos,mix_neg)
+            mix_expr={mix_pos:-1.0,mix_neg:1.0}
+            for d in range(1,ndays+1):
+                mix_expr[dbl[(pi,d)]]=mix_expr.get(dbl[(pi,d)],0.0)+2.0
+                mix_expr[work[(pi,d)]]=mix_expr.get(work[(pi,d)],0.0)-1.0
+                mix_expr[full[(pi,d)]]=mix_expr.get(full[(pi,d)],0.0)+1.0
+            mb.constraint(mix_expr,0.0,0.0)
+
     # V2.5.67 Onko monthly fairness: pair allocation permits a spread of 2, never
     # more. With 22 slots / 16 residents this naturally gives 11 residents x2 and
     # 5 residents x0. Prior published Onko counts above determine who catches up.
@@ -1502,6 +1547,16 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             for d in range(1,ndays+1):
                 co[full[(i,d)]]=1.0; co[full[(j,d)]]=co.get(full[(j,d)],0.0)-1.0
             mb.constraint(co,-2.0,2.0)
+    # V2.5.71 structural double fairness: monthly AM+PM double-day counts must
+    # remain similar across residents regardless of 6h/12h preference.
+    for i in range(n):
+        for j in range(i+1,n):
+            co={}
+            for d in range(1,ndays+1):
+                co[dbl[(i,d)]]=1.0
+                co[dbl[(j,d)]]=co.get(dbl[(j,d)],0.0)-1.0
+            mb.constraint(co,-float(DOUBLE_SPREAD_MAX),float(DOUBLE_SPREAD_MAX))
+
     max_days7=min(int(rule_value("max_workdays_rolling7")),int(FATIGUE_MAX_WORKDAYS_ROLLING7))
     max_hours7=min(float(rule_value("max_hours_rolling7")),float(FATIGUE_ROLLING7_HARD_CEILING_HOURS))
     for pi,p in enumerate(people):
@@ -1567,8 +1622,36 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         for d in p.preferred: add_hit(pi,d,None,-pref_w)
         for d in p.preferred_am: add_hit(pi,d,"AM",-pref_w)
         for d in p.preferred_pm: add_hit(pi,d,"PM",-pref_w)
-    res=mb.solve(seconds)
-    if res.x is None: return None
+    # V2.5.71 two-pass work-pattern solve. First determine the preference-neutral
+    # number of double-days under all higher-ranked constraints and ordinary
+    # monthly requests. Then freeze that total and let 6h/12h work-style only
+    # redistribute the same pool inside the hard resident spread<=2 corridor.
+    neutral_res=mb.solve(max(8.0,float(seconds)*0.58))
+    if neutral_res.x is None: return None
+    neutral_total_doubles=int(round(sum(float(neutral_res.x[dbl[(pi,d)]]) for pi in range(n) for d in range(1,ndays+1))))
+    mb.constraint({dbl[(pi,d)]:1.0 for pi in range(n) for d in range(1,ndays+1)},float(neutral_total_doubles),float(neutral_total_doubles))
+
+    workstyle_applied=False
+    for pi,p in enumerate(people):
+        shift_len=max(0,min(3,int(getattr(p,"shift_length_preference",0) or 0)))
+        if shift_len==0 and bool(getattr(p,"avoid_doubles",False)):
+            shift_len=1
+        if shift_len==1:
+            workstyle_applied=True
+            for d in range(1,ndays+1): mb.c[dbl[(pi,d)]] += 9.0
+        elif shift_len==3:
+            workstyle_applied=True
+            for d in range(1,ndays+1): mb.c[dbl[(pi,d)]] -= 9.0
+        elif shift_len==2:
+            workstyle_applied=True
+            if pi in mixed_dev_vars:
+                a,b=mixed_dev_vars[pi]; mb.c[a]+=5.0; mb.c[b]+=5.0
+    if workstyle_applied:
+        styled_res=mb.solve(max(6.0,float(seconds)*0.42))
+        res=styled_res if styled_res.x is not None else neutral_res
+    else:
+        res=neutral_res
+
     pattern={"am":{},"pm":{},"full":{}}
     for pi in range(n):
         for d in range(1,ndays+1):
@@ -1579,6 +1662,12 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     pattern["resident_hard_max_loss"]=int(round(float(res.x[rhmax])))
     pattern["resident_hard_minimum_proven"]=bool(int(getattr(res,"status",1))==0)
     pattern["objective_value"]=float(getattr(res,"fun",0.0) or 0.0)
+    pattern["neutral_total_doubles_lock"]=int(neutral_total_doubles)
+    dvals=[]
+    for pi in range(n):
+        dvals.append(int(round(sum(float(res.x[dbl[(pi,d)]]) for d in range(1,ndays+1)))))
+    pattern["double_counts"]={people[pi].initials:dvals[pi] for pi in range(n)}
+    pattern["double_spread"]=int(max(dvals)-min(dvals)) if dvals else 0
     return pattern
 
 
@@ -1594,7 +1683,18 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
                 works=pattern["am"][(pi,s.day)] if s.block=="AM" else pattern["pm"][(pi,s.day)]
                 if works:
                     prior=float(getattr(people[pi],"prior_rotation_counts",{}).get(rotation_category(s),0) or 0)
-                    x[(pi,s.idx)]=mb.var(cost=prior*0.002+(((pi+1)*37+(s.idx+1)*13)%101)*1e-8)
+                    base_cost=prior*0.002+(((pi+1)*37+(s.idx+1)*13)%101)*1e-8
+                    # V2.5.71: once a person's AM+PM double-day is already fixed
+                    # by phase 1, use that scarce double preferentially for the
+                    # clinically important SPS RO / SPS UG rows instead of pairing
+                    # two ordinary posts. This does not create any new double-day.
+                    is_double_day=bool(pattern["am"][(pi,s.day)] and pattern["pm"][(pi,s.day)])
+                    if is_double_day:
+                        if rotation_category(s) in ("SPS RO","SPS UG"):
+                            base_cost-=0.08
+                        else:
+                            base_cost+=0.01
+                    x[(pi,s.idx)]=mb.var(cost=base_cost)
         for s in normal:
             co={v:1.0 for (pi,sid),v in x.items() if sid==s.idx}
             mb.constraint(co,1.0,1.0)
@@ -1604,6 +1704,17 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
                     need=1.0 if (pattern["am"][(pi,d)] if block=="AM" else pattern["pm"][(pi,d)]) else 0.0
                     co={v:1.0 for (ppi,sid),v in x.items() if ppi==pi and byid[sid].day==d and byid[sid].block==block}
                     mb.constraint(co,need,need)
+                # V2.5.71: reward covering each already-fixed double-day with at
+                # least one SPS RO / SPS UG assignment. This is a strong placement
+                # preference, not a feasibility blocker, so exact workload and post
+                # fairness remain valid even when a few ordinary-post doubles are
+                # mathematically unavoidable.
+                if pattern["am"][(pi,d)] and pattern["pm"][(pi,d)]:
+                    crit={v:1.0 for (ppi,sid),v in x.items() if ppi==pi and byid[sid].day==d and rotation_category(byid[sid]) in ("SPS RO","SPS UG")}
+                    if crit:
+                        hit=mb.var(0.0,1.0,False,cost=-0.30)
+                        co=dict(crit); co[hit]=-1.0
+                        mb.constraint(co,0.0,np.inf)
         cats=[c for c in ROTATION_CATEGORIES if c!="Onko RO"]
         expr={}
         for pi in range(n):
@@ -1708,6 +1819,11 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "onko_even_pairs_required":True,
         "onko_monthly_spread_ceiling":2,
         "onko_consecutive_days_forbidden":True,
+        "neutral_total_doubles_lock":int(pattern.get("neutral_total_doubles_lock",0) or 0),
+        "double_monthly_spread_ceiling":int(DOUBLE_SPREAD_MAX),
+        "double_pattern_counts":pattern.get("double_counts",{}),
+        "double_pattern_spread":int(pattern.get("double_spread",0) or 0),
+        "double_priority":"SPS RO / SPS UG first when assigning posts to an already-needed AM+PM double; Sunday duties are SPS RO; Onko RO is a separate 9h FULL day, not a double.",
     })
     msg=(
         "OK — exact-workload fairness-first two-phase schedule. Mėnesio krūvio targetas kiekvienam rezidentui išlaikytas tiksliai; Onko skiriamas poromis ir ne dvi kalendorines dienas iš eilės; "
@@ -1919,6 +2035,10 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
 
     workday: Dict[Tuple[int, int], int] = {}
     doubles: Dict[Tuple[int, int], int] = {}
+    # V2.5.71: identifies avoidable doubles made entirely from ordinary posts.
+    # A double containing SPS RO or SPS UG is considered clinically useful;
+    # Sunday duties are already SPS RO. Onko RO is FULL 9h and never an AM+PM double.
+    noncritical_double_vars: List[int] = []
 
     # Day realism + preference variables.
     for pi, p in enumerate(people):
@@ -1987,15 +2107,12 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
             if d in p.soft_free_pm:
                 add_soft_tier_term("SOFT1",pi,{v:-1.0 for v in pm_match_vars},const=1.0)
 
-            # Spread preference:
-            # + spread => doubles cost more
-            # - clustered => doubles become attractive
+            # Spread preference may shape WHEN already-needed doubles occur, but
+            # V2.5.71 shift-length preference must never manufacture extra doubles.
+            # The group-level double total is frozen before personal work-style SOFT.
             dd = mb.var(f"double[{p.initials},{d}]", cost=0.0, integer=False)
             doubles[(pi, d)] = dd
-            double_pref_cost = 0.34 * p.spread_preference
-            if p.avoid_doubles:
-                double_pref_cost += 0.55
-            add_preference_cost(dd, double_pref_cost)
+            add_preference_cost(dd, 0.34 * p.spread_preference)
 
             sum_day = {x[(pi, s.idx)]: 1 for s in ds}
 
@@ -2019,6 +2136,18 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
             mb.constraint(c3, -np.inf, 1, f"double lower {p.initials} {d}")  # sum_day - dd <= 1
             c4 = dict(sum_day); c4[dd] = -2
             mb.constraint(c4, 0, np.inf, f"double upper {p.initials} {d}")  # sum_day - 2dd >= 0
+
+            # V2.5.71 double-quality preference: if a double is necessary, prefer
+            # using it on clinically important exposure (SPS RO / SPS UG; Sunday
+            # duties are SPS RO). Ordinary-post-only doubles remain feasible only
+            # when higher-ranked constraints leave no better placement.
+            critical_ds=[ss for ss in ds if rotation_category(ss) in ("SPS RO","SPS UG")]
+            ndv=mb.var(f"V2571_noncritical_double[{p.initials},{d}]",cost=0.0,lb=0.0,ub=1.0,integer=False)
+            q={ndv:1.0,dd:-1.0}
+            for ss in critical_ds:
+                q[x[(pi,ss.idx)]]=q.get(x[(pi,ss.idx)],0.0)+1.0
+            mb.constraint(q,0.0,np.inf,f"V2571 noncritical double detector {p.initials} {d}")
+            noncritical_double_vars.append(ndv)
 
             # Fatigue-aware doubles.
             # A double after 3 consecutive worked days receives a strong SOFT penalty.
@@ -2652,8 +2781,31 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
             f"cumulative double {p.initials}"
         )
         double_denom=max(1.0,float(ndays))
-        if p.avoid_doubles:
-            add_soft_tier_term("SOFT1",pi,{dc:-1.0/double_denom},const=1.0)
+        shift_len=max(0,min(3,int(getattr(p,"shift_length_preference",0) or 0)))
+        if shift_len==1 or (shift_len==0 and p.avoid_doubles):
+            # V2.5.71: 6h/12h is one symmetric long-term work-style axis. It
+            # redistributes the frozen group double pool; it does not outrank
+            # concrete monthly time-off/work-date requests.
+            add_soft_tier_term("SOFT3",pi,{dc:-1.0/double_denom},const=1.0)
+        elif shift_len==3:
+            add_soft_tier_term("SOFT3",pi,{dc:1.0/double_denom})
+        elif shift_len==2:
+            # Balance 12h double-days against ordinary 6h single-shift days;
+            # 9h Onko FULL days are excluded from this personal 6h/12h preference.
+            mix_abs=mb.var(f"shift_length_mixed_deviation[{p.initials}]",cost=0.0,lb=0.0,ub=ndays,integer=False)
+            expr={dc:2.0}
+            for d in range(1,ndays+1):
+                expr[workday[(pi,d)]]=expr.get(workday[(pi,d)],0.0)-1.0
+            for s in slots:
+                if s.department=="Onko RO centre" and not s.blocked:
+                    expr[x[(pi,s.idx)]]=expr.get(x[(pi,s.idx)],0.0)+1.0
+            cpos={mix_abs:1.0}; cneg={mix_abs:1.0}
+            for v,c in expr.items():
+                cpos[v]=cpos.get(v,0.0)-c
+                cneg[v]=cneg.get(v,0.0)+c
+            mb.constraint(cpos,0.0,np.inf,f"mixed shift length + {p.initials}")
+            mb.constraint(cneg,0.0,np.inf,f"mixed shift length - {p.initials}")
+            add_soft_tier_term("SOFT3",pi,{mix_abs:-1.0/double_denom},const=1.0)
         if p.spread_preference:
             if p.spread_preference>0:
                 add_soft_tier_term("SOFT3",pi,{dc:-1.0/double_denom},const=1.0)
@@ -2856,12 +3008,16 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
         weight=90.0,
         ub=len(friday_slots)
     )
-    add_spread_minimizer(
+    double_spread_pair=add_spread_minimizer(
         "monthly_double_fairness",
         double_count,
         weight=70.0,
         ub=ndays
     )
+    # V2.5.71 ABSOLUTE structural double-distribution corridor. Personal work-style
+    # preferences may decide who gets the available doubles only inside spread<=2.
+    dzmax,dzmin=double_spread_pair
+    mb.constraint({dzmax:1.0,dzmin:-1.0},-np.inf,float(DOUBLE_SPREAD_MAX),"V2571 monthly double spread <=2")
     add_spread_minimizer(
         "monthly_weekday_day_fairness",
         weekday_day_count,
@@ -2947,7 +3103,8 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     #      burden, avoid consecutive doubles; after two doubles next day PM/off,
     #   E3) HOLIDAY PREFERENCE WATER-FILL: prefer-work cohort first, neutral next,
     #       prefer-rest last; equalize current+cumulative SYSTEM holiday burden,
-    #   F) remaining involuntary burden/fatigue fairness,
+    #   F) remaining involuntary burden/fatigue fairness; freeze the neutral
+    #      group total of double-days and keep resident double spread <=2,
     #   G) NONCRITICAL post CORE guardrail (normally <=2, <=3 only if <=2 infeasible),
     #   H) SOFT-1 -> SOFT-2 -> SOFT-3 horizontal water-fill,
     #   I) NONCRITICAL post OPTIMAL + longitudinal post-debt catch-up inside all locks.
@@ -2978,6 +3135,11 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     full_costs[rh_current_min] -= 10000000.0
     full_costs[rh_cumulative_max] += 50000000.0
     full_costs[rh_cumulative_min] -= 30000000.0
+    # Prefer necessary doubles to contain SPS RO / SPS UG rather than pairing two
+    # ordinary posts. This is lower than safety/critical-count locks but stronger
+    # than cosmetic placement.
+    for v in noncritical_double_vars:
+        full_costs[v] += 240.0
 
     def _spread_value(vec, pair):
         zmax,zmin=pair
@@ -3345,6 +3507,17 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     guardrails_established=fairness_res.x is not None
     fairness_guardrails={}
     waterfill_locks={}
+    # V2.5.71: work-style preferences are allocation preferences, not a licence to
+    # create more (or fewer) double-days for the group. Freeze the preference-free
+    # neutral baseline total before SOFT stages; only redistribution is allowed.
+    neutral_total_doubles=None
+    if fairness_res.x is not None:
+        neutral_total_doubles=int(round(sum(float(fairness_res.x[double_count[pi]]) for pi in range(len(people)))))
+        mb.constraint(
+            {double_count[pi]:1.0 for pi in range(len(people))},
+            float(neutral_total_doubles),float(neutral_total_doubles),
+            "V2571 neutral total doubles lock"
+        )
 
     # Lock only the non-post burden baseline (+ normal general tolerance). Critical
     # exposure already has exact higher-rank locks; ordinary post spread is handled
@@ -3509,6 +3682,9 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
         "double_recovery_penalty_lock":None if weekly_recovery_penalty_lock is None else round(float(weekly_recovery_penalty_lock),6),
         "after_two_consecutive_doubles":"PM_ONLY_OR_OFF_HARD",
         "after_one_double":"NEXT_DAY_DOUBLE_DISCOURAGED",
+        "monthly_double_spread_max":DOUBLE_SPREAD_MAX,
+        "neutral_total_doubles_lock":neutral_total_doubles,
+        "double_priority":"SPS_RO_SPS_UG_FIRST; SUNDAY_IS_SPS_RO; ONKO_FULL_9H_NOT_A_DOUBLE",
     }
     stats["global"]["post_system_hard_worst_spread_lock"] = int(post_system_worst_lock)
     stats["global"]["post_system_hard_total_spread_lock"] = int(post_system_total_lock)
@@ -4142,15 +4318,31 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             spread01 = max(0.0, min(1.0, (d["dispersion_index"] - 0.5) / 0.5))
             score = 100.0 * spread01 if sp.spread_preference > 0 else 100.0 * (1.0 - spread01)
             components["spread_preference"] = round(score, 1)
-        if sp.avoid_doubles:
+        shift_len=max(0,min(3,int(getattr(sp,"shift_length_preference",0) or 0)))
+        if shift_len==1 or (shift_len==0 and sp.avoid_doubles):
             max_reasonable_doubles = max(1.0, d["assignments"] / 2.0)
             score = 100.0 * max(0.0, 1.0 - d["doubles"] / max_reasonable_doubles)
-            components["avoid_doubles"] = round(score, 1)
+            components["shift_length_preference" if shift_len else "avoid_doubles"] = round(score, 1)
+        elif shift_len==3:
+            max_reasonable_doubles = max(1.0, d["assignments"] / 2.0)
+            score = 100.0 * min(1.0, d["doubles"] / max_reasonable_doubles)
+            components["shift_length_preference"] = round(score,1)
+        elif shift_len==2:
+            by_day_normal={}
+            for sl in pslots:
+                if sl.department=="Onko RO centre":
+                    continue
+                by_day_normal[sl.day]=by_day_normal.get(sl.day,0)+1
+            mixed_doubles=sum(1 for n in by_day_normal.values() if n>=2)
+            mixed_singles=sum(1 for n in by_day_normal.values() if n==1)
+            denom=max(1,mixed_doubles+mixed_singles)
+            score=100.0*max(0.0,1.0-abs(mixed_doubles-mixed_singles)/denom)
+            components["shift_length_preference"] = round(score,1)
 
         if sp.holiday_preference and public_holiday_days_in_month(year,month):
             hcount=sum(1 for sl in pslots if is_public_holiday(year,month,sl.day))
             components["holiday_preference"] = 100.0 if ((sp.holiday_preference>0 and hcount>0) or (sp.holiday_preference<0 and hcount==0)) else 0.0
-        directional_keys={"spread_preference","avoid_doubles","holiday_preference"}
+        directional_keys={"spread_preference","shift_length_preference","avoid_doubles","holiday_preference"}
         directional_values=[v for k,v in components.items() if k in directional_keys]
         d["directional_preference_score"]=(
             round(float(np.mean(directional_values)),1) if directional_values else None
@@ -4228,7 +4420,10 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             elif kind in directional_keys:
                 score_value=float(components.get(kind,100.0))
                 fulfilled=bool(score_value>=99.95)
-                category="soft1" if kind=="avoid_doubles" else ("holiday" if kind=="holiday_preference" else "soft3")
+                if kind in ("avoid_doubles","shift_length_preference") and int(item.get("value") or 0)==1:
+                    category="soft1"
+                else:
+                    category="holiday" if kind=="holiday_preference" else "soft3"
             elif kind=="backup_claim":
                 # Once backup rows are available, a self-selected commitment is
                 # honored only if that exact covered slot is still assigned to this

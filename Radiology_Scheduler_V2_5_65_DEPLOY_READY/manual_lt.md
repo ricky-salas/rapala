@@ -832,3 +832,21 @@ Onko porų logika išlieka: individualus Onko skaičius SYSTEM grafike turi būt
 ## V2.5.69 — savanoriškas Onko swapo override
 
 SYSTEM generavimo metu dvi Onko RO dienos iš eilės lieka draudžiamos: algoritmas jų pats nesudaro. Tačiau po paskelbimo abipusis savanoriškas dviejų rezidentų apsikeitimas gali sukurti dvi Onko RO dienas iš eilės. Tokiu atveju tai rodoma kaip aiškiai patvirtinama pasekmė, o ne kaip automatinis blokas. Tikros ABSOLUTE HARD taisyklės — persidengimas, pateisinama nebuvimo priežastis, minimalus poilsis ir kiti fizinio / teisinio įmanomumo blokai — lieka neapeinami. SYSTEM fairness istorija nuo savanoriško swapo nesikeičia; keičiasi tik ACTUAL grafikas.
+
+
+## V2.5.70–71 — ilgalaikis pageidaujamos darbo dienos trukmės nustatymas
+
+Nustatymų viršuje kiekvienas rezidentas turi privatų ilgalaikį darbo pobūdžio pasirinkimą **„Pageidaujama darbo dienos trukmė“**. Galimi keturi variantai:
+
+- **Dažniausiai 6 val.** — iš bendram grafikui jau reikalingų AM+PM dublių šiam žmogui jų skirti santykinai mažiau.
+- **Dažniausiai 12 val.** — iš bendram grafikui jau reikalingų AM+PM dublių šiam žmogui jų skirti santykinai daugiau.
+- **Mišriai** — siekti 6 val. ir 12 val. darbo dienų mišinio.
+- **Nesvarbu** — darbo dienos trukmę parenka optimizatorius pagal likusias taisykles.
+
+**V2.5.71 apsauga:** šis nustatymas negali pats sukurti papildomų dublių. Pirma, be 6/12 val. krypties, nustatomas neutralus visos grupės dublių poreikis; bendras jų skaičius užrakinamas. Tada tas pats dublių kiekis paskirstomas tarp rezidentų, laikant mėnesio dublių skirtumą **max−min ≤2**. Taigi 6 val. pageidavimas nereiškia „be dublių“, o 12 val. pageidavimas nereiškia „pridėti naujų dublių“.
+
+Kai dublis jau reikalingas, konkrečių darbo vietų fazėje pirmiausia stengiamasi, kad tokia diena apimtų bent vieną svarbią **SPS RO arba SPS UG** vietą; sekmadienio budėjimai jau yra SPS RO. Jei dėl aukštesnių taisyklių to padaryti visiems dubliams neįmanoma, paliekamas mažiausias būtinas paprastų postų dublių skaičius.
+
+Onko RO 08:00–17:00 yra atskira svarbi 9 val. pilnos dienos pamaina, tačiau techniškai nėra AM+PM dublis ir į dublių max−min skaičiavimą neįtraukiama.
+
+Nustatymas yra individualus ir kitiems rezidentams ar grupės suvestinėse nerodomas; jį naudoja generatorius sudarydamas konkretų žmogaus grafiką. Privalomos darbo ir poilsio saugos taisyklės, tikslus mėnesio krūvis ir Onko porų taisyklė lieka aukščiau.
