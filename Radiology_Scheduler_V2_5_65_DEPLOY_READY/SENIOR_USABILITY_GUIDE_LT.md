@@ -154,3 +154,7 @@ Klaida nėra slepiama – ji tampa konkrečiu sistemos kokybės rezultatu ir pat
 ## Savanoriškas dublio perėmimas
 
 Jei dublį reikia aktyvuoti žmogui, kuriam tai sukurtų didesnį savaitės krūvį ar 12 val. darbo dieną, Seniūnės lange pirmiausia rodoma pasekmių lentelė: **dabar → po dublio → taikoma riba → būsena**. Jei tai tik perspėjimas, galima atšaukti arba patvirtinti gavus aiškų rezidento sutikimą. Jei lentelė rodo ABSOLUTE / teisinį blokatorių, patvirtinimo mygtukas išjungiamas.
+
+## V2.5.75 — Suvestinė prieš publikavimą
+
+Po `GENERUOTI` seniūnė gali iš karto atverti `Suvestinė`. Kol kandidatas nepaskelbtas, viršuje aiškiai rodoma `JUODRAŠČIO SUVESTINĖ — DAR NEPASKELBTA`. Joje matomi visų rezidentų RESIDENT HARD, `Noriu laisvos`, `Pageidauju dirbti`, bendro išpildymo, workstyle, krūvio, doubles, savaitgalių ir kritinių postų rodikliai bei konkretūs neįvykdyti prašymai. Jei rezultatas netenkina, grįžtama į `Sudarymas` ir kandidatas gerinamas / generuojamas iš naujo. Publikuotas grafikas nesikeičia, kol aiškiai nepaspaudžiama `PASKELBTI / PATVIRTINTI`.

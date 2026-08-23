@@ -40,7 +40,7 @@ from scheduler_engine import (
 )
 import db
 
-APP_VERSION = "2.5.74 ALL-POST STRUCTURAL WATERFILL + WORKSTYLE"
+APP_VERSION = "2.5.75 PRE-PUBLICATION SUMMARY AUDIT + WATERFILL"
 DISPLAY_VERSION = "3.0"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "G.M."
@@ -1422,6 +1422,116 @@ def preference_scores_df(result):
         }
         for i,d in result.stats.get("people",{}).items()
     ])
+
+
+def resident_wishes_audit_df(result):
+    """Senior-facing pre-publication request audit for every resident.
+
+    Uses the CURRENT candidate's own validated request ledger, so the senior can
+    inspect exactly what the generated DRAFT would satisfy before publication.
+    """
+    rows=[]
+    for initials,d in (result.stats.get("people",{}) or {}).items():
+        details=list(d.get("request_detail_rows") or [])
+        included=[r for r in details if r.get("included_in_score")]
+        preferred=[r for r in included if r.get("kind")=="preferred"]
+        soft_free=[r for r in included if r.get("kind")=="soft_free"]
+        missed=[r for r in included if not r.get("fulfilled")]
+        components=d.get("preference_components") or {}
+        workstyle=components.get("shift_length_preference")
+        if workstyle is None:
+            workstyle=components.get("avoid_doubles")
+        rotation_counts=d.get("rotation_counts") or {}
+
+        def ratio(items):
+            if not items:
+                return "—"
+            return f"{sum(1 for r in items if r.get('fulfilled'))}/{len(items)}"
+
+        hard_req=int(d.get("resident_hard_requested",0) or 0)
+        hard_ok=int(d.get("resident_hard_honored",0) or 0)
+        hard_txt=(f"{hard_ok}/{hard_req}" if hard_req else "—")
+        missed_preview=[]
+        for r in missed[:3]:
+            missed_preview.append(f"{r.get('date','—')} {r.get('block','—')} · {r.get('type','—')}")
+        if len(missed)>3:
+            missed_preview.append(f"+{len(missed)-3}")
+
+        overall=d.get("overall_request_score")
+        soft_score=d.get("soft_preference_score")
+        rows.append({
+            ("Žmogus" if lang=="LT" else "Person"):initials,
+            ("Vardas" if lang=="LT" else "Name"):d.get("name",""),
+            ("Target" if lang=="LT" else "Target"):d.get("target"),
+            ("Krūvis" if lang=="LT" else "Workload"):d.get("workload"),
+            ("RESIDENT HARD" if lang=="LT" else "RESIDENT HARD"):hard_txt,
+            ("Noriu laisvos" if lang=="LT" else "Requested off"):ratio(soft_free),
+            ("Pageidauju dirbti" if lang=="LT" else "Prefer to work"):ratio(preferred),
+            ("SOFT %" if lang=="LT" else "SOFT %"):("—" if soft_score is None else soft_score),
+            ("Bendras išpildymas %" if lang=="LT" else "Overall satisfaction %"):("—" if overall is None else overall),
+            ("Workstyle %" if lang=="LT" else "Workstyle %"):("—" if workstyle is None else round(float(workstyle),1)),
+            ("Savaitgaliai" if lang=="LT" else "Weekends"):int(d.get("weekend_assignments",0) or 0),
+            ("Dubliai" if lang=="LT" else "Doubles"):int(d.get("doubles",0) or 0),
+            "Onko RO":int(rotation_counts.get("Onko RO",0) or 0),
+            "SPS RO":int(rotation_counts.get("SPS RO",0) or 0),
+            "SPS UG":int(rotation_counts.get("SPS UG",0) or 0),
+            ("Neįvykdyta" if lang=="LT" else "Missed"):len(missed),
+            ("Neįvykdytų santrauka" if lang=="LT" else "Missed summary"):"; ".join(missed_preview) if missed_preview else "—",
+            "__hard_losses":int(d.get("resident_hard_losses",0) or 0),
+            "__score_sort":101.0 if overall is None else float(overall),
+        })
+    if not rows:
+        return pd.DataFrame()
+    rows.sort(key=lambda r:(-r["__hard_losses"], r["__score_sort"], -r[("Neįvykdyta" if lang=="LT" else "Missed")], r[("Žmogus" if lang=="LT" else "Person")]))
+    for r in rows:
+        r.pop("__hard_losses",None); r.pop("__score_sort",None)
+    return pd.DataFrame(rows)
+
+
+def render_resident_wishes_audit(result, *, draft_mode=False, key_suffix=""):
+    """Render all-resident request statistics + exact resident-level misses."""
+    if draft_mode:
+        st.markdown("### JUODRAŠČIO PAGEIDAVIMŲ AUDITAS" if lang=="LT" else "### DRAFT REQUEST AUDIT")
+        st.caption(
+            "Tai yra būtent dabar sugeneruoto JUODRAŠČIO rezultatas. Seniūnė gali įvertinti, ar pageidavimai maksimaliai išpildyti, prieš paspausdama PASKELBTI / PATVIRTINTI. Regeneravus lentelė persiskaičiuos iš naujo."
+            if lang=="LT" else
+            "This is the currently generated DRAFT. The senior can inspect whether requests are maximized before pressing PUBLISH / CONFIRM. Regeneration recalculates this table."
+        )
+    else:
+        st.markdown("### SYSTEM pageidavimų auditas" if lang=="LT" else "### SYSTEM request audit")
+        st.caption(
+            "Ši lentelė rodo publikavimo momento SYSTEM rezultatą; po publikavimo ACTUAL swapai jo neperrašo."
+            if lang=="LT" else
+            "This table shows the publication-time SYSTEM result; later ACTUAL swaps do not rewrite it."
+        )
+
+    audit_df=resident_wishes_audit_df(result)
+    if audit_df.empty:
+        st.caption("Nėra rezidentų audito duomenų." if lang=="LT" else "No resident audit data.")
+        return
+    st.dataframe(audit_df,use_container_width=True,hide_index=True,height=610)
+
+    people=list((result.stats.get("people",{}) or {}).keys())
+    if not people:
+        return
+    selected=st.selectbox(
+        "Detaliai patikrinti rezidentą" if lang=="LT" else "Inspect resident in detail",
+        people,
+        key=f"summary_request_person_{key_suffix}",
+    )
+    pdict=(result.stats.get("people",{}).get(selected,{}) or {})
+    misses=list(pdict.get("unhonored_request_details") or [])
+    if misses:
+        st.markdown("#### Neįvykdyti prašymai" if lang=="LT" else "#### Missed requests")
+        st.dataframe(request_details_df(misses,selected),use_container_width=True,hide_index=True)
+    else:
+        st.success("Šiam rezidentui į score įtrauktų neįvykdytų prašymų nėra." if lang=="LT" else "This resident has no scored missed requests.")
+    with st.expander("Rodyti įvykdytus prašymus" if lang=="LT" else "Show honored requests",expanded=False):
+        honored=list(pdict.get("honored_request_details") or [])
+        if honored:
+            st.dataframe(request_details_df(honored,selected),use_container_width=True,hide_index=True)
+        else:
+            st.caption("Nėra score įtrauktų struktūruotų prašymų." if lang=="LT" else "No scored structured requests.")
 
 
 def _plain_request_sentence(r, initials=""):
@@ -3005,10 +3115,40 @@ pos+=1
 # --- Summary ---
 if advanced_mode:
     with tabs[pos]:
-        st.subheader(tr("summary_title")); currentp=db.load_schedule(year,month,"current"); basep=db.load_schedule(year,month,"baseline")
-        if not currentp: st.info(tr("not_published"))
+        st.subheader(tr("summary_title"))
+        currentp=db.load_schedule(year,month,"current")
+        basep=db.load_schedule(year,month,"baseline")
+        draftp=db.load_schedule(year,month,"draft")
+        # A published row keeps draft_json. Treat it as a pending candidate only
+        # when it differs from the frozen publication baseline. This lets a senior
+        # generate a new candidate while an older schedule is still published and
+        # inspect the NEW draft before replacing the operational baseline.
+        pending_draft=bool(draftp and (not basep or draftp!=basep))
+        draft_mode=bool(draftp and (not currentp or pending_draft))
+
+        if draft_mode:
+            base=refresh_result_payload(draftp,year,month,use_actual_backups=False)
+            current=base
+            g=base.stats["global"]
+            st.warning(
+                "JUODRAŠČIO SUVESTINĖ — DAR NEPASKELBTA. Visi žemiau esantys rodikliai priklauso naujausiam sugeneruotam kandidatui; PASKELBTAS GRAFIKAS dar nepakeistas."
+                if lang=="LT" else
+                "DRAFT SUMMARY — NOT PUBLISHED. All metrics below belong to the newest generated candidate; the PUBLISHED schedule has not been replaced yet."
+            )
+        elif currentp:
+            current=refresh_result_payload(currentp,year,month)
+            base=refresh_result_payload(basep or currentp,year,month,use_actual_backups=False)
+            g=base.stats["global"]
+            st.success("SYSTEM SUVESTINĖ — PASKELBTA" if lang=="LT" else "SYSTEM SUMMARY — PUBLISHED")
         else:
-            current=refresh_result_payload(currentp,year,month); base=refresh_result_payload(basep or currentp,year,month,use_actual_backups=False); g=base.stats["global"]
+            st.info(
+                "Dar nėra nei sugeneruoto juodraščio, nei paskelbto grafiko. Pirmiausia Sudarymas lange paspausk GENERUOTI."
+                if lang=="LT" else
+                "There is no generated draft or published schedule yet. First press GENERATE in the Generation tab."
+            )
+            base=None; current=None; g=None
+
+        if base is not None:
             if advanced_mode:
                 c1,c2,c3,c4,c5=st.columns(5)
                 c1.metric(tr("hard_errors")+" *",g["hard_errors"])
@@ -3016,7 +3156,14 @@ if advanced_mode:
                 c3.metric(("Mėnesio postų disbalansas" if lang=="LT" else "Monthly post imbalance"),g.get("rotation_monthly_imbalance",0))
                 c4.metric(("Kaupiamasis postų disbalansas" if lang=="LT" else "Cumulative post imbalance"),g.get("rotation_cumulative_imbalance",0))
                 c5.metric(tr("preference_avg"),tr("not_applicable") if g["mean_preference_score"] is None else f"{g['mean_preference_score']}%")
-                st.caption(tr("fairness_frozen_note"))
+                if draft_mode:
+                    st.caption(
+                        "JUODRAŠTIS: fairness, postų spread ir pageidavimų score yra pre-publication auditui. Jie taps SYSTEM baseline tik paspaudus PASKELBTI / PATVIRTINTI."
+                        if lang=="LT" else
+                        "DRAFT: fairness, workplace spread and request scores are pre-publication audit metrics. They become the SYSTEM baseline only after PUBLISH / CONFIRM."
+                    )
+                else:
+                    st.caption(tr("fairness_frozen_note"))
             else:
                 s1,s2,s3=st.columns(3)
                 s1.metric(("Grafikas" if lang=="LT" else "Schedule"),("VALIDUS" if g["hard_errors"]==0 else "REIKIA PATIKROS"))
@@ -3028,15 +3175,30 @@ if advanced_mode:
                      "Technical spread, cumulative and guardrail metrics are available in Advanced mode.")
                 )
 
-            st.markdown("### SYSTEM postų pasiskirstymas per mėnesį" if lang=="LT" else "### SYSTEM monthly workplace distribution")
-            st.caption(
-                "FAIRNESS / SPREAD matrica skaičiuojama tik iš publikavimo momento SYSTEM grafiko. "
-                "Savanoriški swapai ir liga / atostogos / force majeure repair, įskaitant SPS pull-down, čia NEPRIDEDAMI ir nesukuria post debt. "
-                "Tai reiškia: jei jau suplanuotas rezidentas dėl neatvykimo tą pačią pamainą perkeliamas iš Centro RO į SPS UG, jo fairness ekspozicija lieka tokia, kokią paskyrė algoritmas publikavimo metu."
+            render_resident_wishes_audit(
+                base,
+                draft_mode=draft_mode,
+                key_suffix=f"{year}_{month}_{'draft' if draft_mode else 'system'}",
+            )
+            st.divider()
+
+            st.markdown(
+                ("### JUODRAŠČIO postų pasiskirstymas per mėnesį" if draft_mode else "### SYSTEM postų pasiskirstymas per mėnesį")
                 if lang=="LT" else
-                "The FAIRNESS / SPREAD matrix is calculated only from the publication-time SYSTEM schedule. "
-                "Voluntary swaps and sickness/leave/force-majeure repairs, including SPS pull-downs, are EXCLUDED and create no post debt. "
-                "If an already scheduled resident is moved from Centro RO to SPS UG in the same block for emergency cover, fairness exposure remains the publication-time algorithmic assignment."
+                ("### DRAFT monthly workplace distribution" if draft_mode else "### SYSTEM monthly workplace distribution")
+            )
+            st.caption(
+                (
+                    "Tai naujausio JUODRAŠČIO postų matrica. Ji leidžia prieš publikavimą patikrinti structural water-fill, SPS/Onko ir diversity. Regeneravus ji gali pasikeisti; fairness_history dar neįrašoma."
+                    if draft_mode else
+                    "FAIRNESS / SPREAD matrica skaičiuojama tik iš publikavimo momento SYSTEM grafiko. Savanoriški swapai ir liga / atostogos / force majeure repair, įskaitant SPS pull-down, čia NEPRIDEDAMI ir nesukuria post debt."
+                )
+                if lang=="LT" else
+                (
+                    "This is the newest DRAFT workplace matrix. It can be audited for structural water-fill, SPS/Onko and diversity before publication. Regeneration may change it; fairness_history is not written yet."
+                    if draft_mode else
+                    "The FAIRNESS / SPREAD matrix is calculated only from the publication-time SYSTEM schedule. Voluntary swaps and sickness/leave/force-majeure repairs, including SPS pull-downs, are excluded and create no post debt."
+                )
             )
             st.dataframe(
                 style_rows(workplace_exposure_df(year,month,base)),
@@ -3047,7 +3209,7 @@ if advanced_mode:
 
             # ACTUAL exposure is still useful operationally, but it must never be
             # confused with the SYSTEM fairness/post-debt ledger.
-            if current.assignments != base.assignments:
+            if (not draft_mode) and current.assignments != base.assignments:
                 with st.expander(
                     "FAKTINĖ operacinė postų ekspozicija — tik informacinė (NE fairness)"
                     if lang=="LT" else
@@ -3100,14 +3262,26 @@ if advanced_mode:
                          "These limits are real solver constraints added before TRUE SOFT optimization.")
                     )
 
-                with st.expander("SYSTEM fairness krūvio rodikliai" if lang=="LT" else "SYSTEM fairness workload metrics", expanded=False):
+                with st.expander(
+                    ("JUODRAŠČIO krūvio rodikliai" if draft_mode else "SYSTEM fairness krūvio rodikliai")
+                    if lang=="LT" else
+                    ("DRAFT workload metrics" if draft_mode else "SYSTEM fairness workload metrics"),
+                    expanded=False,
+                ):
                     st.caption(
-                        "Šie skaičiai priklauso publikavimo SYSTEM bazei; post-publication swapai ir fairness-neutral repair jų nekeičia."
+                        ("Šie skaičiai priklauso dabartiniam juodraščiui ir skirti auditui prieš publikavimą." if draft_mode else "Šie skaičiai priklauso publikavimo SYSTEM bazei; post-publication swapai ir fairness-neutral repair jų nekeičia.")
                         if lang=="LT" else
-                        "These figures belong to the publication SYSTEM baseline; post-publication swaps and fairness-neutral repairs do not change them."
+                        ("These figures belong to the current draft and are for pre-publication audit." if draft_mode else "These figures belong to the publication SYSTEM baseline; post-publication swaps and fairness-neutral repairs do not change them.")
                     )
-                    st.dataframe(style_rows(summary_df(base,year,month)),use_container_width=True,hide_index=True)
-                if current.assignments != base.assignments:
+                    _summary_stats=summary_df(base,year,month)
+                    if draft_mode:
+                        # Backup obligations are finalized at publish time; hide DB-backed
+                        # backup columns here so an older published month's backup rows
+                        # cannot be mistaken for draft data.
+                        _drop=[tr("planned_backups"),tr("effective_backups")]
+                        _summary_stats=_summary_stats.drop(columns=[c for c in _drop if c in _summary_stats.columns],errors="ignore")
+                    st.dataframe(style_rows(_summary_stats),use_container_width=True,hide_index=True)
+                if (not draft_mode) and current.assignments != base.assignments:
                     with st.expander("FAKTINIAI operaciniai krūvio rodikliai (NE fairness)" if lang=="LT" else "ACTUAL operational workload metrics (NOT fairness)", expanded=False):
                         st.dataframe(style_rows(summary_df(current,year,month)),use_container_width=True,hide_index=True)
             else:
@@ -3115,6 +3289,12 @@ if advanced_mode:
                     simple_df=summary_df(base,year,month)
                     keep=[c for c in simple_df.columns if c in ["Žmogus","Vardas","Pamainos","Tikslas","Person","Name","Assignments","Target"]]
                     st.dataframe(simple_df[keep] if keep else simple_df,use_container_width=True,hide_index=True)
+            if draft_mode:
+                st.info(
+                    "Jei šita Suvestinė netenkina: grįžk į Sudarymas → PERTIKRINTI / GERINTI arba GENERUOTI iš naujo. PASKELBTAS GRAFIKAS nepasikeis, kol aiškiai nepaspausi PASKELBTI / PATVIRTINTI."
+                    if lang=="LT" else
+                    "If this Summary is not satisfactory: return to Generation → IMPROVE / RECHECK or GENERATE again. The PUBLISHED schedule does not change until you explicitly press PUBLISH / CONFIRM."
+                )
     pos+=1
 
 # --- Transparency ---

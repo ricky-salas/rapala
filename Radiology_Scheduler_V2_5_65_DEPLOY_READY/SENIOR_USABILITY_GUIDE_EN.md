@@ -67,3 +67,7 @@ Any mismatch is recorded as a system-quality finding rather than hidden.
 
 - **SYSTEM:** the published algorithmic allocation and frozen fairness/research baseline.
 - **ACTUAL:** the real schedule after voluntary swaps, sickness and operational repairs.
+
+## V2.5.75 — Summary before publication
+
+After `GENERATE`, the senior can immediately open `Summary`. Until the candidate is published, the page is explicitly labeled `DRAFT SUMMARY — NOT PUBLISHED`. It shows every resident's Resident-HARD, requested-off, prefer-to-work, overall satisfaction, workstyle, workload, doubles, weekends and critical-post metrics plus exact missed requests. If the result is unsatisfactory, return to `Generation` and improve/regenerate. The published schedule is unchanged until `PUBLISH / CONFIRM` is explicitly pressed.
