@@ -838,8 +838,8 @@ SYSTEM generavimo metu dvi Onko RO dienos iš eilės lieka draudžiamos: algorit
 
 Nustatymų viršuje kiekvienas rezidentas turi privatų ilgalaikį darbo pobūdžio pasirinkimą **„Pageidaujama darbo dienos trukmė“**. Galimi keturi variantai:
 
-- **Dažniausiai 6 val.** — iš bendram grafikui jau reikalingų AM+PM dublių šiam žmogui jų skirti santykinai mažiau.
-- **Dažniausiai 12 val.** — iš bendram grafikui jau reikalingų AM+PM dublių šiam žmogui jų skirti santykinai daugiau.
+- **Dažniausiai 6 val.** — pageidaujama, kad darbo dienos dažniau būtų trumpesnės.
+- **Dažniausiai 12 val.** — pageidaujama, kad darbo dienos dažniau būtų ilgesnės.
 - **Mišriai** — siekti 6 val. ir 12 val. darbo dienų mišinio.
 - **Nesvarbu** — darbo dienos trukmę parenka optimizatorius pagal likusias taisykles.
 
