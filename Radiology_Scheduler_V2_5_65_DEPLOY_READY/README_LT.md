@@ -1,4 +1,6 @@
-# Radiology Scheduler Web V2.5.71 / Shift Happens v3.0
+# Radiology Scheduler Web V2.5.73 / Shift Happens v3.0
+
+> **V2.5.73 ONKO EVEN ABSOLUTE:** Onko RO kiekvienam rezidentui tik 0/2/4/... tiek SYSTEM, tiek ACTUAL; tikslus mėnesio targetas neleidžia 27.5/28.5; nelyginio aktyvių Onko dienų skaičiaus mėnesį viena Onko diena paliekama tuščia; voluntary swapas parity apeiti negali.
 
 > **Dabartinis užrakintas checkpointas: V2.5.67 EXACT WORKLOAD + ONKO PAIRS FINAL.**  
 > V2.5.65 išlaiko dviejų etapų generatorių (pirma darbo dienos / blokai, po to konkrečios darbo vietos), bet retoms edukacinėms pozicijoms pirmiausia siekia, kad visi tinkami rezidentai gautų bent po vieną ekspoziciją prieš skiriant išvengiamą antrą. Realiame 2026 m. rugsėjo 16 rezidentų regresiniame teste: HARD 0; SPS RO skirtumas 1; SPS UG 1; savaitgaliai 0; Onko RO 1; Centro UG 1; Vaikų UG 1; kiti pagrindiniai postai ≤2; quality gate PASS. Taip pat pridėtos patvirtintos atostogos su proporcingu darbo tikslo mažinimu, aiškesni pageidavimų termino priminimai ir automatiškai atnaujinama privati kelių mėnesių iCalendar prenumerata.

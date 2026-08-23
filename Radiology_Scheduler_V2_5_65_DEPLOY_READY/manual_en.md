@@ -600,3 +600,15 @@ When a double-day is already required, phase 2 strongly prefers to place at leas
 Onko RO 08:00–17:00 remains an important separate 9-hour FULL day, but technically is not an AM+PM double and is not counted in the double-spread metric. Mandatory work/rest safety, exact monthly workload and Onko-pair rules remain higher priority.
 
 The setting is individual and is not displayed to other residents or in group summary tables; the generator uses it when constructing that resident's schedule.
+
+
+## V2.5.73 — ABSOLUTE ONKO PAIRING
+
+- **Every resident's Onko RO count must always be even: 0, 2, 4, 6...** This applies to both SYSTEM and ACTUAL schedules.
+- One Onko RO day is 9 h = 1.5 standard 6 h shift units. Therefore 1, 3, 5... Onko assignments create a half-unit workload and are an ABSOLUTE HARD error.
+- The monthly workload target remains exact: target 28 means **28.0**, never 27.5 or 28.5.
+- If the number of active (non-blocked) monthly Onko days is even, all are filled. If it is odd, **one Onko day remains unfilled** so the filled total is even and can be distributed in pairs.
+- A voluntary swap may **not** create 1/3/5 Onko or a 0.5 monthly workload deviation; such a swap is blocked during preview.
+- The narrow V2.5.69 consecutive-Onko exception remains: after publication, consecutive Onko may be an ACK consequence if all true ABSOLUTE HARD rules remain satisfied. It does **not** override Onko parity or exact workload.
+
+In short: **EXACT MONTHLY TARGET + ONKO 0/2/4/... = ABSOLUTE HARD IN ALL MODES.**

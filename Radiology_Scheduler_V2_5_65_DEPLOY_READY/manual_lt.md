@@ -850,3 +850,15 @@ Kai dublis jau reikalingas, konkrečių darbo vietų fazėje pirmiausia stengiam
 Onko RO 08:00–17:00 yra atskira svarbi 9 val. pilnos dienos pamaina, tačiau techniškai nėra AM+PM dublis ir į dublių max−min skaičiavimą neįtraukiama.
 
 Nustatymas yra individualus ir kitiems rezidentams ar grupės suvestinėse nerodomas; jį naudoja generatorius sudarydamas konkretų žmogaus grafiką. Privalomos darbo ir poilsio saugos taisyklės, tikslus mėnesio krūvis ir Onko porų taisyklė lieka aukščiau.
+
+
+## V2.5.73 — ONKO PORŲ ABSOLIUTI TAISYKLĖ
+
+- **Kiekvieno rezidento Onko RO skaičius visada turi būti lyginis: 0, 2, 4, 6...** Tai galioja ir SYSTEM, ir ACTUAL grafikui.
+- Viena Onko RO diena yra 9 val. = 1.5 standartinės 6 val. pamainos. Todėl 1, 3, 5... Onko sukurtų 0.5 pamainos trupmeną ir yra ABSOLUTE HARD klaida.
+- Mėnesio darbo targetas lieka tikslus: pvz., target 28 reiškia **28.0**, ne 27.5 ar 28.5.
+- Jei aktyvių (neužblokuotų) mėnesio Onko dienų skaičius lyginis, užpildomos visos. Jei aktyvių Onko dienų skaičius nelyginis, **viena Onko diena paliekama neužpildyta**, kad bendras užpildytų Onko skaičius būtų lyginis ir jį būtų galima dalyti poromis.
+- Savanoriškas apsikeitimas **negali** sukurti 1/3/5 Onko arba 0.5 mėnesio krūvio nuokrypio; toks swapas blokuojamas dar preview etape.
+- V2.5.69 consecutive-Onko išimtis lieka siaura: po publikavimo dvi Onko dienos iš eilės gali būti tik ACK pasekmė, jei visi kiti ABSOLUTE HARD išlaikyti. Ji **neleidžia** apeiti Onko parity ar tikslaus targeto.
+
+Trumpai: **EXACT MONTHLY TARGET + ONKO 0/2/4/... = ABSOLUTE HARD VISUR.**

@@ -1,0 +1,55 @@
+Radiology Scheduler / Shift Happens V2.5.73 — ONKO EVEN ABSOLUTE TEST REPORT
+============================================================================
+
+1) Python compilation
+PASS
+- app.py
+- db.py
+- scheduler_engine.py
+
+2) August 2026 odd active-Onko supply regression
+PASS
+- generation: YES
+- HARD errors: 0
+- active Onko rows: 21
+- expected filled Onko rows: 20
+- actual filled Onko rows: 20
+- parity gap required: TRUE
+- exactly one active Onko row left unfilled
+- every resident Onko count: even only (0 or 2 in this regression)
+- exact monthly workload target passed for every resident
+- V2.5.73 fail-closed invariant: PASS
+
+3) September 2026 even active-Onko supply regression
+PASS
+- generation: YES
+- HARD errors: 0
+- active Onko rows: 22
+- expected filled Onko rows: 22
+- actual filled Onko rows: 22
+- parity gap required: FALSE
+- every resident Onko count: even only (0 or 2 in this regression)
+- exact monthly workload target passed for every resident
+- V2.5.73 fail-closed invariant: PASS
+
+4) Voluntary swap parity/workload blocker regression
+PASS
+- baseline schedule valid
+- test swapped one 1.5-unit Onko assignment with one 1.0-unit ordinary assignment
+- preview result: REJECTED
+- affected resident A: 27.5 vs exact target 28 -> HARD ERROR
+- affected resident A: Onko 1 -> HARD ERROR
+- affected resident B: 28.5 vs exact target 28 -> HARD ERROR
+- affected resident B: Onko 3 -> HARD ERROR
+- bilateral ACK cannot override these errors
+
+5) Constitution enforced
+PASS
+- SYSTEM exact workload = ABSOLUTE HARD
+- ACTUAL exact workload = ABSOLUTE HARD
+- Onko count per resident = 0/2/4/6... only
+- odd 1/3/5 Onko = ABSOLUTE HARD
+- odd active monthly Onko supply -> one Onko row left unfilled
+- consecutive Onko remains only the narrow V2.5.69 post-publication ACK exception
+- V2.5.71 double fairness / shift-length allocation preserved
+- V2.5.72 Workstyle UI/settings + hidden weekday helper preserved

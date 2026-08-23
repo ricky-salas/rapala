@@ -104,3 +104,8 @@ Generator: consecutive Onko RO remains forbidden. Bilateral voluntary swaps: con
 ## V2.5.71 — DUBLIŲ APSAUGA
 
 6/12 val. darbo pobūdžio pasirinkimas nekeičia bendro grupės AM+PM dublių skaičiaus. Neutralus dublių poreikis užrakinamas prieš individualų paskirstymą, mėnesio dublių max−min tarp rezidentų ≤2, o jau reikalingi dubliai pirmiausia derinami su SPS RO / SPS UG vietomis. Onko RO yra atskira 9 val. FULL pamaina, ne AM+PM dublis.
+
+
+## V2.5.73 — absolute Onko pairing
+
+Exact monthly workload and even Onko counts are non-negotiable in SYSTEM and ACTUAL. Each resident must have 0/2/4/... Onko. If active monthly Onko supply is odd, one Onko row stays unfilled. Voluntary swaps cannot create odd Onko or half-unit monthly workload; only the consecutive-Onko planning rule may remain an explicit bilateral ACK exception.

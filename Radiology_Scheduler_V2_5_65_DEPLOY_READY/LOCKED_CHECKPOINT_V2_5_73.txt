@@ -1,0 +1,12 @@
+Radiology Scheduler / Shift Happens V2.5.73 ONKO EVEN ABSOLUTE + WORKSTYLE
+
+LOCKED ABSOLUTE RULES:
+- monthly calculated workload target = exact HARD in SYSTEM and ACTUAL; deviation 0.0
+- Onko RO = 1.5 workload units
+- each resident Onko count = EVEN ONLY: 0,2,4,6...
+- odd 1/3/5 Onko = HARD ERROR
+- if active monthly Onko supply is odd, exactly one Onko row remains unfilled
+- voluntary swap cannot create odd Onko or half-unit monthly workload
+- consecutive Onko remains only the narrow V2.5.69 bilateral ACK exception after publication
+- V2.5.71 double fairness + shift-length allocation preserved
+- V2.5.72 Workstyle UI/settings fixes + hidden internal weekday column preserved

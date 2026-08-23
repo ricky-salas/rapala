@@ -1845,7 +1845,28 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
         year,month,people,fast_slots,fast_targets,request_snapshot,time_limit=max(90.0,float(time_limit))
     )
     if fast_result is not None and fast_result.ok:
-        return fast_result
+        # V2.5.73 fail-closed invariant: even if a future solver/refactor path
+        # accidentally bypasses one model row, no schedule can leave solve_schedule
+        # as valid unless exact workload and even Onko pairing are explicitly proven
+        # by the validator.
+        fg=(fast_result.stats or {}).get("global",{})
+        v2573_ok=(
+            bool(fg.get("exact_workload_targets_passed",False))
+            and bool(fg.get("onko_even_pairs_passed",False))
+            and int(fg.get("onko_actual_filled_count",-1))==int(fg.get("onko_expected_filled_count",-2))
+        )
+        if v2573_ok:
+            fg["v2573_onko_absolute_invariant_passed"]=True
+            return fast_result
+        return SolveResult(
+            False,
+            "V2.5.73 ABSOLUTE ONKO/TARGET INVARIANT FAILED — schedule intentionally rejected.",
+            assignments=dict(fast_result.assignments),
+            targets=dict(fast_result.targets),
+            stats=fast_result.stats,
+            objective_value=fast_result.objective_value,
+            request_snapshot=request_snapshot,
+        )
 
     # V2.5.27 PRE-SOLVE PREFERENCE NORMALIZATION (legacy rescue path).
     people, preference_normalization = normalize_preferences_against_engine(people,year,month)
@@ -1996,7 +2017,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
         mb.constraint(co,0,0,f"gap family filled identity {fam}")
 
     # Explicit Onko parity consistency.
-    onko_slots=[s for s in slots if s.department=="Onko RO centre"]
+    onko_slots=[s for s in slots if s.department=="Onko RO centre" and not s.blocked]
     onko_fill=len(onko_slots) if len(onko_slots)%2==0 else len(onko_slots)-1
     mb.constraint(
         {x[(pi,s.idx)]:1 for pi in range(len(people)) for s in onko_slots},
@@ -3739,7 +3760,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     stats["global"]["resident_hard_current_max_lock"] = int(resident_hard_current_max_lock)
     stats["global"]["resident_hard_cumulative_spread_lock"] = int(resident_hard_cumulative_spread_lock)
     stats["global"]["hard_classification"] = {
-        "ABSOLUTE_HARD":"Generation: safety/rest, justified absence, physical impossibility, coverage/overlap/qualification, <=48 known hours and <=6 workdays in every rolling 7 days. Post-publication bilateral voluntary NORMAL swaps may exceed only the 48h hours ceiling with explicit affected-resident acknowledgement; every other HARD/recovery rule stays non-relaxable.",
+        "ABSOLUTE_HARD":"Generation and ACTUAL: safety/rest, justified absence, physical impossibility, coverage/overlap/qualification, exact monthly workload and even Onko pairing (0/2/4/...). Generation also applies <=48 known hours and <=6 workdays in every rolling 7 days. Post-publication bilateral voluntary NORMAL swaps may exceed only the 48h generation ceiling with explicit acknowledgement and may ACK consecutive Onko; exact workload and Onko parity remain non-relaxable.",
         "WEEKLY_RECOVERY":"Around-40h planning target is water-filled across residents; repeated doubles are de-clustered, and after two consecutive doubles the next day is PM-only or off.",
         "CRITICAL_STRUCTURAL":"SPS RO + SPS UG + weekend exposure are co-equal structural safeguards; target raw max-min 0-1 and ordinary SOFT cannot widen them.",
         "RESIDENT_HARD":"Negaliu dirbti request: minimize total losses first, then distribute unavoidable losses fairly inside the critical structural locks.",
@@ -3897,7 +3918,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
     }
 
     # Coverage.
-    onko_slots = [s for s in slots if s.department == "Onko RO centre"]
+    onko_slots = [s for s in slots if s.department == "Onko RO centre" and not s.blocked]
     onko_filled = sum(1 for s in onko_slots if s.idx in assignments)
     expected_onko = len(onko_slots) if len(onko_slots) % 2 == 0 else len(onko_slots) - 1
     if onko_filled != expected_onko:
@@ -4014,12 +4035,15 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
 
         workload_delta=float(d["workload"])-float(targets[p.initials])
         d["workload_target_delta"]=round(workload_delta,1)
-        if (not voluntary_swap_mode) and abs(workload_delta) > 1e-9:
+        # V2.5.73 ABSOLUTE in SYSTEM and ACTUAL: a voluntary swap may never
+        # create a half-unit monthly workload or an odd Onko count. Onko is 1.5
+        # workload units, so each resident must remain at 0/2/4/... Onko shifts.
+        if abs(workload_delta) > 1e-9:
             errors.append(f"{p.initials}: workload {d['workload']} must equal exact target {targets[p.initials]}")
 
         onko_n = sum(s.department == "Onko RO centre" for s in pslots)
-        if (not voluntary_swap_mode) and onko_n % 2 != 0:
-            errors.append(f"{p.initials}: odd Onko count violates 1.5-unit exact-workload pairing")
+        if onko_n % 2 != 0:
+            errors.append(f"{p.initials}: odd Onko count {onko_n} is forbidden; Onko must be assigned in even pairs (0, 2, 4, ...)")
 
         onko_days=sorted({s.day for s in pslots if s.department=="Onko RO centre"})
         consecutive_onko=[]
@@ -4767,7 +4791,12 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             "exact_workload_targets_required": True,
             "exact_workload_targets_passed": all(abs(float(v.get("workload_target_delta",0.0) or 0.0)) <= 1e-9 for v in pdata.values()),
             "onko_even_pairs_required": True,
+            "onko_even_pairs_absolute_all_modes": True,
             "onko_even_pairs_passed": all(int(v.get("rotation_counts",{}).get("Onko RO",0) or 0) % 2 == 0 for v in pdata.values()),
+            "onko_active_slot_count": len(onko_slots),
+            "onko_expected_filled_count": expected_onko,
+            "onko_actual_filled_count": onko_filled,
+            "onko_parity_gap_required": bool(len(onko_slots) % 2 == 1),
             "onko_monthly_spread_ceiling": 2,
             "weekday_count": weekday_count(year, month),
             "base_target": standard_target(year, month),
@@ -4983,10 +5012,11 @@ def preview_swap(year: int, month: int, people: List[Person], result: SolveResul
     HARD blockers for a swap are deliberately narrow: ABSOLUTE-HARD/justified
     absence, overlapping assignments, >12h/day, <11h daily rest, >6 workdays in
     any rolling 7, >60h in any rolling 7, mandatory post-duty rest and operational
-    backup/coverage feasibility. Generator-only fatigue shaping, 48h ceiling, workload
-    target equality, Onko parity, consecutive Onko, weekend uniqueness, preference
-    and post spread are not blockers; affected residents see them as an acknowledgement
-    table and may accept them bilaterally.
+    backup/coverage feasibility, exact monthly workload equality and even Onko
+    pairing. Generator-only fatigue shaping, the 48h generation ceiling, consecutive
+    Onko, weekend uniqueness, preference and post spread are not blockers; affected
+    residents see those negotiable consequences as an acknowledgement table and may
+    accept them bilaterally. A swap can never create 1/3/5 Onko or 27.5/28.5 workload.
     """
     if not result.ok:
         return False, "Nėra validžios bazinės versijos.", None, {}
@@ -5017,7 +5047,7 @@ def preview_swap(year: int, month: int, people: List[Person], result: SolveResul
     ack_needed={who:_swap_ack_fingerprint(rows) for who,rows in warnings.items() if rows}
     stats["global"]["swap_warning_rows"]=warnings
     stats["global"]["swap_ack_fingerprints"]=dict(ack_needed)
-    stats["global"]["swap_policy"]="V2555_REALITY_GUARDRAILS"
+    stats["global"]["swap_policy"]="V2573_REALITY_GUARDRAILS_EXACT_TARGET_ONKO_PARITY_HARD"
     return True,"SWAP PREVIEW OK",stats,ack_needed
 
 
@@ -5110,7 +5140,7 @@ def revalidate_loaded_result(
 
 def serialize_result(result: SolveResult) -> dict:
     return {
-        "engine_stats_version": "V2.5.58",
+        "engine_stats_version": "V2.5.73",
         "ok": result.ok,
         "message": result.message,
         "assignments": {str(k): v for k, v in result.assignments.items()},
