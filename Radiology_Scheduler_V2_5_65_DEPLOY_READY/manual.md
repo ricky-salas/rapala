@@ -109,3 +109,12 @@ Generator: consecutive Onko RO remains forbidden. Bilateral voluntary swaps: con
 ## V2.5.73 — absolute Onko pairing
 
 Exact monthly workload and even Onko counts are non-negotiable in SYSTEM and ACTUAL. Each resident must have 0/2/4/... Onko. If active monthly Onko supply is odd, one Onko row stays unfilled. Voluntary swaps cannot create odd Onko or half-unit monthly workload; only the consecutive-Onko planning rule may remain an explicit bilateral ACK exception.
+
+
+## V2.5.74 — VISŲ POSTŲ STRUKTŪRINIS WATER-FILL
+
+SYSTEM generatorius po darbo datų / AM-PM blokų parinkimo visus ne-Onko postų labelius sprendžia **vienu bendru modeliu**. Kiekvienam postui pirmiausia taikomas floor/ceil entitlement koridorius raw spread 0–1. Tai reiškia, kad trečia ekspozicija negali likti vienam rezidentui, kol kitas tame pačiame poste turi tik vieną, jeigu egzistuoja validus dviejų ar daugiau rezidentų postų perkeitimas, kuris išlaiko darbo datas, blokus, tikslų krūvį ir aukštesnes HARD taisykles.
+
+Jei 0–1 koridorius neturi sprendinio, sistema gali pereiti į 0–2, o po to 0–3 tik tada, kai ankstesnis siauresnis koridorius yra **matematiškai įrodytas neįmanomas**. Timeout nėra toks įrodymas.
+
+Po publikavimo savanoriški bilateraliniai ACTUAL swapai yra fairness-neutral. Jei abu rezidentai sutinka ir nėra tikro saugos / darbo-laiko / fizinio HARD pažeidimo, postų ekspozicijos, UG/Mamografijos kiekiai, diversity ar SYSTEM water-fill nėra swapo blokatoriai. SYSTEM fairness ir postų matrica lieka užšaldyti publikavimo momentu. V2.5.73 tikslus mėnesio workload ir lyginė Onko parity lieka neperžengiami.

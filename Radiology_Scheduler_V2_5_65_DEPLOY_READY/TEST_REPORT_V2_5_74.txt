@@ -1,0 +1,54 @@
+V2.5.74 ALL-POST STRUCTURAL WATERFILL — REGRESSION REPORT
+===========================================================
+
+1) Python compilation
+PASS
+- app.py
+- db.py
+- scheduler_engine.py
+
+2) September 2026 neutral generation
+PASS
+- generated: YES
+- HARD errors: 0
+- exact workload delta: 0.0 for every resident
+- Onko counts: only 0 or 2
+- Onko monthly spread: 2
+- CENTRO RO spread: 1
+- SPS RO spread: 1
+- SPS UG spread: 1
+- Centro UG spread: 1
+- ADC 144 spread: 1
+- ADC 145 spread: 1
+- Vaikų UG spread: 1
+- Mamografijos spread: 1
+- Mamografijos tested distribution: 12 residents x2, 4 residents x3
+- phase-2 post corridor used: ordinary raw spread <=1
+- solve time in regression environment: ~34 s with 45 s caller budget
+
+3) Structural water-fill logic
+PASS
+- Phase 1 freezes work dates/AM-PM/FULL pattern.
+- Phase 2 jointly assigns all non-Onko post labels.
+- First trial is critical<=1 + every ordinary non-Onko post<=1.
+- Wider <=2/<=3 trial occurs only after tighter corridor is proven infeasible.
+- Timeout/no incumbent does not justify widening.
+- L1 equal-share objective minimizes residual distance from each post's equal-share entitlement inside any unavoidable wider corridor.
+- Joint model implicitly supports 2-way, 3-way and larger post-label redistribution cycles.
+
+4) Voluntary ACTUAL swap fairness neutrality
+PASS
+- started from SYSTEM ordinary post spreads <=1.
+- same-day/same-block ordinary post swap was accepted.
+- ACTUAL CENTRO RO spread increased to 2.
+- swap remained valid because workplace/post fairness is not an ACTUAL voluntary-swap blocker.
+- SYSTEM fairness remains the publication baseline.
+
+5) V2.5.73 exact workload + Onko parity preservation
+PASS
+- tested Onko-vs-ordinary voluntary swap.
+- rejected because it created workload 27.5 vs exact target 28.
+- same candidate also created odd Onko count 1.
+- exact monthly workload and Onko 0/2/4... parity remain non-relaxable.
+
+No Supabase migration required.

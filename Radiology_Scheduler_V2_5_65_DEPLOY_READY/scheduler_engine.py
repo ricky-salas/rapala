@@ -688,10 +688,14 @@ ROTATION_CATEGORIES = (
 # co-equal CRITICAL exposure categories. Their count spread is protected before
 # RESIDENT HARD and may not be traded for ordinary SOFT satisfaction.
 CRITICAL_ROTATION_CATEGORIES = ("SPS RO", "SPS UG")
-NONCRITICAL_ROTATION_CATEGORIES = tuple(c for c in ROTATION_CATEGORIES if c not in CRITICAL_ROTATION_CATEGORIES)
+# V2.5.74: Onko is governed by its own even-pair parity rule (0/2/4...) and
+# therefore cannot share the generic <=1 post-waterfill corridor. Every other
+# ordinary workplace is structurally water-filled across residents.
+NONCRITICAL_ROTATION_CATEGORIES = tuple(c for c in ROTATION_CATEGORIES if c not in CRITICAL_ROTATION_CATEGORIES and c != "Onko RO")
 CRITICAL_SPREAD_TARGET = 1
-NONCRITICAL_SPREAD_NORMAL_CEILING = 2
-NONCRITICAL_SPREAD_EXCEPTIONAL_CEILING = 3
+NONCRITICAL_SPREAD_NORMAL_CEILING = 1
+NONCRITICAL_SPREAD_EXCEPTIONAL_CEILING = 2
+NONCRITICAL_SPREAD_LAST_RESORT_CEILING = 3
 # V2.5.71: same-day AM+PM double burden is a structural group property.
 # Personal 6h/12h work-style preferences may redistribute existing doubles,
 # but may not widen the monthly resident-to-resident double spread beyond 2.
@@ -1672,10 +1676,29 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
 
 
 def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds=45.0):
-    """Phase 2: label fixed work blocks with posts while enforcing equal counts."""
+    """Phase 2: label fixed work blocks with posts using structural all-post water-filling.
+
+    V2.5.74 constitution:
+      * work DATES/BLOCKS from phase 1 stay frozen;
+      * exact post labels are solved jointly across all residents and all posts;
+      * SPS RO/SPS UG target raw spread <=1;
+      * every ordinary post except Onko first attempts the mathematically tight
+        floor/ceil entitlement corridor (raw spread <=1);
+      * a wider ordinary corridor is tried ONLY after the tighter one is proven
+        infeasible, never because of a timeout;
+      * within any unavoidable wider corridor, the objective minimizes total
+        absolute distance from each post's equal-share entitlement, so 3/3/3/1/1/1
+        is driven toward 2/2/2/2/2/2 whenever compatible post exchanges/cycles exist;
+      * because all post labels are solved simultaneously, two-way, three-way and
+        larger same-block redistribution cycles are handled automatically.
+
+    Onko is excluded here because phase 1 already enforces its separate ABSOLUTE
+    parity model: 0/2/4/... per resident and monthly spread <=2.
+    """
     n=len(people); ndays=calendar.monthrange(year,month)[1]
     normal=[s for s in slots if not s.blocked and s.idx not in fixed_gaps and s.department!="Onko RO centre"]
     byid={s.idx:s for s in normal}
+
     def attempt(critical_cap, noncritical_cap):
         mb=_V2564FastMB(); x={}
         for s in normal:
@@ -1683,11 +1706,9 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
                 works=pattern["am"][(pi,s.day)] if s.block=="AM" else pattern["pm"][(pi,s.day)]
                 if works:
                     prior=float(getattr(people[pi],"prior_rotation_counts",{}).get(rotation_category(s),0) or 0)
-                    base_cost=prior*0.002+(((pi+1)*37+(s.idx+1)*13)%101)*1e-8
-                    # V2.5.71: once a person's AM+PM double-day is already fixed
-                    # by phase 1, use that scarce double preferentially for the
-                    # clinically important SPS RO / SPS UG rows instead of pairing
-                    # two ordinary posts. This does not create any new double-day.
+                    # Prior exposure remains only a tiny longitudinal tiebreak. Current-month
+                    # structural water-fill below dominates it.
+                    base_cost=prior*0.0002+(((pi+1)*37+(s.idx+1)*13)%101)*1e-8
                     is_double_day=bool(pattern["am"][(pi,s.day)] and pattern["pm"][(pi,s.day)])
                     if is_double_day:
                         if rotation_category(s) in ("SPS RO","SPS UG"):
@@ -1695,57 +1716,74 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
                         else:
                             base_cost+=0.01
                     x[(pi,s.idx)]=mb.var(cost=base_cost)
+
+        # Every open normal post is filled exactly once.
         for s in normal:
             co={v:1.0 for (pi,sid),v in x.items() if sid==s.idx}
             mb.constraint(co,1.0,1.0)
+
+        # Preserve each resident's phase-1 AM/PM work pattern exactly. The solver can
+        # change only WHICH post a resident occupies inside an already-worked block.
         for pi in range(n):
             for d in range(1,ndays+1):
                 for block in ("AM","PM"):
                     need=1.0 if (pattern["am"][(pi,d)] if block=="AM" else pattern["pm"][(pi,d)]) else 0.0
                     co={v:1.0 for (ppi,sid),v in x.items() if ppi==pi and byid[sid].day==d and byid[sid].block==block}
                     mb.constraint(co,need,need)
-                # V2.5.71: reward covering each already-fixed double-day with at
-                # least one SPS RO / SPS UG assignment. This is a strong placement
-                # preference, not a feasibility blocker, so exact workload and post
-                # fairness remain valid even when a few ordinary-post doubles are
-                # mathematically unavoidable.
                 if pattern["am"][(pi,d)] and pattern["pm"][(pi,d)]:
                     crit={v:1.0 for (ppi,sid),v in x.items() if ppi==pi and byid[sid].day==d and rotation_category(byid[sid]) in ("SPS RO","SPS UG")}
                     if crit:
                         hit=mb.var(0.0,1.0,False,cost=-0.30)
                         co=dict(crit); co[hit]=-1.0
                         mb.constraint(co,0.0,np.inf)
+
         cats=[c for c in ROTATION_CATEGORIES if c!="Onko RO"]
         expr={}
         for pi in range(n):
             for cat in cats:
                 expr[(pi,cat)]={v:1.0 for (ppi,sid),v in x.items() if ppi==pi and rotation_category(byid[sid])==cat}
-        # V2.5.65: protect first educational exposure on sparse posts and use
-        # max/min corridor variables instead of O(n^2) pairwise comparisons.
-        # This is mathematically equivalent for the count difference, but much
-        # faster when vacations create many optional gaps.
+
         cat_slot_counts={cat:sum(1 for ss in normal if rotation_category(ss)==cat) for cat in cats}
         for cat in cats:
-            total=cat_slot_counts.get(cat,0)
-            sparse=(0 < total < 2*n)
-            if sparse:
-                lo=total//max(1,n); hi=int(math.ceil(total/max(1,n)))
+            total=int(cat_slot_counts.get(cat,0))
+            if total<=0:
+                continue
+            cap=critical_cap if cat in CRITICAL_ROTATION_CATEGORIES else noncritical_cap
+            equal_share=float(total)/float(max(1,n))
+            lo=total//max(1,n)
+            hi=int(math.ceil(equal_share))
+
+            # Tight corridor = exact water-fill entitlement band. These direct integer
+            # count bounds are stronger/faster than only a loose max-min auxiliary.
+            if int(cap)<=1:
                 for pi in range(n):
                     mb.constraint(expr[(pi,cat)],float(lo),float(hi))
-                # floor/ceiling already guarantees the best possible difference.
-                continue
-            cap=critical_cap if cat in ("SPS RO","SPS UG") else noncritical_cap
-            cat_hi=max(1,total)
-            vmax=mb.var(0,cat_hi,False,cost=0.0)
-            vmin=mb.var(0,cat_hi,False,cost=0.0)
+            else:
+                cat_hi=max(1,total)
+                vmax=mb.var(0,cat_hi,False,cost=20000.0)
+                vmin=mb.var(0,cat_hi,False,cost=-20000.0)
+                for pi in range(n):
+                    co_hi=dict(expr[(pi,cat)]); co_hi[vmax]=co_hi.get(vmax,0.0)-1.0
+                    mb.constraint(co_hi,-np.inf,0.0)
+                    co_lo=dict(expr[(pi,cat)]); co_lo[vmin]=co_lo.get(vmin,0.0)-1.0
+                    mb.constraint(co_lo,0.0,np.inf)
+                mb.constraint({vmax:1.0,vmin:-1.0},-np.inf,float(cap))
+
+            # Global "higher mode" objective: minimize each resident's absolute
+            # distance from this post's equal-share entitlement. This uses a tiny
+            # linear L1 envelope and acts jointly across all categories, enabling
+            # fairness-improving cross-post exchanges and longer cycles.
             for pi in range(n):
-                co_hi=dict(expr[(pi,cat)]); co_hi[vmax]=co_hi.get(vmax,0.0)-1.0
-                mb.constraint(co_hi,-np.inf,0.0)
-                co_lo=dict(expr[(pi,cat)]); co_lo[vmin]=co_lo.get(vmin,0.0)-1.0
-                mb.constraint(co_lo,0.0,np.inf)
-            mb.constraint({vmax:1.0,vmin:-1.0},-np.inf,float(cap))
+                dev=mb.var(0.0,max(1.0,float(total)),False,cost=500.0)
+                co1=dict(expr[(pi,cat)]); co1[dev]=co1.get(dev,0.0)-1.0
+                mb.constraint(co1,-np.inf,equal_share)
+                co2={k:-v for k,v in expr[(pi,cat)].items()}; co2[dev]=co2.get(dev,0.0)-1.0
+                mb.constraint(co2,-np.inf,-equal_share)
+
         res=mb.solve(seconds)
-        if res.x is None: return None,res
+        if res.x is None:
+            return None,res
+
         assignments={}
         onko_by_day={s.day:s for s in slots if s.department=="Onko RO centre" and not s.blocked and s.idx not in fixed_gaps}
         for pi,p in enumerate(people):
@@ -1755,17 +1793,26 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
                     if os is None: return None,res
                     assignments[os.idx]=p.initials
         for (pi,sid),v in x.items():
-            if float(res.x[v])>0.5: assignments[sid]=people[pi].initials
+            if float(res.x[v])>0.5:
+                assignments[sid]=people[pi].initials
         return assignments,res
-    # Never widen because of a timeout. Advance only after a mathematically proven infeasible status.
-    trials=[(1,2),(1,3),(2,3)]
+
+    # Never widen because of a timeout. 0-1 is the constitutional target for all
+    # ordinary posts. Wider levels are allowed only after the tighter model is
+    # mathematically proven infeasible by HiGHS.
+    trials=[(1,1),(1,2),(1,3),(2,3)]
     logs=[]
     for cc,nc in trials:
         assignments,res=attempt(cc,nc)
-        logs.append({"critical_cap":cc,"noncritical_cap":nc,"status":int(getattr(res,"status",99)),"incumbent":bool(assignments)})
+        logs.append({
+            "critical_cap":cc,"noncritical_cap":nc,
+            "status":int(getattr(res,"status",99)),"incumbent":bool(assignments),
+            "meaning":"ORDINARY_WATERFILL_0_1" if nc==1 else f"PROVEN_WIDER_0_{nc}",
+        })
         if assignments is not None:
             return assignments,cc,nc,logs,float(getattr(res,"fun",0.0) or 0.0)
         if int(getattr(res,"status",99))!=2:
+            # timeout/no incumbent is NOT proof the tight water-fill corridor is impossible
             return None,None,None,logs,None
     return None,None,None,logs,None
 
@@ -1789,10 +1836,10 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "SPS UG":int(rotation_spreads.get("SPS UG",999)),
         "WEEKENDS":int(g.get("weekend_monthly_spread",999) or 0),
     }
-    noncritical={cat:int(rotation_spreads.get(cat,0) or 0) for cat in ROTATION_CATEGORIES if cat not in ("SPS RO","SPS UG")}
-    # Onko is solved in phase 1 as even pairs with an absolute monthly spread <=2.
+    noncritical={cat:int(rotation_spreads.get(cat,0) or 0) for cat in NONCRITICAL_ROTATION_CATEGORIES}
+    # Onko is solved in phase 1 under its separate even-pair parity constitution.
     worst_noncritical=max(list(noncritical.values())+[0])
-    quality=bool(max(critical_spreads.values())<=int(critical_cap) and worst_noncritical<=max(2,int(noncritical_cap)))
+    quality=bool(max(critical_spreads.values())<=int(critical_cap) and worst_noncritical<=int(noncritical_cap))
     if not quality: return None
     g.update({
         "solve_stage":"V2567_EXACT_WORKLOAD_ONKO_PAIRS_TWO_PHASE",
@@ -1804,7 +1851,12 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "noncritical_post_spreads":noncritical,
         "noncritical_worst_spread":worst_noncritical,
         "noncritical_guardrail_ceiling":int(noncritical_cap),
-        "noncritical_guardrail_status":"NORMAL_0_2_TWO_PHASE" if int(noncritical_cap)<=2 else "EXCEPTIONAL_0_3_TWO_PHASE",
+        "noncritical_guardrail_status":("STRUCTURAL_WATERFILL_0_1_TWO_PHASE" if int(noncritical_cap)<=1 else "PROVEN_EXCEPTION_0_2_TWO_PHASE" if int(noncritical_cap)==2 else "PROVEN_LAST_RESORT_0_3_TWO_PHASE"),
+        "post_waterfill_structural_hard":True,
+        "post_waterfill_target_spread":1,
+        "post_waterfill_proven_ceiling":int(noncritical_cap),
+        "post_waterfill_categories":list(NONCRITICAL_ROTATION_CATEGORIES),
+        "post_waterfill_exchange_scope":"ALL_FIXED_AM_PM_POST_LABELS_JOINTLY; TWO_WAY_AND_MULTIWAY_CYCLES_IMPLICIT",
         "generation_quality_gate_passed":True,
         "generation_quality_issues":[],
         "resident_hard_min_total_found":int(pattern.get("resident_hard_min_total",0)),
@@ -1812,7 +1864,7 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "resident_hard_current_max_lock":int(pattern.get("resident_hard_max_loss",0)),
         "post_assignment_search_log":post_log,
         "fixed_gap_slot_ids":sorted(int(x) for x in fixed_gaps),
-        "count_date_separation":"Monthly workload targets are exact HARD. Onko is assigned in even pairs with monthly spread <=2, no consecutive calendar-day Onko for the same resident, and cumulative catch-up across published months; other sparse posts keep first-exposure fairness when mathematically feasible.",
+        "count_date_separation":"Phase 1 freezes exact workload/date/block pattern. Phase 2 jointly water-fills all non-Onko post labels with target raw spread <=1; wider corridor is allowed only after the tighter corridor is mathematically proven infeasible. Onko remains separate: even pairs 0/2/4..., monthly spread <=2.",
         "sparse_first_exposure_required":True,
         "onko_first_exposure_required":False,
         "exact_workload_targets_required":True,
@@ -1827,7 +1879,7 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
     })
     msg=(
         "OK — exact-workload fairness-first two-phase schedule. Mėnesio krūvio targetas kiekvienam rezidentui išlaikytas tiksliai; Onko skiriamas poromis ir ne dvi kalendorines dienas iš eilės; "
-        f"SPS RO / SPS UG / savaitgalių skirtumas ≤ {critical_cap}, kitų pagrindinių postų skirtumas ≤ {noncritical_cap}."
+        f"SPS RO / SPS UG / savaitgalių skirtumas ≤ {critical_cap}; kitų ne-Onko postų struktūrinis water-fill skirtumas ≤ {noncritical_cap} (0-1 bandomas pirmas ir užrakinamas, jei feasible)."
     )
     obj=float(pattern.get("objective_value",0.0) or 0.0)+float(post_obj or 0.0)
     return SolveResult(True,msg,assigned,targets,stats,obj,request_snapshot=request_snapshot)
@@ -3563,7 +3615,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     noncritical_guardrail_status="UNTESTED"
     noncritical_search_log=[]
     noncrit_base_res=fairness_res
-    for candidate_ceiling,label in ((NONCRITICAL_SPREAD_NORMAL_CEILING,"NORMAL_0_2"),(NONCRITICAL_SPREAD_EXCEPTIONAL_CEILING,"EXCEPTIONAL_0_3")):
+    for candidate_ceiling,label in ((NONCRITICAL_SPREAD_NORMAL_CEILING,"STRUCTURAL_WATERFILL_0_1"),(NONCRITICAL_SPREAD_EXCEPTIONAL_CEILING,"PROVEN_EXCEPTION_0_2"),(NONCRITICAL_SPREAD_LAST_RESORT_CEILING,"PROVEN_LAST_RESORT_0_3")):
         mark=len(mb.rows)
         for cat in NONCRITICAL_ROTATION_CATEGORIES:
             zmax,zmin=monthly_post_spread_pairs[cat]
@@ -3692,7 +3744,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     stats["global"]["preference_fairness_model"] = "V2558_VERTICAL_HORIZONTAL_HOLIDAY_COHORT_WATERFILL"
     stats["global"]["preference_vertical_order"] = ["ABSOLUTE_HARD","CRITICAL_SPS_RO_SPS_UG_WEEKENDS","RESIDENT_HARD","CRITICAL_SPACING","WEEKLY_LOAD_RECOVERY_WATERFILL","HOLIDAY_PREFERENCE_WATERFILL","STRUCTURAL_BURDEN","NONCRITICAL_POST_GUARDRAIL","SOFT1","SOFT2","SOFT3","NONCRITICAL_POST_DEBT_CATCHUP"]
     stats["global"]["holiday_waterfill_locks"] = dict(holiday_locks)
-    stats["global"]["post_fairness_model"] = "V2558_CRITICAL_01_HOLIDAY_COHORT_WEEKLY_RECOVERY_OTHER_02_03_POST_DEBT"
+    stats["global"]["post_fairness_model"] = "V2574_ALL_POST_STRUCTURAL_WATERFILL_01_ONKO_PAIR_SPECIAL"
     stats["global"]["weekly_load_waterfill"] = {
         "soft_target_hours":float(WEEKLY_LOAD_SOFT_TARGET_HOURS),
         "hard_rolling7_ceiling_hours":float(effective_max_hours7),
@@ -3764,25 +3816,25 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
         "WEEKLY_RECOVERY":"Around-40h planning target is water-filled across residents; repeated doubles are de-clustered, and after two consecutive doubles the next day is PM-only or off.",
         "CRITICAL_STRUCTURAL":"SPS RO + SPS UG + weekend exposure are co-equal structural safeguards; target raw max-min 0-1 and ordinary SOFT cannot widen them.",
         "RESIDENT_HARD":"Negaliu dirbti request: minimize total losses first, then distribute unavoidable losses fairly inside the critical structural locks.",
-        "NONCRITICAL_POST_CORE":"Other posts use layered water-filling with normal <=2 corridor; <=3 only as a diagnosed exceptional last resort, followed by longitudinal post-debt catch-up."
+        "NONCRITICAL_POST_CORE":"Every non-Onko ordinary post uses structural water-filling with target raw spread <=1 before SOFT. A wider <=2/<=3 corridor is allowed only after the tighter corridor is mathematically proven infeasible; post debt then records residual imbalance."
     }
     hard_ok = stats["global"]["hard_errors"] == 0
     critical_ok=bool(stats["global"].get("critical_spread_quality_gate_passed",False))
     noncritical_worst=int(stats["global"].get("noncritical_worst_spread",999) or 0)
-    noncritical_ok=bool(noncritical_worst<=NONCRITICAL_SPREAD_EXCEPTIONAL_CEILING)
+    noncritical_ok=bool(noncritical_worst<=NONCRITICAL_SPREAD_LAST_RESORT_CEILING)
     pref_quality=stats["global"].get("preference_equity_quality_gate_passed")
     quality_issues=[]
     if not critical_ok:
         quality_issues.append(
             f"CRITICAL SPS RO / SPS UG / weekend spread {stats['global'].get('critical_worst_spread')} > 1"
         )
-    if noncritical_worst>NONCRITICAL_SPREAD_EXCEPTIONAL_CEILING:
+    if noncritical_worst>NONCRITICAL_SPREAD_LAST_RESORT_CEILING:
         quality_issues.append(
-            f"noncritical post spread {noncritical_worst} > exceptional ceiling {NONCRITICAL_SPREAD_EXCEPTIONAL_CEILING}"
+            f"ordinary post spread {noncritical_worst} > last-resort ceiling {NONCRITICAL_SPREAD_LAST_RESORT_CEILING}"
         )
     elif noncritical_worst>NONCRITICAL_SPREAD_NORMAL_CEILING:
         quality_issues.append(
-            f"noncritical post spread {noncritical_worst}: exceptional <=3 corridor used; must be repaid through post debt"
+            f"ordinary post spread {noncritical_worst}: 0-1 water-fill was proven infeasible; wider certified corridor used"
         )
     if pref_quality is False:
         quality_issues.append(
@@ -3805,18 +3857,18 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     elif not noncritical_ok:
         final_message = (
             "HARD/CRITICAL VALIDATION — PASSED, BUT NONCRITICAL POST GATE — FAILED. "
-            f"Worst noncritical spread is {noncritical_worst}; even the exceptional ceiling is {NONCRITICAL_SPREAD_EXCEPTIONAL_CEILING}."
+            f"Worst ordinary post spread is {noncritical_worst}; even the last-resort ceiling is {NONCRITICAL_SPREAD_LAST_RESORT_CEILING}."
         )
     elif noncritical_worst>NONCRITICAL_SPREAD_NORMAL_CEILING:
         final_message = (
             "VALIDATION — PASSED — CRITICAL SPS/WEEKEND 0-1 PROTECTED; "
-            "EXCEPTIONAL NONCRITICAL <=3 CORRIDOR USED AND POST DEBT RECORDED FOR FUTURE CATCH-UP."
+            "A WIDER ORDINARY-POST WATER-FILL CORRIDOR WAS USED ONLY AFTER 0-1 WAS PROVEN INFEASIBLE; POST DEBT RECORDED."
         )
     else:
         final_message = (
             "VALIDATION — PASSED — CRITICAL SPS/WEEKEND 0-1 PROTECTED; "
             "WEEKLY LOAD/RECOVERY WATER-FILL ACTIVE (40h target, <=48h rolling-7 GENERATION ceiling; voluntary normal-swap >48h only with explicit ACK); "
-            "NONCRITICAL POSTS <=2; SOFT WATER-FILL + LONGITUDINAL POST-DEBT OPTIMIZATION APPLIED."
+            "ORDINARY POSTS STRUCTURALLY WATER-FILLED TOWARD <=1 BEFORE SOFT; LONGITUDINAL POST-DEBT OPTIMIZATION APPLIED."
         )
 
     return SolveResult(
@@ -4675,10 +4727,11 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
     critical_spread_quality_gate_passed=bool(critical_worst_spread<=CRITICAL_SPREAD_TARGET)
     noncritical_normal_guardrail_passed=bool(noncritical_worst_spread<=NONCRITICAL_SPREAD_NORMAL_CEILING)
     noncritical_exceptional_guardrail_passed=bool(noncritical_worst_spread<=NONCRITICAL_SPREAD_EXCEPTIONAL_CEILING)
-    # Backward-compatible gate: critical must be <=1; noncritical may be <=3 only
-    # as a diagnosed exceptional last resort. solve_schedule records whether <=2
-    # was explicitly tested first.
-    post_spread_quality_gate_passed=bool(critical_spread_quality_gate_passed and noncritical_exceptional_guardrail_passed)
+    noncritical_last_resort_guardrail_passed=bool(noncritical_worst_spread<=NONCRITICAL_SPREAD_LAST_RESORT_CEILING)
+    # V2.5.74: ordinary post target is raw spread <=1. validate_schedule can report
+    # the observed matrix; solve_schedule is responsible for proving whether a
+    # wider certified corridor was unavoidable before returning a SYSTEM draft.
+    post_spread_quality_gate_passed=bool(critical_spread_quality_gate_passed and noncritical_last_resort_guardrail_passed)
 
     # V2.5.53 weekly-load / recovery diagnostics. These are separate from the
     # legacy 0-100 fairness score because they are safety/temporal-burden metrics.
@@ -4894,16 +4947,20 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             "noncritical_worst_spread":int(noncritical_worst_spread),
             "noncritical_normal_guardrail":int(NONCRITICAL_SPREAD_NORMAL_CEILING),
             "noncritical_exceptional_guardrail":int(NONCRITICAL_SPREAD_EXCEPTIONAL_CEILING),
+            "noncritical_last_resort_guardrail":int(NONCRITICAL_SPREAD_LAST_RESORT_CEILING),
             "noncritical_normal_guardrail_passed":noncritical_normal_guardrail_passed,
             "noncritical_exceptional_guardrail_passed":noncritical_exceptional_guardrail_passed,
-            "post_spread_quality_ceiling": 3,
+            "noncritical_last_resort_guardrail_passed":noncritical_last_resort_guardrail_passed,
+            "post_waterfill_structural_target":1,
+            "post_waterfill_categories":list(NONCRITICAL_ROTATION_CATEGORIES),
+            "post_spread_quality_ceiling": int(NONCRITICAL_SPREAD_LAST_RESORT_CEILING),
             "post_spread_quality_gate_passed": post_spread_quality_gate_passed,
             "post_debt_cumulative_means":{k:round(v,2) for k,v in cumulative_means.items()},
             "preference_equity_quality_target_pp": 15.0,
             "preference_equity_quality_gate_passed": preference_equity_quality_gate_passed,
             "preference_fairness_model": "V2553_VERTICAL_RANK_HORIZONTAL_WEEKLY_RECOVERY_WATERFILL_GUARDRAILS",
             "preference_vertical_order": ["ABSOLUTE_HARD","CRITICAL_SPS_RO_SPS_UG_WEEKENDS","RESIDENT_HARD","CRITICAL_SPACING","WEEKLY_LOAD_RECOVERY_WATERFILL","STRUCTURAL_BURDEN","NONCRITICAL_POST_GUARDRAIL","SOFT1","SOFT2","SOFT3","NONCRITICAL_POST_DEBT_CATCHUP"],
-            "post_fairness_model": "V2553_CRITICAL_01_WEEKLY_RECOVERY_NONCRITICAL_02_03_LONGITUDINAL_DEBT",
+            "post_fairness_model": "V2574_ALL_POST_STRUCTURAL_WATERFILL_01_ONKO_PAIR_SPECIAL",
             "soft_waterfill_locks": {},
         },
         "people": pdata,
@@ -5014,9 +5071,11 @@ def preview_swap(year: int, month: int, people: List[Person], result: SolveResul
     any rolling 7, >60h in any rolling 7, mandatory post-duty rest and operational
     backup/coverage feasibility, exact monthly workload equality and even Onko
     pairing. Generator-only fatigue shaping, the 48h generation ceiling, consecutive
-    Onko, weekend uniqueness, preference and post spread are not blockers; affected
-    residents see those negotiable consequences as an acknowledgement table and may
-    accept them bilaterally. A swap can never create 1/3/5 Onko or 27.5/28.5 workload.
+    Onko, weekend uniqueness, preference, workplace water-fill, post spread, modality
+    diversity and educational exposure are NOT blockers; affected residents may
+    voluntarily create an uneven ACTUAL post matrix by bilateral acceptance. Exact
+    monthly workload equality and Onko parity remain non-relaxable contractual/hour
+    invariants from V2.5.73: a swap still cannot create 1/3/5 Onko or 27.5/28.5 workload.
     """
     if not result.ok:
         return False, "Nėra validžios bazinės versijos.", None, {}
@@ -5047,7 +5106,7 @@ def preview_swap(year: int, month: int, people: List[Person], result: SolveResul
     ack_needed={who:_swap_ack_fingerprint(rows) for who,rows in warnings.items() if rows}
     stats["global"]["swap_warning_rows"]=warnings
     stats["global"]["swap_ack_fingerprints"]=dict(ack_needed)
-    stats["global"]["swap_policy"]="V2573_REALITY_GUARDRAILS_EXACT_TARGET_ONKO_PARITY_HARD"
+    stats["global"]["swap_policy"]="V2574_ACTUAL_VOLUNTARY_POST_FAIRNESS_NEVER_BLOCKS; EXACT_TARGET_ONKO_PARITY_STILL_HARD"
     return True,"SWAP PREVIEW OK",stats,ack_needed
 
 
@@ -5140,7 +5199,7 @@ def revalidate_loaded_result(
 
 def serialize_result(result: SolveResult) -> dict:
     return {
-        "engine_stats_version": "V2.5.73",
+        "engine_stats_version": "V2.5.74",
         "ok": result.ok,
         "message": result.message,
         "assignments": {str(k): v for k, v in result.assignments.items()},

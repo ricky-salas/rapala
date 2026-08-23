@@ -203,3 +203,12 @@ Seniūnės Dubliai lange prieš rankinį dublio perėmimą ir aktyvavimą rodoma
 - Kai dublis jau reikalingas, antroje fazėje pirmiausia stengiamasi, kad tokia diena turėtų bent vieną svarbią SPS RO arba SPS UG vietą. Sekmadienio budėjimai jau yra SPS RO.
 - Onko RO 08:00–17:00 yra svarbi 9 val. pilnos dienos pamaina, tačiau techniškai **nėra** AM+PM dublis ir į dublių skirtumą neįskaičiuojama.
 - Shift Happens viešas versijos numeris lieka 3.0; vidinis solverio checkpointas — V2.5.71.
+
+
+## V2.5.74 — VISŲ POSTŲ STRUKTŪRINIS WATER-FILL
+
+SYSTEM generatorius po darbo datų / AM-PM blokų parinkimo visus ne-Onko postų labelius sprendžia **vienu bendru modeliu**. Kiekvienam postui pirmiausia taikomas floor/ceil entitlement koridorius raw spread 0–1. Tai reiškia, kad trečia ekspozicija negali likti vienam rezidentui, kol kitas tame pačiame poste turi tik vieną, jeigu egzistuoja validus dviejų ar daugiau rezidentų postų perkeitimas, kuris išlaiko darbo datas, blokus, tikslų krūvį ir aukštesnes HARD taisykles.
+
+Jei 0–1 koridorius neturi sprendinio, sistema gali pereiti į 0–2, o po to 0–3 tik tada, kai ankstesnis siauresnis koridorius yra **matematiškai įrodytas neįmanomas**. Timeout nėra toks įrodymas.
+
+Po publikavimo savanoriški bilateraliniai ACTUAL swapai yra fairness-neutral. Jei abu rezidentai sutinka ir nėra tikro saugos / darbo-laiko / fizinio HARD pažeidimo, postų ekspozicijos, UG/Mamografijos kiekiai, diversity ar SYSTEM water-fill nėra swapo blokatoriai. SYSTEM fairness ir postų matrica lieka užšaldyti publikavimo momentu. V2.5.73 tikslus mėnesio workload ir lyginė Onko parity lieka neperžengiami.

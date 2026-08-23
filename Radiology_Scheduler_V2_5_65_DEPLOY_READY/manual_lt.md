@@ -684,7 +684,7 @@ V2.5.52 atskiria tris kritines struktūrinio krūvio kategorijas: **SPS RO, SPS 
 
 Ši taisyklė saugo ne tik mokomąją ekspoziciją, bet ir nuovargį. Todėl tarp sprendimų su vienodais kritinių kategorijų skaičiais sistema papildomai vengia kelių savaitgalių iš eilės bei bereikalingo SPS RO / SPS UG suspaudimo gretimomis dienomis. Vertinamas ir ankstesnio mėnesio savaitgalių „uodegos“ tęstinumas.
 
-Likę postai — CENTRO RO, Onko RO, Centro UG, ADC 144, ADC 145, Vaikų UG ir Mamografijos — taip pat water-fill'inami. Idealus spread yra 0–1, normalus mėnesio guardrail yra **≤2**. **≤3** leidžiamas tik kaip aiškiai diagnozuota exceptional išimtis, jei ≤2 neįmanoma išlaikius aukštesnio rango užraktus. Legitimus SOFT gali naudoti 0–2 koridoriaus lankstumą, bet negali pralaužti kritinio SPS/weekend 0–1.
+Likę ne-Onko postai — CENTRO RO, Centro UG, ADC 144, ADC 145, Vaikų UG ir Mamografijos — yra **SYSTEM struktūrinis water-fill HARD sluoksnis**. Pirma bandomas matematiškai lygus floor/ceil pasiskirstymas, t. y. raw spread **0–1**. Pvz., 38 Mamografijos vietos / 16 rezidentų reiškia 10×2 ir 6×3; 1-vs-3 negali likti, jei galimas validus postų perkeitimas ar kelių rezidentų ciklas. ≤2 ir tik tada ≤3 leidžiama tik solveriui įrodžius, kad siauresnis koridorius neįmanomas dėl aukštesnių HARD/date/block apribojimų. Onko turi atskirą porinę 0/2/4... struktūrą.
 
 Laikinas ordinary-post nukrypimas registruojamas kaip **POST DEBT**. Teigiamas debt reiškia, kad rezidentui istoriškai trūksta konkretaus posto exposure ir ateities mėnesiais jis gauna catch-up prioritetą; neigiamas debt reiškia overexposure ir papildomas tos pozicijos vienetas jam skiriamas vėliau. POST DEBT yra kompensavimo mechanizmas, o ne leidimas sąmoningai sudaryti blogą einamojo mėnesio spreadą.
 
@@ -862,3 +862,12 @@ Nustatymas yra individualus ir kitiems rezidentams ar grupės suvestinėse nerod
 - V2.5.69 consecutive-Onko išimtis lieka siaura: po publikavimo dvi Onko dienos iš eilės gali būti tik ACK pasekmė, jei visi kiti ABSOLUTE HARD išlaikyti. Ji **neleidžia** apeiti Onko parity ar tikslaus targeto.
 
 Trumpai: **EXACT MONTHLY TARGET + ONKO 0/2/4/... = ABSOLUTE HARD VISUR.**
+
+
+## V2.5.74 — VISŲ POSTŲ STRUKTŪRINIS WATER-FILL
+
+SYSTEM generatorius po darbo datų / AM-PM blokų parinkimo visus ne-Onko postų labelius sprendžia **vienu bendru modeliu**. Kiekvienam postui pirmiausia taikomas floor/ceil entitlement koridorius raw spread 0–1. Tai reiškia, kad trečia ekspozicija negali likti vienam rezidentui, kol kitas tame pačiame poste turi tik vieną, jeigu egzistuoja validus dviejų ar daugiau rezidentų postų perkeitimas, kuris išlaiko darbo datas, blokus, tikslų krūvį ir aukštesnes HARD taisykles.
+
+Jei 0–1 koridorius neturi sprendinio, sistema gali pereiti į 0–2, o po to 0–3 tik tada, kai ankstesnis siauresnis koridorius yra **matematiškai įrodytas neįmanomas**. Timeout nėra toks įrodymas.
+
+Po publikavimo savanoriški bilateraliniai ACTUAL swapai yra fairness-neutral. Jei abu rezidentai sutinka ir nėra tikro saugos / darbo-laiko / fizinio HARD pažeidimo, postų ekspozicijos, UG/Mamografijos kiekiai, diversity ar SYSTEM water-fill nėra swapo blokatoriai. SYSTEM fairness ir postų matrica lieka užšaldyti publikavimo momentu. V2.5.73 tikslus mėnesio workload ir lyginė Onko parity lieka neperžengiami.

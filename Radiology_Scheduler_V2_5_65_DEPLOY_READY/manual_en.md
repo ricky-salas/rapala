@@ -612,3 +612,12 @@ The setting is individual and is not displayed to other residents or in group su
 - The narrow V2.5.69 consecutive-Onko exception remains: after publication, consecutive Onko may be an ACK consequence if all true ABSOLUTE HARD rules remain satisfied. It does **not** override Onko parity or exact workload.
 
 In short: **EXACT MONTHLY TARGET + ONKO 0/2/4/... = ABSOLUTE HARD IN ALL MODES.**
+
+
+## V2.5.74 — ALL-POST STRUCTURAL WATER-FILL
+
+After work dates / AM-PM blocks are chosen, SYSTEM generation solves all non-Onko post labels **jointly in one model**. Each post first targets its mathematical floor/ceil entitlement corridor, raw spread 0–1. Therefore a third exposure should not remain with one resident while another resident has only one exposure to that post when a valid two-person or multi-person post exchange can equalize the matrix without changing work dates/blocks or violating higher HARD rules.
+
+The model may widen to 0–2 and then 0–3 only after the tighter corridor is **mathematically proven infeasible**. A timeout is not proof of infeasibility.
+
+After publication, mutually accepted bilateral ACTUAL swaps are fairness-neutral. If the swap passes true safety/work-time/physical HARD checks, workplace exposure, US/Mammography counts, diversity and SYSTEM water-fill do not block it. SYSTEM fairness and the publication post matrix remain frozen. V2.5.73 exact monthly workload and even Onko parity remain non-relaxable.
