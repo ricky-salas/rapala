@@ -1,0 +1,8 @@
+V2.5.72 UI PATCH — HIDE INTERNAL _weekday COLUMN
+
+Change:
+- The recurring-preferences editor no longer shows the internal `_weekday` helper column.
+- Users see only the Lithuanian/English weekday name, recurring rule, and time block.
+- Internal Python weekday indexing remains Monday=0 ... Sunday=6 and is still used when saving.
+
+No scheduler-engine, fairness, workstyle, Supabase, or research logic changed.

@@ -2669,7 +2669,7 @@ with tabs[pos]:
             rr=existing_rec.get(wd_i,{}); typ=rr.get("preference_type","none"); block=rr.get("block","FULL")
             rec_rows.append({tr("weekday_name"):WEEKDAY_FULL[lang][wd_i],tr("recurring_rule"):rule_to_label.get(typ,tr("rec_none")),tr("recurring_time"):block_to_label.get(block,tr("full_day")),"_weekday":wd_i})
         rec_df=pd.DataFrame(rec_rows)
-        edited=st.data_editor(rec_df,column_config={tr("recurring_rule"):st.column_config.SelectboxColumn(options=list(rule_to_label.values())),tr("recurring_time"):st.column_config.SelectboxColumn(options=list(block_to_label.values()))},disabled=[tr("weekday_name"),"_weekday"],hide_index=True,use_container_width=True,key=f"recurring_{active_user}_{lang}")
+        edited=st.data_editor(rec_df,column_config={tr("recurring_rule"):st.column_config.SelectboxColumn(options=list(rule_to_label.values())),tr("recurring_time"):st.column_config.SelectboxColumn(options=list(block_to_label.values())),"_weekday":None},disabled=[tr("weekday_name")],hide_index=True,use_container_width=True,key=f"recurring_{active_user}_{lang}")
         if st.button(tr("save_long_term"),type="primary"):
             payload=[]; invalid_weekend_soft=[]
             for _,r in edited.iterrows():
