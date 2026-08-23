@@ -2646,9 +2646,18 @@ with tabs[pos]:
                 if not email.strip() or "@" not in email or "." not in email.split("@")[-1]: st.error(tr("email_required"))
                 elif phone.strip() and not re.fullmatch(r"\+[1-9][0-9]{7,14}",phone.strip()): st.error("+3706XXXXXXX")
                 else:
-                    db.save_account_settings(active_user,{"email":email,"weekday_preference":wp,"weekend_preference":wep,"holiday_preference":hp,"spread_preference":sp,"shift_length_preference":shift_len_pref,"avoid_doubles":avoid,"notifications_on":notif,"reminder_start_day":int(start),"preferred_language":lang,"include_backups_in_calendar":include_bk,"backup_email_alerts":backup_email,"phone_e164":phone,"backup_sms_alerts":False})
-                    refresh_calendar_subscription_feeds([active_user])
-                    flash_saved(tr("settings_saved"))
+                    try:
+                        db.save_account_settings(active_user,{"email":email,"weekday_preference":wp,"weekend_preference":wep,"holiday_preference":hp,"spread_preference":sp,"shift_length_preference":shift_len_pref,"avoid_doubles":avoid,"notifications_on":notif,"reminder_start_day":int(start),"preferred_language":lang,"include_backups_in_calendar":include_bk,"backup_email_alerts":backup_email,"phone_e164":(phone.strip() or None),"backup_sms_alerts":False})
+                        refresh_calendar_subscription_feeds([active_user])
+                    except Exception as exc:
+                        st.error(
+                            "Nustatymų išsaugoti nepavyko. Duomenys nebuvo pakeisti. "
+                            "Jei klaida kartojasi, administratorius turi patikrinti account_settings schemą."
+                        )
+                        if advanced_mode:
+                            st.caption(f"{type(exc).__name__}: {exc}")
+                    else:
+                        flash_saved(tr("settings_saved"))
         st.divider(); st.markdown(f"### {tr('long_term')}"); st.caption(tr("long_term_help"))
         existing_rec={int(r["weekday"]):r for r in db.get_recurring_preferences(active_user)}
         rule_to_label={"hard_unavailable":tr("rec_hard"),"soft_free":tr("rec_soft"),"preferred":tr("rec_preferred"),"none":tr("rec_none")}

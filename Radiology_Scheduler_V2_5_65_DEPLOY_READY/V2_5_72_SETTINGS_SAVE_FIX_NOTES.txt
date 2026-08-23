@@ -1,0 +1,34 @@
+V2.5.72 WORKSTYLE UI — SETTINGS SAVE FIX
+
+SOURCE PRESERVED
+- app.py internal engine version remains:
+  2.5.71 DOUBLE FAIRNESS + SHIFT-LENGTH ALLOCATION
+- DISPLAY_VERSION remains 3.0
+- scheduler_engine.py is the newer uploaded engine containing V2.5.71
+  double-fairness + shift-length allocation logic.
+- No scheduling/fairness/Onko/workload rule was changed.
+
+ROOT CAUSE
+The Workstyle UI / db.py stores:
+0 = no preference
+1 = prefer 6h
+2 = mixed
+3 = prefer 12h
+
+The live Supabase account_settings constraint still allowed only -1, 0, 1.
+Selecting Mixed (2) or Prefer 12h (3) could therefore raise a PostgREST APIError.
+
+LIVE DATABASE FIX
+Migration v2572_expand_shift_length_preference_range was applied successfully.
+The database now accepts integers 0..3.
+
+ADDITIONAL DEFENSE
+- app.py sends blank phone as SQL NULL, never empty string.
+- db.py already independently normalizes blank phone to NULL.
+- Settings save now catches backend errors locally instead of crashing the entire app.
+
+DEPLOY
+Upload the CONTENTS of this folder to the GitHub repo root, replacing app.py,
+db.py and scheduler_engine.py together.
+
+No additional Supabase action is needed for the already-connected production project.
