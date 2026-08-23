@@ -41,6 +41,7 @@ from scheduler_engine import (
 import db
 
 APP_VERSION = "2.5.69 ONKO VOLUNTARY SWAP OVERRIDE"
+DISPLAY_VERSION = "3.0"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "G.M."
 DEFAULT_SUPABASE_URL = "https://gqdlwhjgwqmuoolybusy.supabase.co"
@@ -52,7 +53,7 @@ SENIOR_GUIDE_EN = (BASE / "SENIOR_USABILITY_GUIDE_EN.md").read_text(encoding="ut
 
 db.init_db(DEFAULT_MANUAL_LT, DEFAULT_MANUAL_EN, DEFAULT_PEOPLE)
 
-st.set_page_config(page_title="Radiology Scheduler", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Shift Happens", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
 <style>
 html, body, [class*="css"] {font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
@@ -2023,7 +2024,7 @@ def localized_email_log(rows):
     } for r in rows])
 
 # --- Identity, role and month ---
-st.sidebar.title("Radiology Scheduler"); st.sidebar.caption(f"Web V{APP_VERSION}")
+st.sidebar.title("Shift Happens"); st.sidebar.caption(f"PGY-1 Radiology · v{DISPLAY_VERSION}")
 
 def observer_assignment_changes_df(y,m,baseline,current):
     if baseline is None or current is None:
@@ -2335,7 +2336,7 @@ if advanced_mode:
 st.title(tr("app_title"))
 if advanced_mode:
     st.caption(tr("app_caption"))
-    st.success(f"RUNNING BUILD: V{APP_VERSION}")
+    st.success(f"RUNNING BUILD: V{DISPLAY_VERSION}")
     st.info(
         ("IŠPLĖSTINIS REŽIMAS — rodoma pilna fairness, guardrail, solverio ir tyrimo diagnostika."
          if lang=="LT" else
