@@ -285,7 +285,13 @@ def get_recurring_preferences(initials: str) -> List[dict]:
 
 
 def all_recurring_preferences() -> Dict[str, List[dict]]:
-    rows = _data(client().table("recurring_preferences").select("*").order("initials").order("weekday").execute())
+    rows = _data(_retry_db(lambda:
+        client().table("recurring_preferences")
+        .select("*")
+        .order("initials")
+        .order("weekday")
+        .execute()
+    ))
     out: Dict[str, List[dict]] = {}
     for r in rows:
         out.setdefault(r["initials"], []).append(r)
@@ -490,19 +496,15 @@ def sync_backups(year: int, month: int, desired: List[dict]):
 
 
 def list_backup_claims(year: int, month: int) -> List[dict]:
-    """All self-selected backup slots for the month.
-
-    Historical table name `weekend_backup_claims` is kept for backward compatibility,
-    but from V2.5.32 it stores WEEKEND + weekday SPS RO + weekday SPS UG claims.
-    """
-    return _data(
+    """All self-selected backup slots for the month."""
+    return _data(_retry_db(lambda:
         client().table("weekend_backup_claims")
         .select("*")
         .eq("year",int(year))
         .eq("month",int(month))
         .order("claimed_at")
         .execute()
-    )
+    ))
 
 
 def list_weekend_backup_claims(year: int, month: int) -> List[dict]:
@@ -511,7 +513,7 @@ def list_weekend_backup_claims(year: int, month: int) -> List[dict]:
 
 
 def get_backup_claims(year: int, month: int, initials: str) -> List[dict]:
-    return _data(
+    return _data(_retry_db(lambda:
         client().table("weekend_backup_claims")
         .select("*")
         .eq("year",int(year))
@@ -519,7 +521,7 @@ def get_backup_claims(year: int, month: int, initials: str) -> List[dict]:
         .eq("initials",initials)
         .order("claimed_at")
         .execute()
-    )
+    ))
 
 
 def get_weekend_backup_claim(year: int, month: int, initials: str) -> Optional[dict]:
@@ -593,10 +595,12 @@ def create_backup_swap_request(year: int, month: int, requester: str, requester_
 
 
 def list_backup_swap_requests(year: int, month: int, initials: Optional[str]=None) -> List[dict]:
-    q=client().table("backup_swap_requests").select("*").eq("year",int(year)).eq("month",int(month))
-    if initials:
-        q=q.or_(f"requester.eq.{initials},target.eq.{initials}")
-    return _data(q.order("created_at",desc=True).execute())
+    def _read():
+        q=client().table("backup_swap_requests").select("*").eq("year",int(year)).eq("month",int(month))
+        if initials:
+            q=q.or_(f"requester.eq.{initials},target.eq.{initials}")
+        return q.order("created_at",desc=True).execute()
+    return _data(_retry_db(_read))
 
 
 def reject_backup_swap_request(request_id: int):
@@ -663,9 +667,11 @@ def _target_month_start(year: int, month: int) -> str:
 def rest_credit_balances(initials: str) -> Dict[str,int]:
     """Currently usable, unexpired, unconsumed and unredeemed rest credits."""
     now_dt=datetime.now(timezone.utc)
-    rows=_data(client().table("backup_credit_earnings")
+    rows=_data(_retry_db(lambda:
+        client().table("backup_credit_earnings")
         .select("credit_type,expires_at,redeemed_at,consumed_at")
-        .eq("initials",initials).execute())
+        .eq("initials",initials).execute()
+    ))
     out={"AM":0,"PM":0,"NIGHT":0}
     for r in rows:
         typ=(r.get("credit_type") or "AM").upper()
@@ -684,9 +690,11 @@ def rest_credit_available_for_month(initials: str, year: int, month: int, credit
     target_dt=_parse_dt(_target_month_start(year,month))
     now_dt=datetime.now(timezone.utc)
     valid_after=max(target_dt,now_dt) if target_dt else now_dt
-    rows=_data(client().table("backup_credit_earnings")
+    rows=_data(_retry_db(lambda:
+        client().table("backup_credit_earnings")
         .select("credit_type,expires_at,redeemed_year,redeemed_month,redeemed_at,consumed_at")
-        .eq("initials",initials).eq("credit_type",typ).execute())
+        .eq("initials",initials).eq("credit_type",typ).execute()
+    ))
     n=0
     for r in rows:
         if r.get("consumed_at"):
@@ -702,8 +710,10 @@ def rest_credit_available_for_month(initials: str, year: int, month: int, credit
 
 
 def all_rest_credit_balances() -> Dict[str,dict]:
-    rows=_data(client().table("backup_credit_earnings")
-        .select("initials,credit_type,expires_at,redeemed_at,consumed_at").execute())
+    rows=_data(_retry_db(lambda:
+        client().table("backup_credit_earnings")
+        .select("initials,credit_type,expires_at,redeemed_at,consumed_at").execute()
+    ))
     now_dt=datetime.now(timezone.utc); out={}
     for r in rows:
         i=r["initials"]; out.setdefault(i,{"AM":0,"PM":0,"NIGHT":0})
@@ -718,10 +728,12 @@ def all_rest_credit_balances() -> Dict[str,dict]:
 
 
 def list_open_work_debts(initials: Optional[str] = None) -> List[dict]:
-    q=client().table("backup_work_debts").select("*").is_("settled_at","null")
-    if initials:
-        q=q.eq("initials",initials)
-    return _data(q.order("due_at").execute())
+    def _read():
+        q=client().table("backup_work_debts").select("*").is_("settled_at","null")
+        if initials:
+            q=q.eq("initials",initials)
+        return q.order("due_at").execute()
+    return _data(_retry_db(_read))
 
 
 def work_debt_balances(initials: str) -> Dict[str,int]:
@@ -749,9 +761,11 @@ def set_rest_credit_redemptions(initials: str, year: int, month: int, am_units: 
 
 
 def redemption_units(initials: str, year: int, month: int, credit_type: str) -> int:
-    rows=_data(client().table("backup_credit_redemptions").select("units")
+    rows=_data(_retry_db(lambda:
+        client().table("backup_credit_redemptions").select("units")
         .eq("initials",initials).eq("target_year",int(year)).eq("target_month",int(month))
-        .eq("credit_type",credit_type.upper()).limit(1).execute())
+        .eq("credit_type",credit_type.upper()).limit(1).execute()
+    ))
     return int(rows[0].get("units",0)) if rows else 0
 
 
@@ -778,9 +792,11 @@ def redeem_credits(initials: str, year: int, month: int, units: int):
 
 def published_baselines_before(year: int, month: int) -> List[dict]:
     """Published SYSTEM schedules strictly before the requested month."""
-    rows=_data(client().table("schedules").select(
-        "year,month,baseline_json,status"
-    ).eq("status","published").execute())
+    rows=_data(_retry_db(lambda:
+        client().table("schedules").select(
+            "year,month,baseline_json,status"
+        ).eq("status","published").execute()
+    ))
     target=int(year)*12+int(month)
     out=[]
     for r in rows:
@@ -790,9 +806,11 @@ def published_baselines_before(year: int, month: int) -> List[dict]:
 
 def fairness_cumulative_before(year: int, month: int) -> Dict[str,dict]:
     """Sum finalized monthly fairness burdens strictly before target month."""
-    rows=_data(client().table("fairness_history").select(
-        "year,month,initials,weekend_assignments,friday_assignments,doubles,weekday_days"
-    ).execute())
+    rows=_data(_retry_db(lambda:
+        client().table("fairness_history").select(
+            "year,month,initials,weekend_assignments,friday_assignments,doubles,weekday_days"
+        ).execute()
+    ))
     target_key=int(year)*12+int(month)
     out={}
     for r in rows:
@@ -831,9 +849,11 @@ def sync_fairness_history(year: int, month: int, people_stats: Dict[str,dict]):
 
 
 def fairness_history_rows(up_to_year: Optional[int] = None, up_to_month: Optional[int] = None) -> List[dict]:
-    rows=_data(client().table("fairness_history").select(
-        "year,month,initials,weekend_assignments,friday_assignments,doubles,weekday_days,updated_at"
-    ).order("year").order("month").order("initials").execute())
+    rows=_data(_retry_db(lambda:
+        client().table("fairness_history").select(
+            "year,month,initials,weekend_assignments,friday_assignments,doubles,weekday_days,updated_at"
+        ).order("year").order("month").order("initials").execute()
+    ))
     if up_to_year is not None and up_to_month is not None:
         key=int(up_to_year)*12+int(up_to_month)
         rows=[r for r in rows if int(r["year"])*12+int(r["month"])<=key]
@@ -849,7 +869,11 @@ def apply_schedule_repair(year: int, month: int, current_payload: dict, slot_id:
 
 
 def list_schedule_repairs(year: int, month: int) -> List[dict]:
-    return _data(client().rpc("list_schedule_repairs_v2512", {"p_year":int(year),"p_month":int(month)}).execute())
+    return _data(_retry_db(lambda:
+        client().rpc("list_schedule_repairs_v2512", {
+            "p_year":int(year),"p_month":int(month)
+        }).execute()
+    ))
 
 
 def record_email(initials: str, kind: str, target_year: int, target_month: int, send_date: str, status: str, detail: str = ""):

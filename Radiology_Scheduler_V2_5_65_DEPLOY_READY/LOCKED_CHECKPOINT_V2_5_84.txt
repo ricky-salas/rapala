@@ -1,0 +1,23 @@
+V2.5.84 FROZEN-SNAPSHOT SWAP READ RESILIENCE
+
+PUBLISHED ACTUAL
+- request_snapshot is primary source for resident constraints/preferences
+- no live recurring_preferences/settings/preferences read needed on ordinary swap rerun
+- SYSTEM publication request set stays immutable
+
+TRANSIENT DB READS
+- recurring_preferences now retry
+- backup claims retry
+- fairness history/prior baselines retry
+- backup swap request list retry
+- credit/debt/repair operational reads retry
+
+V2.5.83
+- RemoteProtocolError/ReadError transient handling preserved
+- swap ACCEPT/REJECT/CANCEL reconciliation preserved
+
+ENGINE
+- API marker 2.5.84 only
+- scheduling rules unchanged
+
+No DB migration.

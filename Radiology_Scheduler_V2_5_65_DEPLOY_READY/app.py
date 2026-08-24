@@ -42,8 +42,8 @@ from scheduler_engine import (
 import db
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.83 TRANSIENT DB RESILIENCE + SWAP WRITE RECONCILIATION"
-EXPECTED_ENGINE_API_VERSION = "2.5.83"
+APP_VERSION = "2.5.84 FROZEN-SNAPSHOT SWAP READ RESILIENCE"
+EXPECTED_ENGINE_API_VERSION = "2.5.84"
 DISPLAY_VERSION = "3.0"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "G.M."
@@ -946,6 +946,20 @@ def load_people(y,m):
     return people
 
 
+def people_for_stored_result(result, y, m):
+    """Use the immutable publication-time request snapshot whenever available.
+
+    This is both semantically correct and operationally resilient: post-publication
+    swap/revalidation must use the frozen request set, so it should not re-read
+    preferences/account_settings/recurring_preferences on every Streamlit rerun.
+    Legacy payloads without a snapshot fall back to live load_people().
+    """
+    frozen=people_from_request_snapshot(getattr(result,"request_snapshot",None))
+    if frozen:
+        return frozen
+    return load_people(y,m)
+
+
 def refresh_result_payload(payload, y, m, use_actual_backups=True):
     """Revalidate stored assignments against the CURRENT engine and ORIGINAL requests.
 
@@ -965,7 +979,7 @@ def refresh_result_payload(payload, y, m, use_actual_backups=True):
             backup_override=stored.backup_snapshot
     try:
         refreshed=revalidate_loaded_result(
-            y,m,load_people(y,m),stored,
+            y,m,people_for_stored_result(stored,y,m),stored,
             backup_assignments=backup_override,
             validation_mode=("voluntary_swap_actual" if use_actual_backups else "generation"),
         )
@@ -4047,7 +4061,7 @@ with tabs[pos]:
                     if s is None: return f"#{rid}"
                     return f"#{rid} · {s.day:02d} {WEEKDAYS[lang][s.weekday]} · {covered} · {s.department} · {block_label(s.block)} · {r['planned_backup']}"
                 rid=st.selectbox(tr("backup_record"),ids,format_func=ridlabel); rr=lookup[rid]; sid=int(rr["covered_slot"]); covered_slot=slot_map.get(sid)
-                people=load_people(year,month); byinit={p.initials:p for p in people}
+                people=people_for_stored_result(result,year,month); byinit={p.initials:p for p in people}
                 # V2.5.61: manual/actual backup selection is broader than the automatic plan.
                 # A resident may voluntarily take the backup even when this creates a fatigue / >48 h
                 # warning or self-overrides RESIDENT HARD. ABSOLUTE unavailability and overlap remain
@@ -4291,7 +4305,7 @@ with tabs[pos]:
                     target_person,slots.get(sb),PERSON_COLORS.get(target_person)
                 )
 
-            swap_people=load_people(year,month)
+            swap_people=people_for_stored_result(result,year,month)
             preview_ok,preview_reason,preview_stats,preview_needed=preview_swap(
                 year,month,swap_people,result,sa,sb,backup_assignments=db.list_backups(year,month)
             )
@@ -4392,7 +4406,7 @@ with tabs[pos]:
                 stale=(fresh.assignments.get(r["slot_a"])!=r["person_a"] or fresh.assignments.get(r["slot_b"])!=r["person_b"])
                 meta=_swap_meta_decode(r.get("reason")); acks=_impact_acks(meta)
                 pv_ok,pv_reason,pv_stats,pv_needed=(False,"stale",None,{}) if stale else preview_swap(
-                    year,month,load_people(year,month),fresh,r["slot_a"],r["slot_b"],backup_assignments=db.list_backups(year,month)
+                    year,month,people_for_stored_result(fresh,year,month),fresh,r["slot_a"],r["slot_b"],backup_assignments=db.list_backups(year,month)
                 )
                 proposer_fp=pv_needed.get(r["person_a"]) if pv_ok else None
                 proposer_missing=bool(proposer_fp and acks.get(r["person_a"])!=proposer_fp)
@@ -4586,7 +4600,7 @@ with tabs[pos]:
                 with bc1:
                     if st.button(tr("accept"),key=f"bac{r['id']}",use_container_width=True):
                         fresh=refresh_result_payload(db.load_schedule(year,month,"current"),year,month); smap_b={s.idx:s for s in make_slots(year,month)}
-                        s_a=smap_b.get(int(r["requester_slot"])); s_b=smap_b.get(int(r["target_slot"])); people_now=load_people(year,month)
+                        s_a=smap_b.get(int(r["requester_slot"])); s_b=smap_b.get(int(r["target_slot"])); people_now=people_for_stored_result(fresh,year,month)
                         elig_a=_eligible_backup_candidates(year,month,fresh,s_a,people_now) if s_a else []; elig_b=_eligible_backup_candidates(year,month,fresh,s_b,people_now) if s_b else []
                         if r["target"] not in elig_a or r["requester"] not in elig_b:
                             st.error(tr("backup_swap_invalid"))
@@ -4629,7 +4643,7 @@ with tabs[pos]:
                     if fresh.assignments.get(r["slot_a"])!=r["person_a"] or fresh.assignments.get(r["slot_b"])!=r["person_b"]:
                         db.update_swap_request(r["id"],"rejected","stale"); st.error(tr("hard_reject")); st.rerun()
                     pv_ok,pv_reason,pv_stats,pv_needed=preview_swap(
-                        year,month,load_people(year,month),fresh,r["slot_a"],r["slot_b"],backup_assignments=db.list_backups(year,month)
+                        year,month,people_for_stored_result(fresh,year,month),fresh,r["slot_a"],r["slot_b"],backup_assignments=db.list_backups(year,month)
                     )
                     if not pv_ok:
                         db.update_swap_request(r["id"],"rejected",pv_reason)
@@ -4648,7 +4662,7 @@ with tabs[pos]:
                         db.update_swap_request(r["id"],"rejected",f"impact_ack_missing:{who}")
                         st.error(tr("swap_48_reaccept")); st.rerun()
                     ok,reason,_=attempt_swap(
-                        year,month,load_people(year,month),fresh,r["slot_a"],r["slot_b"],
+                        year,month,people_for_stored_result(fresh,year,month),fresh,r["slot_a"],r["slot_b"],
                         backup_assignments=db.list_backups(year,month),acknowledged_fingerprints=acks
                     )
                     if ok:

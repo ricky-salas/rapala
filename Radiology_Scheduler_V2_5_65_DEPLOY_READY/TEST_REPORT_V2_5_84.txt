@@ -1,0 +1,22 @@
+V2.5.84 TEST REPORT
+====================
+
+PASS app.py compile
+PASS db.py compile
+PASS scheduler_engine.py compile
+
+PASS all_recurring_preferences uses _retry_db
+PASS list_backup_claims uses _retry_db
+PASS published_baselines_before uses _retry_db
+PASS fairness_cumulative_before uses _retry_db
+PASS list_backup_swap_requests uses _retry_db
+PASS operational credit/debt/repair reads use retry
+
+PASS published-schedule revalidation uses frozen request_snapshot
+PASS operational swap area has no direct load_people(year,month) calls
+PASS request_snapshot reconstructs resident HARD/SOFT fields
+
+PASS scheduler_engine scheduling logic unchanged from V2.5.83
+     except ENGINE_API_VERSION 2.5.84
+
+No DB migration required.
