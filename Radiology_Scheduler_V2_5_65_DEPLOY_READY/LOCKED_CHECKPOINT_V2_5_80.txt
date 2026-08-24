@@ -1,0 +1,23 @@
+V2.5.80 UNIFIED COLORED SWAP + BACKUP + RESCUE UI
+
+NORMAL SWAP
+- colored selected-person badges
+- colored MY SHIFT card
+- colored OTHER RESIDENT SHIFT card
+- bilateral functionality unchanged
+
+BACKUP SWAP
+- same visual card system
+- colored backup holders
+- colored covered-resident badges
+- backup functionality unchanged
+
+EMERGENCY RESCUE
+- same visual design system
+- heading = Emergency Rescue
+- no "Vizualus emergency rescue" label
+- one-way rescue semantics unchanged
+
+ENGINE
+byte-identical to V2.5.79.
+No DB migration.

@@ -1,0 +1,15 @@
+V2.5.80 UNIFIED COLORED SWAP UI — TEST REPORT
+===============================================
+
+PASS app.py compilation
+PASS db.py compilation
+PASS scheduler_engine.py compilation
+PASS scheduler_engine.py byte-identical to V2.5.79
+
+STATIC UI CHECKS
+PASS normal swap selected pair uses shared colored badge/card renderers
+PASS backup selected pair uses shared colored badge/card renderers
+PASS backup covered residents use resident color badges
+PASS Emergency Rescue heading contains no 'Vizualus emergency rescue'
+PASS normal / backup / rescue business logic remains separate
+PASS no DB migration required

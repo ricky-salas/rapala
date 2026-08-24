@@ -40,7 +40,7 @@ from scheduler_engine import (
 )
 import db
 
-APP_VERSION = "2.5.79 VISUAL SWAPS + ONE-WAY EMERGENCY RESCUE"
+APP_VERSION = "2.5.80 UNIFIED COLORED SWAP + BACKUP + RESCUE UI"
 DISPLAY_VERSION = "3.0"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "G.M."
@@ -4087,13 +4087,44 @@ with tabs[pos]:
             return f"#{sid} · {s.day:02d} {WEEKDAYS[lang][s.weekday]} · {s.department} · {block_label(s.block)} · {result.assignments[sid]}"
         if mine and theirs:
             a,b=st.columns(2)
-            with a: sa=st.selectbox(tr("my_assignment"),mine,format_func=sl,key="swap_a")
-            with b: sb=st.selectbox(tr("their_assignment"),theirs,format_func=sl,key="swap_b")
+            with a:
+                sa=st.selectbox(
+                    tr("my_assignment"),mine,format_func=sl,key="swap_a"
+                )
+            with b:
+                sb=st.selectbox(
+                    tr("their_assignment"),theirs,format_func=sl,key="swap_b"
+                )
+
+            target_person=result.assignments[sb]
+
+            # V2.5.80: same structured colored selection UI as Emergency Rescue.
+            st.markdown(
+                "#### Apsikeitimas"
+                if lang=="LT" else
+                "#### Swap"
+            )
+            _render_swap_people_line(active_user,target_person,"↔")
+            sv1,sv2=st.columns(2)
+            with sv1:
+                _render_shift_tile(
+                    "MANO PAMAINA"
+                    if lang=="LT" else
+                    "MY CURRENT SHIFT",
+                    active_user,slots.get(sa),PERSON_COLORS.get(active_user)
+                )
+            with sv2:
+                _render_shift_tile(
+                    "KITO REZIDENTO PAMAINA"
+                    if lang=="LT" else
+                    "OTHER RESIDENT'S SHIFT",
+                    target_person,slots.get(sb),PERSON_COLORS.get(target_person)
+                )
+
             swap_people=load_people(year,month)
             preview_ok,preview_reason,preview_stats,preview_needed=preview_swap(
                 year,month,swap_people,result,sa,sb,backup_assignments=db.list_backups(year,month)
             )
-            target_person=result.assignments[sb]
             my_fp=preview_needed.get(active_user) if preview_ok else None
             their_fp=preview_needed.get(target_person) if preview_ok else None
             my_ack=True
@@ -4255,10 +4286,58 @@ with tabs[pos]:
             return f"{s.day:02d} {WEEKDAYS[lang][s.weekday]} · {block_label(s.block)} · {who}" if s else str(r["covered_slot"])
         if my_b and other_b:
             ba,bb=st.columns(2)
-            with ba: my_br=st.selectbox(tr("my_backup_duty"),my_b,format_func=blabel,key="backup_swap_my")
-            with bb: other_br=st.selectbox(tr("their_backup_duty"),other_b,format_func=blabel,key="backup_swap_other")
-            if st.button(tr("request_backup_swap"),key="request_backup_swap_btn"):
-                target=other_br.get("actual_backup") or other_br.get("planned_backup")
+            with ba:
+                my_br=st.selectbox(
+                    tr("my_backup_duty"),my_b,format_func=blabel,key="backup_swap_my"
+                )
+            with bb:
+                other_br=st.selectbox(
+                    tr("their_backup_duty"),other_b,format_func=blabel,key="backup_swap_other"
+                )
+
+            target=other_br.get("actual_backup") or other_br.get("planned_backup")
+            my_backup_person=my_br.get("actual_backup") or my_br.get("planned_backup") or active_user
+            my_backup_slot=slot_map_b.get(int(my_br["covered_slot"]))
+            other_backup_slot=slot_map_b.get(int(other_br["covered_slot"]))
+
+            # V2.5.80: same colored structured visual language as normal swaps/rescue.
+            st.markdown(
+                "#### Dublių apsikeitimas"
+                if lang=="LT" else
+                "#### Backup swap"
+            )
+            _render_swap_people_line(my_backup_person,target,"↔")
+            bv1,bv2=st.columns(2)
+            with bv1:
+                _render_shift_tile(
+                    "MANO DUBLIO VIETA"
+                    if lang=="LT" else
+                    "MY BACKUP DUTY",
+                    my_backup_person,my_backup_slot,PERSON_COLORS.get(my_backup_person)
+                )
+                covered_a=str(my_br.get("covered_person") or "")
+                if covered_a:
+                    st.markdown(
+                        ("**DENGIAMAS REZIDENTAS:** " if lang=="LT" else "**RESIDENT COVERED:** ")
+                        + badge(covered_a,include_name=True),
+                        unsafe_allow_html=True,
+                    )
+            with bv2:
+                _render_shift_tile(
+                    "KITO REZIDENTO DUBLIO VIETA"
+                    if lang=="LT" else
+                    "OTHER RESIDENT'S BACKUP DUTY",
+                    target,other_backup_slot,PERSON_COLORS.get(target)
+                )
+                covered_b=str(other_br.get("covered_person") or "")
+                if covered_b:
+                    st.markdown(
+                        ("**DENGIAMAS REZIDENTAS:** " if lang=="LT" else "**RESIDENT COVERED:** ")
+                        + badge(covered_b,include_name=True),
+                        unsafe_allow_html=True,
+                    )
+
+            if st.button(tr("request_backup_swap"),key="request_backup_swap_btn",use_container_width=True):
                 try:
                     inserted=db.create_backup_swap_request(
                         year,month,active_user,int(my_br["covered_slot"]),
@@ -4517,7 +4596,7 @@ with tabs[pos]:
                     target_slot=rescue_slots[target_sid]
                     rescued_person=str(rescue_current.assignments.get(target_sid) or "")
 
-                    st.markdown("#### Vizualus emergency rescue" if lang=="LT" else "#### Emergency rescue preview")
+                    st.markdown("#### Emergency Rescue" if lang=="LT" else "#### Emergency Rescue")
                     _render_swap_people_line(mover,rescued_person,"→")
                     rc1,rc2=st.columns(2)
                     with rc1:
