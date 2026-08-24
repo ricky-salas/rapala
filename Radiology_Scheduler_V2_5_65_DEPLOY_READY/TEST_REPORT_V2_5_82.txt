@@ -1,0 +1,13 @@
+V2.5.82 QUICK DEPLOYMENT TEST
+=============================
+
+PASS app.py compile
+PASS scheduler_engine.py compile
+PASS db.py compile
+PASS ENGINE_API_VERSION = 2.5.82
+PASS revalidate_loaded_result signature includes validation_mode
+PASS app expects engine API 2.5.82
+PASS app contains explicit mismatch guard
+
+No scheduling-rule changes from V2.5.81.
+No DB migration required.

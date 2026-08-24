@@ -24,31 +24,50 @@ def _data(resp):
     return getattr(resp, "data", None) or []
 
 
-def _retry_db(fn, attempts: int = 3, base_delay: float = 0.25):
-    """Retry transient Supabase/httpx read failures instead of crashing the whole Streamlit page."""
+def _is_transient_db_error(exc: Exception) -> bool:
+    """Classify short-lived network/protocol failures from Supabase/httpx/postgrest."""
+    msg=str(exc).lower()
+    cls=exc.__class__.__name__.lower()
+    mod=getattr(exc.__class__,"__module__","").lower()
+    return (
+        cls in {"remoteprotocolerror","readerror","connecterror","connecttimeout","readtimeout","writetimeout","pooltimeout"}
+        or "remoteprotocolerror" in cls
+        or "protocolerror" in cls
+        or "httpx" in mod and any(x in cls for x in ("read","connect","timeout","protocol"))
+        or "resource temporarily unavailable" in msg
+        or "readerror" in msg
+        or "connecterror" in msg
+        or "timed out" in msg
+        or "timeout" in msg
+        or "server disconnected" in msg
+        or "peer closed connection" in msg
+        or "connection reset" in msg
+        or "connection aborted" in msg
+        or "incomplete message" in msg
+        or "remote protocol" in msg
+    )
+
+
+def _retry_db(fn, attempts: int = 5, base_delay: float = 0.20):
+    """Retry transient Supabase/httpx failures with short exponential backoff."""
     last=None
-    for attempt in range(attempts):
+    for attempt in range(max(1,int(attempts))):
         try:
             return fn()
         except Exception as exc:
             last=exc
-            msg=str(exc).lower()
-            transient=(
-                "resource temporarily unavailable" in msg
-                or "readerror" in msg
-                or "connecterror" in msg
-                or "timed out" in msg
-                or "timeout" in msg
-                or "server disconnected" in msg
-            )
-            if (not transient) or attempt==attempts-1:
+            if (not _is_transient_db_error(exc)) or attempt>=int(attempts)-1:
                 raise
-            time.sleep(base_delay*(2**attempt))
+            time.sleep(float(base_delay)*(2**attempt))
     raise last
 
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
+
+
+_ACTIVE_RULE_PROFILE_CACHE: Optional[dict] = None
+_DIRECTORY_CACHE: Optional[Dict[str, dict]] = None
 
 
 def _parse_dt(value):
@@ -77,8 +96,22 @@ def auth_user_id():
 
 
 def directory() -> Dict[str, dict]:
-    rows = _data(_retry_db(lambda: client().table("resident_directory").select("initials,full_name,role,target_adjustment,color,active").eq("active", True).execute()))
-    return {r["initials"]: r for r in rows}
+    global _DIRECTORY_CACHE
+    try:
+        rows = _data(_retry_db(lambda:
+            client().table("resident_directory")
+            .select("initials,full_name,role,target_adjustment,color,active")
+            .eq("active", True)
+            .execute()
+        ))
+        data={r["initials"]:r for r in rows}
+        if data:
+            _DIRECTORY_CACHE={k:dict(v) for k,v in data.items()}
+        return data
+    except Exception:
+        if _DIRECTORY_CACHE is not None:
+            return {k:dict(v) for k,v in _DIRECTORY_CACHE.items()}
+        raise
 
 
 def claim_profile(initials: str, invite_code: str) -> dict:
@@ -395,19 +428,40 @@ def update_swap_request(request_id: int, status: str, reason: str = ""):
 
 
 def respond_swap_request_v2578(request_id: int, action: str, reason: str = "") -> dict:
-    """Atomic participant response with server-side authorization.
+    """Atomic participant response with lost-response reconciliation.
 
-    accept/reject are target-resident actions; cancel is proposer action.
-    Returns the authoritative saved database row.
+    If the network drops after Postgres commits but before the HTTP response reaches
+    Streamlit, re-read the authoritative row. This prevents an indeterminate
+    Accept/Reject state after transient RemoteProtocolError failures.
     """
-    rows=_data(client().rpc("respond_swap_request_v2578",{
-        "p_request_id":int(request_id),
-        "p_action":str(action),
-        "p_reason":str(reason or ""),
-    }).execute())
-    if isinstance(rows,dict):
-        return rows
-    return rows[0] if rows else {}
+    action=str(action).strip().lower()
+    reason=str(reason or "")
+    expected_status={"accept":"approved","reject":"rejected","cancel":"rejected"}.get(action)
+    try:
+        rows=_data(client().rpc("respond_swap_request_v2578",{
+            "p_request_id":int(request_id),
+            "p_action":action,
+            "p_reason":reason,
+        }).execute())
+        if isinstance(rows,dict):
+            return rows
+        return rows[0] if rows else {}
+    except Exception as exc:
+        # Safe reconciliation is useful for any transport/protocol exception. If
+        # the server did not commit, the row stays pending and we re-raise.
+        try:
+            saved=get_swap_request(int(request_id))
+        except Exception:
+            raise exc
+        if saved and expected_status and saved.get("status")==expected_status:
+            saved_reason=str(saved.get("reason") or "")
+            # Require the reason/meta written by this action when supplied. This
+            # avoids mistaking somebody else's prior response for our lost reply.
+            if (not reason) or saved_reason==reason:
+                saved=dict(saved)
+                saved["_reconciled_after_transport_error"]=True
+                return saved
+        raise
 
 
 def cancel_swap_request(request_id: int) -> dict:
@@ -944,15 +998,30 @@ def list_rule_profiles(limit: int = 20) -> List[dict]:
 
 
 def get_active_rule_profile() -> Optional[dict]:
-    rows=_data(_retry_db(lambda:
-        client().table("scheduler_rule_profiles")
-        .select("*")
-        .eq("is_active",True)
-        .order("version_no",desc=True)
-        .limit(1)
-        .execute()
-    ))
-    return rows[0] if rows else None
+    global _ACTIVE_RULE_PROFILE_CACHE
+    try:
+        rows=_data(_retry_db(lambda:
+            client().table("scheduler_rule_profiles")
+            .select("*")
+            .eq("is_active",True)
+            .order("version_no",desc=True)
+            .limit(1)
+            .execute()
+        ))
+        row=rows[0] if rows else None
+        if row:
+            _ACTIVE_RULE_PROFILE_CACHE=dict(row)
+        return row
+    except Exception as exc:
+        # A transient read failure must not crash the entire Streamlit rerun.
+        # Reuse only a previously successful row from this process; never invent
+        # a DB rule profile silently.
+        if _ACTIVE_RULE_PROFILE_CACHE is not None:
+            row=dict(_ACTIVE_RULE_PROFILE_CACHE)
+            row["_read_fallback"]="memory_cache"
+            row["_read_error"]=str(exc)
+            return row
+        raise
 
 
 def create_and_activate_rule_profile(name: str, config: dict, note: str = "") -> dict:

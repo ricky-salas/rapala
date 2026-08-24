@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.82"
+ENGINE_API_VERSION = "2.5.83"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta

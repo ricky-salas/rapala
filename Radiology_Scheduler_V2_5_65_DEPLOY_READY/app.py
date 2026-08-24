@@ -42,8 +42,8 @@ from scheduler_engine import (
 import db
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.82 DEPLOY-SAFE APP + ENGINE SYNC"
-EXPECTED_ENGINE_API_VERSION = "2.5.82"
+APP_VERSION = "2.5.83 TRANSIENT DB RESILIENCE + SWAP WRITE RECONCILIATION"
+EXPECTED_ENGINE_API_VERSION = "2.5.83"
 DISPLAY_VERSION = "3.0"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "G.M."
@@ -2748,7 +2748,30 @@ resident_ok=True
 
 # V2.5.34: install the ACTIVE versioned Rule Profile before any month calculations,
 # scheduling, backup planning or rule-dependent UI is rendered.
-_active_rule_row=db.get_active_rule_profile()
+try:
+    _active_rule_row=db.get_active_rule_profile()
+    if _active_rule_row:
+        st.session_state["_last_good_rule_profile"]=dict(_active_rule_row)
+except Exception as exc:
+    _active_rule_row=st.session_state.get("_last_good_rule_profile")
+    if not _active_rule_row:
+        st.error(
+            "Laikinas ryšio su duomenų baze sutrikimas. Aktyvių taisyklių nepavyko saugiai perskaityti. "
+            "Jokio swapo / grafiko pakeitimo neįvykdžiau. Atnaujinkite puslapį po kelių sekundžių."
+            if lang=="LT" else
+            "Temporary database connection problem. The active rule profile could not be read safely. "
+            "No swap/schedule change was performed. Refresh the page in a few seconds."
+        )
+        st.caption(f"{exc.__class__.__name__}: {exc}")
+        st.stop()
+
+if (_active_rule_row or {}).get("_read_fallback")=="memory_cache":
+    st.warning(
+        "Trumpam nutrūko DB ryšys — naudojama paskutinė šiame procese sėkmingai perskaityta aktyvi taisyklių versija."
+        if lang=="LT" else
+        "Database connection briefly dropped — using the last successfully read active rule profile from this process."
+    )
+
 _active_rule_config=(_active_rule_row or {}).get("config") or DEFAULT_RULE_PROFILE
 try:
     ACTIVE_RULES=set_runtime_rules(_active_rule_config)
@@ -2758,7 +2781,20 @@ except Exception:
     ACTIVE_RULES=set_runtime_rules(DEFAULT_RULE_PROFILE)
     ACTIVE_RULE_PROFILE_VERSION=0
 
-directory_map=db.directory()
+try:
+    directory_map=db.directory()
+    if directory_map:
+        st.session_state["_last_good_directory"]=directory_map
+except Exception as exc:
+    directory_map=st.session_state.get("_last_good_directory")
+    if not directory_map:
+        st.error(
+            "Laikinas DB ryšio sutrikimas. Rezidentų sąrašo nepavyko perskaityti; atnaujinkite puslapį."
+            if lang=="LT" else
+            "Temporary database connection problem. The resident directory could not be read; refresh the page."
+        )
+        st.caption(f"{exc.__class__.__name__}: {exc}")
+        st.stop()
 people_map={p["initials"]:p for p in DEFAULT_PEOPLE}
 st.sidebar.markdown(badge(active_user),unsafe_allow_html=True)
 research_role = "researcher" if active_user=="R.Š." else "senior" if active_user=="G.M." else "resident"

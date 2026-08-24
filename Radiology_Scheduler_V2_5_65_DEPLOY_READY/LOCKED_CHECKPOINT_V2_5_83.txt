@@ -1,0 +1,28 @@
+V2.5.83 TRANSIENT DB RESILIENCE + SWAP WRITE RECONCILIATION
+
+PRODUCTION INCIDENT
+- swap #7 remained PENDING
+- ACCEPT click did not reach handler
+- Streamlit rerun crashed first on scheduler_rule_profiles read
+- exception = httpx.RemoteProtocolError
+
+READ RESILIENCE
+- RemoteProtocolError recognized as transient
+- 5 retry attempts with exponential backoff
+- active rule profile last-known-good cache
+- resident directory last-known-good cache
+- no raw traceback / blank page for first-level transient rule-profile failure
+- if no safe cached rule profile exists, app stops with explicit temporary DB message
+
+SWAP WRITE RESILIENCE
+- atomic ACCEPT/REJECT/CANCEL preserved
+- lost HTTP response after DB commit -> authoritative row reconciliation
+- only matching saved status + matching reason/meta counts as success
+- pending row is never falsely reported as accepted
+
+ENGINE
+- API marker 2.5.83
+- scheduling logic unchanged from V2.5.82
+- V2.5.81 ACTUAL fairness-spread policy unchanged
+
+No DB migration.
