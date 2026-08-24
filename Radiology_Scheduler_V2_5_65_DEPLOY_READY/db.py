@@ -350,14 +350,41 @@ def create_swap_request(year: int, month: int, slot_a: int, slot_b: int, person_
     return _data(client().table("swap_requests").insert(row).execute())
 
 
+def create_emergency_rescue_log(
+    year: int, month: int, source_slot: int, target_slot: int,
+    mover: str, rescued_person: str, reason: str = ""
+):
+    """Record an already-applied ONE-WAY emergency rescue.
+
+    `mover` must be the authenticated resident under the existing swap INSERT RLS.
+    This is an audit row only; it is never a bilateral pending swap.
+    """
+    row={
+        "year":int(year),"month":int(month),
+        "slot_a":int(source_slot),"slot_b":int(target_slot),
+        "person_a":str(mover),"person_b":str(rescued_person),
+        "status":"approved","reason":str(reason or ""),
+        "created_at":_now(),"responded_at":_now(),
+    }
+    return _data(client().table("swap_requests").insert(row).execute())
+
+
 def get_swap_request(request_id: int) -> Optional[dict]:
-    rows=_data(client().table("swap_requests").select("*").eq("id",request_id).limit(1).execute())
+    rows=_data(_retry_db(lambda:
+        client().table("swap_requests").select("*").eq("id",request_id).limit(1).execute()
+    ))
     return rows[0] if rows else None
 
 
 def list_swap_requests(year: int, month: int, person: Optional[str] = None) -> List[dict]:
-    q=client().table("swap_requests").select("*").eq("year",year).eq("month",month)
-    rows=_data(q.order("id",desc=True).execute())
+    rows=_data(_retry_db(lambda:
+        client().table("swap_requests")
+        .select("*")
+        .eq("year",year)
+        .eq("month",month)
+        .order("id",desc=True)
+        .execute()
+    ))
     if person:
         rows=[r for r in rows if r.get("person_a")==person or r.get("person_b")==person]
     return rows
@@ -365,6 +392,30 @@ def list_swap_requests(year: int, month: int, person: Optional[str] = None) -> L
 
 def update_swap_request(request_id: int, status: str, reason: str = ""):
     client().table("swap_requests").update({"status":status,"reason":reason,"responded_at":_now()}).eq("id",request_id).execute()
+
+
+def respond_swap_request_v2578(request_id: int, action: str, reason: str = "") -> dict:
+    """Atomic participant response with server-side authorization.
+
+    accept/reject are target-resident actions; cancel is proposer action.
+    Returns the authoritative saved database row.
+    """
+    rows=_data(client().rpc("respond_swap_request_v2578",{
+        "p_request_id":int(request_id),
+        "p_action":str(action),
+        "p_reason":str(reason or ""),
+    }).execute())
+    if isinstance(rows,dict):
+        return rows
+    return rows[0] if rows else {}
+
+
+def cancel_swap_request(request_id: int) -> dict:
+    return respond_swap_request_v2578(request_id,"cancel","cancelled_by_requester")
+
+
+def cancel_backup_swap_request(request_id: int):
+    client().rpc("cancel_backup_swap_request",{"p_request_id":int(request_id)}).execute()
 
 
 def sync_backups(year: int, month: int, desired: List[dict]):
@@ -479,7 +530,12 @@ def release_weekend_backup_claim(year: int, month: int, initials: str):
 
 
 def create_backup_swap_request(year: int, month: int, requester: str, requester_slot: int, target: str, target_slot: int, note: str=""):
-    client().table("backup_swap_requests").insert({"year":int(year),"month":int(month),"requester":requester,"requester_slot":int(requester_slot),"target":target,"target_slot":int(target_slot),"status":"pending","note":note}).execute()
+    return _data(client().table("backup_swap_requests").insert({
+        "year":int(year),"month":int(month),
+        "requester":requester,"requester_slot":int(requester_slot),
+        "target":target,"target_slot":int(target_slot),
+        "status":"pending","note":note
+    }).execute())
 
 
 def list_backup_swap_requests(year: int, month: int, initials: Optional[str]=None) -> List[dict]:

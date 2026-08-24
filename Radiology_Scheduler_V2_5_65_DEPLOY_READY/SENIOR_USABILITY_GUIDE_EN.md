@@ -71,3 +71,22 @@ Any mismatch is recorded as a system-quality finding rather than hidden.
 ## V2.5.75 — Summary before publication
 
 After `GENERATE`, the senior can immediately open `Summary`. Until the candidate is published, the page is explicitly labeled `DRAFT SUMMARY — NOT PUBLISHED`. It shows every resident's Resident-HARD, requested-off, prefer-to-work, overall satisfaction, workstyle, workload, doubles, weekends and critical-post metrics plus exact missed requests. If the result is unsatisfactory, return to `Generation` and improve/regenerate. The published schedule is unchanged until `PUBLISH / CONFIRM` is explicitly pressed.
+
+
+### V2.5.79 ONE-WAY EMERGENCY RESCUE
+ EMERGENCY RESCUE
+
+
+The old “Emergency swap” name was a misnomer. The new model is a one-way operational rescue:
+
+1. The resident who was actually moved selects their `CURRENT LOCATION`.
+2. They select a same-time critical `MOVING TO` target (SPS RO / SPS UG).
+3. The UI shows the colored `RESCUED PERSON` currently staffing that critical target.
+4. On confirmation:
+   - the mover is removed from the lower-priority optional source post;
+   - CURRENT LOCATION becomes **vacant**;
+   - the mover is assigned to MOVING TO;
+   - the RESCUED PERSON is released from the target;
+   - the rescued person is **not** moved into the mover's old post.
+
+Only ACTUAL changes. SYSTEM fairness, the publication post matrix and post debt remain frozen. New rescue audit entries use `CURRENT LOCATION → MOVING TO` and colored mover/rescued identities. Historical bilateral `emergency_actual` rows remain visible only as explicitly marked LEGACY records.

@@ -158,3 +158,22 @@ Jei dublį reikia aktyvuoti žmogui, kuriam tai sukurtų didesnį savaitės krū
 ## V2.5.75 — Suvestinė prieš publikavimą
 
 Po `GENERUOTI` seniūnė gali iš karto atverti `Suvestinė`. Kol kandidatas nepaskelbtas, viršuje aiškiai rodoma `JUODRAŠČIO SUVESTINĖ — DAR NEPASKELBTA`. Joje matomi visų rezidentų RESIDENT HARD, `Noriu laisvos`, `Pageidauju dirbti`, bendro išpildymo, workstyle, krūvio, doubles, savaitgalių ir kritinių postų rodikliai bei konkretūs neįvykdyti prašymai. Jei rezultatas netenkina, grįžtama į `Sudarymas` ir kandidatas gerinamas / generuojamas iš naujo. Publikuotas grafikas nesikeičia, kol aiškiai nepaspaudžiama `PASKELBTI / PATVIRTINTI`.
+
+
+### V2.5.79 ONE-WAY EMERGENCY RESCUE
+ EMERGENCY RESCUE
+
+
+Senas pavadinimas „Emergency swap“ buvo misnomer. Naujas modelis yra vienpusis operational rescue:
+
+1. Pats realiai perkeltas rezidentas savo paskyroje pasirenka `CURRENT LOCATION`.
+2. Pasirenka to paties laiko kritinį `MOVING TO` postą (SPS RO / SPS UG).
+3. Sistema spalvotai parodo `RESCUED PERSON` — žmogų, kuris tuo metu buvo kritiniame poste.
+4. Patvirtinus:
+   - mover pašalinamas iš seno žemesnio prioriteto optional posto;
+   - jo `CURRENT LOCATION` lieka **tuščias**;
+   - mover įrašomas į `MOVING TO` kritinį postą;
+   - `RESCUED PERSON` atleidžiamas nuo target posto;
+   - rescued person **nėra** perkeliamas į mover seną vietą.
+
+Tai keičia tik ACTUAL operational grafiką. SYSTEM fairness, publication post matrix ir post debt lieka užšaldyti. Nauji rescue įrašai žurnale rodomi `CURRENT LOCATION → MOVING TO` formatu, su spalvotais mover / rescued inicialais. Seni `emergency_actual` bilateraliniai įrašai paliekami tik kaip aiškiai pažymėtas LEGACY auditas.

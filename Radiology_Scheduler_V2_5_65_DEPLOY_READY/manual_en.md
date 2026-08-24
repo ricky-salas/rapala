@@ -522,14 +522,6 @@ When a backup is actually needed, planning-comfort thresholds alone should not a
 This is not an “ignore all rules” control. ABSOLUTE blockers remain non-overrideable: justified absence / mandatory post-duty rest, overlapping work, >12 hours in one workday, <11 hours of uninterrupted daily rest, >6 workdays in 7 consecutive days, or the active Rule Profile maximum 7-day swap/backup cap. The 48-hour threshold is shown as a warning signal; the employer remains responsible for the exact legal work-time regime.
 
 
-## Emergency swap — recording an already occurred change
-
-When an urgent operational change has already happened, either the senior scheduler or one of the involved residents can record it in Swaps → Emergency. The two original assignments are selected, ACTUAL is updated immediately, and the published SYSTEM fairness baseline remains unchanged.
-
-If the senior records the event, both residents see a 🔔 until they mark the record as seen/correct. If a resident records it, that resident is marked as seen immediately and the other participant receives the acknowledgement prompt. The end-of-month final operational schedule is reconstructed from ACTUAL, so urgent changes are not lost in messages or memory.
-
-The Emergency subsection is not for a future planned swap; use the standard voluntary-swap workflow for that.
-
 ## V2.5.63 — fairness corridor failsafe
 Before returning a SYSTEM draft, the scheduler must verify an acceptably even workplace distribution. SPS RO, SPS UG and weekends normally differ by at most one assignment between the most- and least-exposed resident; other main workplaces normally differ by at most two. A timeout is not treated as proof that a wider imbalance is necessary. Concrete SPS dates remain flexible so personal requests can still be honored whenever the same overall equality can be preserved safely.
 
@@ -632,3 +624,33 @@ Example: 72 Friday assignments / 16 residents = 4.5, so the correct water-fill i
 All SYSTEM Friday assignments count, including explicitly preferred Friday dates. A Friday preference is SOFT and cannot break the structural 0–1 corridor.
 
 Architecture: Phase 1 water-fills work dates/blocks and Friday exposure; Phase 2 then jointly water-fills every non-Onko workplace on those balanced blocks. Post-publication mutually accepted ACTUAL swaps may unbalance Friday or workplace exposure while SYSTEM fairness remains frozen, provided true safety/work-time HARD rules and V2.5.73 exact workload + even Onko parity remain satisfied.
+
+
+## V2.5.79 — Visual swap requests and ONE-WAY EMERGENCY RESCUE
+
+The normal Swaps workflow is **bilateral only**: one resident offers one of their shifts for another resident's shift, the recipient accepts/rejects, and the senior applies an accepted swap to ACTUAL.
+
+Live requests are shown as wide visual cards:
+- resident initials/names use their assigned colors;
+- incoming requests are numbered `1/3`, `2/3`, etc.;
+- the offered shift and requested shift are visually separated;
+- after a new request is stored, the recipient receives an operational email when an account email and SMTP are configured;
+- email failure never rolls back the already-saved database request.
+
+`REQUEST SWAP` no longer forces an immediate rerun, preventing scroll restoration from landing in the emergency section. Emergency Rescue is a separate collapsed expander and is never automatically opened by a normal swap request.
+
+### ONE-WAY EMERGENCY RESCUE — not a swap
+
+The old “Emergency swap” name was a misnomer. The new model is a one-way operational rescue:
+
+1. The resident who was actually moved selects their `CURRENT LOCATION`.
+2. They select a same-time critical `MOVING TO` target (SPS RO / SPS UG).
+3. The UI shows the colored `RESCUED PERSON` currently staffing that critical target.
+4. On confirmation:
+   - the mover is removed from the lower-priority optional source post;
+   - CURRENT LOCATION becomes **vacant**;
+   - the mover is assigned to MOVING TO;
+   - the RESCUED PERSON is released from the target;
+   - the rescued person is **not** moved into the mover's old post.
+
+Only ACTUAL changes. SYSTEM fairness, the publication post matrix and post debt remain frozen. New rescue audit entries use `CURRENT LOCATION → MOVING TO` and colored mover/rescued identities. Historical bilateral `emergency_actual` rows remain visible only as explicitly marked LEGACY records.

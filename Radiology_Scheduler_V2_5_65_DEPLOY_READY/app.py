@@ -40,7 +40,7 @@ from scheduler_engine import (
 )
 import db
 
-APP_VERSION = "2.5.77 FRIDAY + ALL-POST STRUCTURAL WATERFILL"
+APP_VERSION = "2.5.79 VISUAL SWAPS + ONE-WAY EMERGENCY RESCUE"
 DISPLAY_VERSION = "3.0"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "G.M."
@@ -329,6 +329,85 @@ def badge(initials, include_name=True):
     p=next((x for x in DEFAULT_PEOPLE if x["initials"]==initials),None); c=PERSON_COLORS.get(initials,"#DDD")
     label=initials+(f" — {p['name']}" if include_name and p else "")
     return f'<span style="display:inline-block;background:{c};color:{contrast_text(c)};padding:5px 10px;border-radius:8px;font-weight:700;margin:2px 4px 2px 0;">{html.escape(label)}</span>'
+
+
+def _person_name(initials):
+    p=next((x for x in DEFAULT_PEOPLE if x["initials"]==initials),None)
+    return p["name"] if p else initials
+
+
+def _swap_shift_text(slot):
+    if slot is None:
+        return "—"
+    return (
+        f"{slot.day:02d} {WEEKDAYS[lang][slot.weekday]} · "
+        f"{slot.department} · {block_label(slot.block)}"
+    )
+
+
+def _render_swap_people_line(person_a, person_b, arrow="↔"):
+    st.markdown(
+        f'<div style="font-size:1.08rem;display:flex;align-items:center;gap:10px;'
+        f'flex-wrap:wrap;margin:4px 0 10px 0;">'
+        f'{badge(person_a,include_name=True)}'
+        f'<span style="font-size:1.45rem;font-weight:800;color:#666;">{html.escape(arrow)}</span>'
+        f'{badge(person_b,include_name=True)}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_shift_tile(title, person, slot, accent=None):
+    c=accent or PERSON_COLORS.get(person,"#777777")
+    st.markdown(
+        f'<div style="border:2px solid {c};border-radius:14px;padding:12px 14px;'
+        f'min-height:112px;background:linear-gradient(180deg,{c}18,rgba(255,255,255,0.03));">'
+        f'<div style="font-size:.76rem;font-weight:800;letter-spacing:.04em;opacity:.72;'
+        f'text-transform:uppercase;margin-bottom:7px;">{html.escape(title)}</div>'
+        f'{badge(person,include_name=False)}'
+        f'<div style="font-size:1.02rem;font-weight:700;margin-top:8px;">'
+        f'{html.escape(_swap_shift_text(slot))}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_swap_request_card(req, idx, total, slot_map, incoming=False):
+    a=str(req.get("person_a") or "")
+    b=str(req.get("person_b") or "")
+    sa=slot_map.get(int(req.get("slot_a") or -1))
+    sb=slot_map.get(int(req.get("slot_b") or -1))
+    c=PERSON_COLORS.get(a,"#777777")
+    title=(
+        f"GAUTA UŽKLAUSA {idx}/{total} · DB #{req.get('id')}"
+        if incoming and lang=="LT" else
+        f"INCOMING REQUEST {idx}/{total} · DB #{req.get('id')}"
+        if incoming else
+        f"MANO PASIŪLYMAS {idx}/{total} · DB #{req.get('id')}"
+        if lang=="LT" else
+        f"MY OFFER {idx}/{total} · DB #{req.get('id')}"
+    )
+    st.markdown(
+        f'<div style="border-left:8px solid {c};border-radius:16px;padding:12px 16px;'
+        f'background:rgba(127,127,127,.07);margin:8px 0 10px 0;">'
+        f'<div style="font-size:.82rem;font-weight:900;letter-spacing:.055em;'
+        f'text-transform:uppercase;">{html.escape(title)}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    _render_swap_people_line(a,b,"→")
+    c1,c2=st.columns(2)
+    with c1:
+        _render_shift_tile(
+            ("SIŪLO / GIVES" if lang=="LT" else "OFFERS"),
+            a,sa,PERSON_COLORS.get(a)
+        )
+    with c2:
+        _render_shift_tile(
+            ("PRAŠO / WANTS" if lang=="LT" else "REQUESTS"),
+            b,sb,PERSON_COLORS.get(b)
+        )
+
 
 def month_label(y,m): return f"{MONTHS[lang][m-1]} {y}"
 def block_label(b): return {"AM":tr("morning"),"PM":tr("afternoon"),"FULL":tr("full_day")}[b]
@@ -2088,6 +2167,96 @@ def send_backup_activation_email(y,m,result,backup_row):
           if lang=="LT" else
           f"Hello,\n\nYour backup duty has been activated.\n{when}\nCovered resident: {covered}\nDepartment: {s.department}\n\nPlease contact the senior scheduler / department and confirm next steps.\n")
     return send_email(email,subject,body)
+
+
+
+def send_swap_request_email(y,m,request_row):
+    """Best-effort operational email. DB request already exists before this runs."""
+    target=str(request_row.get("person_b") or "")
+    proposer=str(request_row.get("person_a") or "")
+    request_id=int(request_row.get("id") or 0)
+    settings=db.get_account_settings(target)
+    email=(settings.get("email") or "").strip()
+    kind=f"swap_request_{request_id}"
+    send_date=date.today().isoformat()
+
+    if not email:
+        detail=tr("missing_email")
+        try: db.record_email(target,kind,y,m,send_date,"failed",detail)
+        except Exception: pass
+        return False,detail
+
+    slot_map={s.idx:s for s in make_slots(y,m)}
+    sa=slot_map.get(int(request_row.get("slot_a") or -1))
+    sb=slot_map.get(int(request_row.get("slot_b") or -1))
+    subject=(
+        f"Naujas apsikeitimo prašymas nuo {proposer}"
+        if lang=="LT" else
+        f"New swap request from {proposer}"
+    )
+    body=(
+        f"Sveiki,\n\nGavote naują apsikeitimo prašymą nuo {proposer} ({_person_name(proposer)}).\n\n"
+        f"Jis/ji siūlo: {_swap_shift_text(sa)}\n"
+        f"Mainais prašo jūsų pamainos: {_swap_shift_text(sb)}\n\n"
+        f"Prašymo DB numeris: #{request_id}\n"
+        f"Prisijunkite prie Shift Happens → Apsikeitimai ir PRIIMKITE arba ATMESKITE prašymą.\n"
+        if lang=="LT" else
+        f"Hello,\n\nYou received a new swap request from {proposer} ({_person_name(proposer)}).\n\n"
+        f"They offer: {_swap_shift_text(sa)}\n"
+        f"They request your shift: {_swap_shift_text(sb)}\n\n"
+        f"Database request number: #{request_id}\n"
+        f"Open Shift Happens → Swaps and ACCEPT or REJECT the request.\n"
+    )
+    public=config_value("SCHEDULER_PUBLIC_URL","").strip()
+    if public:
+        body += (f"\nPortalas: {public}\n" if lang=="LT" else f"\nPortal: {public}\n")
+    ok,detail=send_email(email,subject,body)
+    try:
+        db.record_email(target,kind,y,m,send_date,"sent" if ok else "failed",detail)
+    except Exception:
+        pass
+    return ok,detail
+
+
+
+def send_backup_swap_request_email(y,m,request_row):
+    target=str(request_row.get("target") or "")
+    proposer=str(request_row.get("requester") or "")
+    request_id=int(request_row.get("id") or 0)
+    settings=db.get_account_settings(target)
+    email=(settings.get("email") or "").strip()
+    kind=f"backup_swap_request_{request_id}"
+    send_date=date.today().isoformat()
+
+    if not email:
+        detail=tr("missing_email")
+        try: db.record_email(target,kind,y,m,send_date,"failed",detail)
+        except Exception: pass
+        return False,detail
+
+    subject=(
+        f"Naujas dublio apsikeitimo prašymas nuo {proposer}"
+        if lang=="LT" else
+        f"New backup swap request from {proposer}"
+    )
+    body=(
+        f"Sveiki,\n\nGavote naują DUBLIO apsikeitimo prašymą nuo {proposer} ({_person_name(proposer)}).\n"
+        f"Prašymo DB numeris: #{request_id}.\n\n"
+        f"Prisijunkite prie Shift Happens → Apsikeitimai ir priimkite arba atmeskite prašymą.\n"
+        if lang=="LT" else
+        f"Hello,\n\nYou received a new BACKUP swap request from {proposer} ({_person_name(proposer)}).\n"
+        f"Database request number: #{request_id}.\n\n"
+        f"Open Shift Happens → Swaps and accept or reject the request.\n"
+    )
+    public=config_value("SCHEDULER_PUBLIC_URL","").strip()
+    if public:
+        body += (f"\nPortalas: {public}\n" if lang=="LT" else f"\nPortal: {public}\n")
+    ok,detail=send_email(email,subject,body)
+    try:
+        db.record_email(target,kind,y,m,send_date,"sent" if ok else "failed",detail)
+    except Exception:
+        pass
+    return ok,detail
 
 
 def publication_emails(y,m,result):
@@ -3879,10 +4048,36 @@ with tabs[pos]:
         } for r in rows])
         st.dataframe(df,use_container_width=True,hide_index=True)
 
-    st.subheader(tr("swap_title")); st.write(tr("swap_note")); st.caption(tr("multiple_swap_help")); currentp=db.load_schedule(year,month,"current")
+    st.subheader(tr("swap_title")); st.write(tr("swap_note")); st.caption(tr("multiple_swap_help"))
+    swap_flash=st.session_state.pop("_swap_response_flash",None)
+    if swap_flash:
+        level,msg=swap_flash
+        if level=="success": st.success(msg)
+        elif level=="warning": st.warning(msg)
+        else: st.info(msg)
+    refresh_col,_=st.columns([1,4])
+    with refresh_col:
+        if st.button("↻ ATNAUJINTI SWAP STATUSĄ" if lang=="LT" else "↻ REFRESH SWAP STATUS",key=f"swap_refresh_{year}_{month}",use_container_width=True):
+            st.rerun()
+    st.caption(
+        "Swap statusas visada perskaitomas iš DB. Kito rezidento jau atidarytas langas gali rodyti seną būseną iki refresh/rerun."
+        if lang=="LT" else
+        "Swap status is always read from the database. Another resident's already-open page may show stale state until refresh/rerun."
+    )
+    currentp=db.load_schedule(year,month,"current")
     if not currentp: st.info(tr("not_published"))
     elif not resident_ok: st.error(tr("bad_pin"))
     else:
+        st.markdown(
+            "### ↔ NORMALŪS APSIKEITIMAI"
+            if lang=="LT" else
+            "### ↔ NORMAL SWAPS"
+        )
+        st.caption(
+            "Tai dvišalis request → accept/reject → seniūnės apply srautas. ONE-WAY emergency rescue yra atskiras uždarytas blokas žemiau ir niekada nėra automatiškai atidaromas po REQUEST SWAP."
+            if lang=="LT" else
+            "This is the bilateral request → accept/reject → senior apply flow. ONE-WAY emergency rescue is a separate collapsed section below and is never opened automatically after REQUEST SWAP."
+        )
         result=refresh_result_payload(currentp,year,month)
         slots={s.idx:s for s in make_slots(year,month)}
         mine=[sid for sid,w in result.assignments.items() if w==active_user]
@@ -3921,8 +4116,26 @@ with tabs[pos]:
                 if my_fp and my_ack:
                     meta["impact_ack"][active_user]=str(my_fp)
                 try:
-                    db.create_swap_request(year,month,sa,sb,active_user,target_person,reason=_swap_meta_encode(meta))
-                    st.success(tr("request_sent")); st.rerun()
+                    inserted=db.create_swap_request(
+                        year,month,sa,sb,active_user,target_person,
+                        reason=_swap_meta_encode(meta)
+                    )
+                    saved=(inserted[0] if inserted else {})
+                    email_ok,email_detail=send_swap_request_email(year,month,saved) if saved else (False,"request row missing")
+                    request_msg=(
+                        f"SWAP REQUEST #{saved.get('id','—')} išsaugotas. "
+                        + ("El. laiškas gavėjui išsiųstas." if email_ok else f"DB išsaugota, bet email nepavyko: {email_detail}")
+                        if lang=="LT" else
+                        f"SWAP REQUEST #{saved.get('id','—')} saved. "
+                        + ("Email notification sent." if email_ok else f"DB saved, but email failed: {email_detail}")
+                    )
+                    if email_ok:
+                        st.success(request_msg)
+                    else:
+                        st.warning(request_msg)
+                    # Deliberately NO st.rerun(): the request list below re-reads DB
+                    # in the same Streamlit pass. This prevents scroll restoration
+                    # from landing the user in the separate Emergency Rescue block.
                 except Exception as exc:
                     if _is_swap_slot_conflict(exc):
                         st.warning(tr("swap_shift_busy"))
@@ -3930,59 +4143,108 @@ with tabs[pos]:
                         st.error(tr("swap_preview_invalid").format(reason=("Nepavyko išsaugoti pasiūlymo." if lang=="LT" else "Could not save the offer.")))
 
         reqs=db.list_swap_requests(year,month,active_user)
-        outgoing=[r for r in reqs if r["person_a"]==active_user and r["status"]=="pending" and _swap_meta_decode(r.get("reason")).get("kind")!="emergency_actual"]
+        outgoing=[
+            r for r in reqs
+            if r["person_a"]==active_user
+            and r["status"]=="pending"
+            and _swap_meta_decode(r.get("reason")).get("kind") not in {"emergency_actual","emergency_rescue"}
+        ]
         if outgoing:
-            st.markdown(f"### {tr('my_outgoing_swaps')}")
-            for r in outgoing:
-                oc1,oc2=st.columns([4,1])
-                with oc1:
-                    st.write(f"{r['person_a']} → {r['person_b']} · #{r['slot_a']} ↔ #{r['slot_b']}")
-                with oc2:
-                    if st.button(tr("cancel_my_swap"),key=f"cancel_swap_{r['id']}",use_container_width=True):
-                        try:
-                            db.cancel_swap_request(r["id"]); st.success(tr("swap_cancelled")); st.rerun()
-                        except Exception:
-                            st.error(tr("swap_cancel_failed"))
-        incoming=[r for r in reqs if r["person_b"]==active_user and r["status"]=="pending"]
-        st.markdown(f"### {tr('incoming')}")
-        for r in incoming:
-            st.write(f"{r['person_a']} → {r['person_b']} · #{r['slot_a']} ↔ #{r['slot_b']}")
-            fresh=refresh_result_payload(db.load_schedule(year,month,"current"),year,month)
-            stale=(fresh.assignments.get(r["slot_a"])!=r["person_a"] or fresh.assignments.get(r["slot_b"])!=r["person_b"])
-            meta=_swap_meta_decode(r.get("reason")); acks=_impact_acks(meta)
-            pv_ok,pv_reason,pv_stats,pv_needed=(False,"stale",None,{}) if stale else preview_swap(
-                year,month,load_people(year,month),fresh,r["slot_a"],r["slot_b"],backup_assignments=db.list_backups(year,month)
+            st.markdown(
+                f"### {tr('my_outgoing_swaps')} · {len(outgoing)}"
             )
-            proposer_fp=pv_needed.get(r["person_a"]) if pv_ok else None
-            proposer_missing=bool(proposer_fp and acks.get(r["person_a"])!=proposer_fp)
-            target_fp=pv_needed.get(active_user) if pv_ok else None
-            target_ack=True
-            if stale or not pv_ok:
-                st.error(tr("swap_preview_invalid").format(reason=("stale" if stale else pv_reason)))
-            elif proposer_missing:
-                st.warning(tr("swap_48_reaccept"))
-            else:
-                _render_impact_table(pv_stats,active_user,("Tavo swapo pasekmės" if lang=="LT" else "Your swap consequences"))
-                if target_fp:
-                    st.warning(tr("swap_48_warning"))
-                    st.caption(tr("swap_48_only_exception"))
-                    target_ack=st.checkbox(tr("swap_48_ack"),key=f"swapimpact_target_{r['id']}")
-            c1,c2=st.columns(2)
-            with c1:
-                if st.button(tr("accept"),key=f"ac{r['id']}",use_container_width=True,disabled=(stale or not pv_ok or proposer_missing or not target_ack)):
-                    if target_fp and target_ack:
-                        meta.setdefault("impact_ack",{})[active_user]=str(target_fp)
-                    meta["phase"]="accepted_pending_senior_apply"
-                    try:
-                        db.update_swap_request(r["id"],"approved",_swap_meta_encode(meta))
-                        st.success(tr("accepted_pending")); st.rerun()
-                    except Exception as exc:
-                        if _is_swap_slot_conflict(exc): st.warning(tr("swap_shift_busy"))
-                        else: st.error(tr("swap_finalize_failed"))
-            with c2:
-                if st.button(tr("reject"),key=f"rj{r['id']}",use_container_width=True):
-                    db.update_swap_request(r["id"],"rejected","declined")
-                    st.info(tr("rejected")); st.rerun()
+            for idx,r in enumerate(outgoing,start=1):
+                with st.container(border=True):
+                    _render_swap_request_card(r,idx,len(outgoing),slots,incoming=False)
+                    if st.button(
+                        tr("cancel_my_swap"),
+                        key=f"cancel_swap_{r['id']}",
+                        use_container_width=True
+                    ):
+                        try:
+                            saved=db.cancel_swap_request(r["id"])
+                            if saved.get("status")!="rejected":
+                                raise RuntimeError(f"Unexpected saved status: {saved.get('status')}")
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                ("Pasiūlymas atšauktas ir DB būsena patvirtinta: REJECTED."
+                                 if lang=="LT" else
+                                 "Offer cancelled; authoritative DB status confirmed: REJECTED.")
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error((f"Nepavyko atšaukti swapo: {exc}" if lang=="LT" else f"Could not cancel swap: {exc}"))
+        incoming=[
+            r for r in reqs
+            if r["person_b"]==active_user
+            and r["status"]=="pending"
+            and _swap_meta_decode(r.get("reason")).get("kind") not in {"emergency_actual","emergency_rescue"}
+        ]
+        st.markdown(f"### {tr('incoming')} · {len(incoming)}")
+        if not incoming:
+            st.caption("Naujų apsikeitimo prašymų nėra." if lang=="LT" else "No new swap requests.")
+        for idx,r in enumerate(incoming,start=1):
+            with st.container(border=True):
+                _render_swap_request_card(r,idx,len(incoming),slots,incoming=True)
+                fresh=refresh_result_payload(db.load_schedule(year,month,"current"),year,month)
+                stale=(fresh.assignments.get(r["slot_a"])!=r["person_a"] or fresh.assignments.get(r["slot_b"])!=r["person_b"])
+                meta=_swap_meta_decode(r.get("reason")); acks=_impact_acks(meta)
+                pv_ok,pv_reason,pv_stats,pv_needed=(False,"stale",None,{}) if stale else preview_swap(
+                    year,month,load_people(year,month),fresh,r["slot_a"],r["slot_b"],backup_assignments=db.list_backups(year,month)
+                )
+                proposer_fp=pv_needed.get(r["person_a"]) if pv_ok else None
+                proposer_missing=bool(proposer_fp and acks.get(r["person_a"])!=proposer_fp)
+                target_fp=pv_needed.get(active_user) if pv_ok else None
+                target_ack=True
+                if stale or not pv_ok:
+                    st.error(tr("swap_preview_invalid").format(reason=("stale" if stale else pv_reason)))
+                elif proposer_missing:
+                    st.warning(tr("swap_48_reaccept"))
+                else:
+                    _render_impact_table(pv_stats,active_user,("Tavo swapo pasekmės" if lang=="LT" else "Your swap consequences"))
+                    if target_fp:
+                        st.warning(tr("swap_48_warning"))
+                        st.caption(tr("swap_48_only_exception"))
+                        target_ack=st.checkbox(tr("swap_48_ack"),key=f"swapimpact_target_{r['id']}")
+                c1,c2=st.columns(2)
+                with c1:
+                    if st.button(tr("accept"),key=f"ac{r['id']}",use_container_width=True,disabled=(stale or not pv_ok or proposer_missing or not target_ack)):
+                        if target_fp and target_ack:
+                            meta.setdefault("impact_ack",{})[active_user]=str(target_fp)
+                        meta["phase"]="accepted_pending_senior_apply"
+                        try:
+                            saved=db.respond_swap_request_v2578(
+                                r["id"],"accept",_swap_meta_encode(meta)
+                            )
+                            if saved.get("status")!="approved":
+                                raise RuntimeError(f"Unexpected saved status: {saved.get('status')}")
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                ("SWAP PRIIMTAS — DB būsena APPROVED. Dabar laukia seniūnės galutinio pritaikymo."
+                                 if lang=="LT" else
+                                 "SWAP ACCEPTED — authoritative DB status APPROVED. It now awaits senior application.")
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            if _is_swap_slot_conflict(exc):
+                                st.warning(tr("swap_shift_busy"))
+                            else:
+                                st.error((f"Nepavyko išsaugoti ACCEPT: {exc}" if lang=="LT" else f"Could not save ACCEPT: {exc}"))
+                with c2:
+                    if st.button(tr("reject"),key=f"rj{r['id']}",use_container_width=True):
+                        try:
+                            saved=db.respond_swap_request_v2578(r["id"],"reject","declined")
+                            if saved.get("status")!="rejected":
+                                raise RuntimeError(f"Unexpected saved status: {saved.get('status')}")
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                ("SWAP ATMESTAS — DB būsena patvirtinta: REJECTED."
+                                 if lang=="LT" else
+                                 "SWAP REJECTED — authoritative DB status confirmed: REJECTED.")
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error((f"Nepavyko išsaugoti REJECT: {exc}" if lang=="LT" else f"Could not save REJECT: {exc}"))
         st.divider(); st.markdown(f"### {tr('backup_swap_title')}"); st.caption(tr("backup_swap_help"))
         all_backups=[r for r in db.list_backups(year,month) if not r.get("activated_at") and not r.get("completed_at")]
         slot_map_b={s.idx:s for s in make_slots(year,month)}
@@ -3998,43 +4260,95 @@ with tabs[pos]:
             if st.button(tr("request_backup_swap"),key="request_backup_swap_btn"):
                 target=other_br.get("actual_backup") or other_br.get("planned_backup")
                 try:
-                    db.create_backup_swap_request(year,month,active_user,int(my_br["covered_slot"]),target,int(other_br["covered_slot"]))
-                    st.success(tr("backup_swap_sent")); st.rerun()
+                    inserted=db.create_backup_swap_request(
+                        year,month,active_user,int(my_br["covered_slot"]),
+                        target,int(other_br["covered_slot"])
+                    )
+                    saved=(inserted[0] if inserted else {})
+                    email_ok,email_detail=send_backup_swap_request_email(year,month,saved) if saved else (False,"request row missing")
+                    backup_msg=(
+                        f"Dublio swap request #{saved.get('id','—')} išsaugotas. "
+                        + ("Email gavėjui išsiųstas." if email_ok else f"DB išsaugota, bet email nepavyko: {email_detail}")
+                        if lang=="LT" else
+                        f"Backup swap request #{saved.get('id','—')} saved. "
+                        + ("Email sent." if email_ok else f"DB saved, but email failed: {email_detail}")
+                    )
+                    if email_ok:
+                        st.success(backup_msg)
+                    else:
+                        st.warning(backup_msg)
+                    # Same no-rerun rule as normal swaps: keep the user in the swap UI.
                 except Exception as exc:
                     if _is_swap_slot_conflict(exc): st.warning(tr("backup_swap_shift_busy"))
                     else: st.error(tr("backup_swap_invalid"))
         breqs=db.list_backup_swap_requests(year,month,None if senior_mode else active_user)
         backup_outgoing=[r for r in breqs if r.get("requester")==active_user and r.get("status")=="pending"]
         if backup_outgoing:
-            st.markdown(f"#### {tr('my_outgoing_swaps')} · {tr('backup_swap_title')}")
-            for r in backup_outgoing:
-                boc1,boc2=st.columns([4,1])
-                with boc1:
-                    st.write(f"{r['requester']} → {r['target']} · #{r['requester_slot']} ↔ #{r['target_slot']}")
-                with boc2:
+            st.markdown(f"#### {tr('my_outgoing_swaps')} · {tr('backup_swap_title')} · {len(backup_outgoing)}")
+            for idx,r in enumerate(backup_outgoing,start=1):
+                with st.container(border=True):
+                    st.markdown(
+                        f"**{'DUBLIO PASIŪLYMAS' if lang=='LT' else 'BACKUP OFFER'} {idx}/{len(backup_outgoing)} · DB #{r['id']}**"
+                    )
+                    _render_swap_people_line(r["requester"],r["target"],"→")
+                    st.caption(
+                        f"{blabel({'covered_slot':r['requester_slot'],'actual_backup':r['requester']})} "
+                        f"↔ {blabel({'covered_slot':r['target_slot'],'actual_backup':r['target']})}"
+                    )
                     if st.button(tr("cancel_my_swap"),key=f"cancel_backup_swap_{r['id']}",use_container_width=True):
                         try:
-                            db.cancel_backup_swap_request(r["id"]); st.success(tr("swap_cancelled")); st.rerun()
-                        except Exception:
-                            st.error(tr("swap_cancel_failed"))
-        for r in [x for x in breqs if x["target"]==active_user and x["status"]=="pending"]:
-            st.write(f"{r['requester']} ↔ {r['target']} · #{r['requester_slot']} ↔ #{r['target_slot']}"); bc1,bc2=st.columns(2)
-            with bc1:
-                if st.button(tr("accept"),key=f"bac{r['id']}",use_container_width=True):
-                    fresh=refresh_result_payload(db.load_schedule(year,month,"current"),year,month); smap_b={s.idx:s for s in make_slots(year,month)}
-                    s_a=smap_b.get(int(r["requester_slot"])); s_b=smap_b.get(int(r["target_slot"])); people_now=load_people(year,month)
-                    elig_a=_eligible_backup_candidates(year,month,fresh,s_a,people_now) if s_a else []; elig_b=_eligible_backup_candidates(year,month,fresh,s_b,people_now) if s_b else []
-                    if r["target"] not in elig_a or r["requester"] not in elig_b: st.error(tr("backup_swap_invalid"))
-                    else:
+                            db.cancel_backup_swap_request(r["id"])
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                ("Backup swapo pasiūlymas atšauktas."
+                                 if lang=="LT" else
+                                 "Backup swap offer cancelled.")
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error((f"Nepavyko atšaukti backup swapo: {exc}" if lang=="LT" else f"Could not cancel backup swap: {exc}"))
+        backup_incoming=[x for x in breqs if x["target"]==active_user and x["status"]=="pending"]
+        if backup_incoming:
+            st.markdown(
+                f"#### {'GAUTI DUBLIŲ REQUESTAI' if lang=='LT' else 'INCOMING BACKUP REQUESTS'} · {len(backup_incoming)}"
+            )
+        for idx,r in enumerate(backup_incoming,start=1):
+            with st.container(border=True):
+                st.markdown(
+                    f"**{'GAUTAS DUBLIO REQUESTAS' if lang=='LT' else 'INCOMING BACKUP REQUEST'} {idx}/{len(backup_incoming)} · DB #{r['id']}**"
+                )
+                _render_swap_people_line(r["requester"],r["target"],"→")
+                st.caption(
+                    f"{blabel({'covered_slot':r['requester_slot'],'actual_backup':r['requester']})} "
+                    f"↔ {blabel({'covered_slot':r['target_slot'],'actual_backup':r['target']})}"
+                )
+                bc1,bc2=st.columns(2)
+                with bc1:
+                    if st.button(tr("accept"),key=f"bac{r['id']}",use_container_width=True):
+                        fresh=refresh_result_payload(db.load_schedule(year,month,"current"),year,month); smap_b={s.idx:s for s in make_slots(year,month)}
+                        s_a=smap_b.get(int(r["requester_slot"])); s_b=smap_b.get(int(r["target_slot"])); people_now=load_people(year,month)
+                        elig_a=_eligible_backup_candidates(year,month,fresh,s_a,people_now) if s_a else []; elig_b=_eligible_backup_candidates(year,month,fresh,s_b,people_now) if s_b else []
+                        if r["target"] not in elig_a or r["requester"] not in elig_b:
+                            st.error(tr("backup_swap_invalid"))
+                        else:
+                            try:
+                                db.accept_backup_swap_request(r["id"])
+                                persist_actual_satisfaction(year,month)
+                                refresh_calendar_subscription_feeds([r["requester"],r["target"]])
+                                st.success(tr("backup_swap_accepted")); st.rerun()
+                            except Exception:
+                                st.error(tr("backup_swap_invalid"))
+                with bc2:
+                    if st.button(tr("reject"),key=f"bar{r['id']}",use_container_width=True):
                         try:
-                            db.accept_backup_swap_request(r["id"])
-                            persist_actual_satisfaction(year,month)
-                            refresh_calendar_subscription_feeds([r["requester"],r["target"]])
-                            st.success(tr("backup_swap_accepted")); st.rerun()
-                        except Exception: st.error(tr("backup_swap_invalid"))
-            with bc2:
-                if st.button(tr("reject"),key=f"bar{r['id']}",use_container_width=True):
-                    db.reject_backup_swap_request(r["id"]); st.info(tr("backup_swap_rejected")); st.rerun()
+                            db.reject_backup_swap_request(r["id"])
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                ("Backup swapas atmestas." if lang=="LT" else "Backup swap rejected.")
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error((f"Nepavyko atmesti backup swapo: {exc}" if lang=="LT" else f"Could not reject backup swap: {exc}"))
         if breqs:
             st.dataframe(pd.DataFrame([{"ID":r["id"],tr("person"):f"{r['requester']} ↔ {r['target']}",tr("status"):r["status"],tr("updated"):r["responded_at"] or r["created_at"]} for r in breqs]),use_container_width=True,hide_index=True)
         hist=db.list_swap_requests(year,month,None if senior_mode else active_user)
@@ -4083,147 +4397,338 @@ with tabs[pos]:
                         db.update_swap_request(r["id"],"approved",_swap_meta_encode(meta)); st.success(tr("swap_applied")); st.rerun()
                     else:
                         db.update_swap_request(r["id"],"rejected",reason); st.error(tr("swap_finalize_failed")); st.rerun()
-        regular_hist=[r for r in hist if _swap_meta_decode(r.get("reason")).get("kind")!="emergency_actual"]
+        regular_hist=[r for r in hist if _swap_meta_decode(r.get("reason")).get("kind") not in {"emergency_actual","emergency_rescue"}]
         if regular_hist:
             smap={"pending":tr("pending"),"approved":tr("approved"),"rejected":tr("rejected_status")}; st.markdown(f"### {tr('history')}"); st.dataframe(pd.DataFrame([{"ID":r["id"],tr("person"):f"{r['person_a']} ↔ {r['person_b']}",tr("status"):smap.get(r["status"],r["status"]),tr("updated"):r["responded_at"] or r["created_at"]} for r in regular_hist]),use_container_width=True,hide_index=True)
 
-        # V2.5.62 — EMERGENCY / already-occurred operational swap log.
-        # This is deliberately NOT a second optimizer. It records a real urgent
-        # change into ACTUAL and preserves the immutable SYSTEM fairness baseline.
+        # V2.5.79 — ONE-WAY EMERGENCY RESCUE.
+        # This is intentionally NOT a swap. The logged-in resident is pulled from
+        # their own lower-priority optional post into an overlapping critical SPS
+        # post. Their original post becomes vacant; the person previously covering
+        # the critical target is rescued/released and is NOT moved into the donor
+        # post. SYSTEM fairness remains frozen.
         st.divider()
-        st.markdown("### 🚨 Emergency — jau įvykęs apsikeitimas" if lang=="LT" else "### 🚨 Emergency — already occurred reassignment")
-        st.caption(
-            "Naudokite tik tada, kai skubus pakeitimas jau realiai įvyko arba buvo aiškiai sutartas tą pačią dieną. Čia nėra naujo prašymo patvirtinimo srautas: įrašas atnaujina FAKTINĮ (ACTUAL) grafiką ir pakeitimų istoriją, bet nekeičia paskelbto SYSTEM teisingumo, postų paskirstymo istorijos ar ateities kompensacijų."
+        with st.expander(
+            "🚨 ONE-WAY EMERGENCY RESCUE — ne apsikeitimas"
             if lang=="LT" else
-            "Use this only when an urgent change already happened or was explicitly agreed the same day. This is not a new optimization/request flow: it updates the ACTUAL schedule and audit trail while leaving the published SYSTEM fairness baseline and future balancing history unchanged."
-        )
-        emergency_current=refresh_result_payload(db.load_schedule(year,month,"current"),year,month)
-        emergency_slots={s.idx:s for s in make_slots(year,month)}
-        emergency_assigned=[sid for sid,w in emergency_current.assignments.items() if w and sid in emergency_slots]
-        emergency_assigned=sorted(emergency_assigned,key=lambda sid:(emergency_slots[sid].day,emergency_slots[sid].block,emergency_slots[sid].department,sid))
+            "🚨 ONE-WAY EMERGENCY RESCUE — not a swap",
+            expanded=False,
+        ):
+            st.warning(
+                "Tai NĖRA swapas. Naudok tik kai realiai dirbdamas savo poste esi skubiai paprašomas pereiti į svarbesnį SPS RO / SPS UG postą. "
+                "Tavo CURRENT LOCATION lieka tuščias; žmogus, kurį pakeiti kritiniame poste, yra RESCUED ir neina į tavo seną vietą. "
+                "Įrašas keičia tik ACTUAL; SYSTEM fairness / post debt neperskaičiuojami."
+                if lang=="LT" else
+                "This is NOT a swap. Use it only when, while working your assigned post, you are urgently pulled into a more important SPS RO / SPS UG post. "
+                "Your CURRENT LOCATION becomes vacant; the person you replace at the critical post is RESCUED and does not move to your old location. "
+                "Only ACTUAL changes; SYSTEM fairness/post debt remain frozen."
+            )
 
-        def _emergency_label(sid):
-            slt=emergency_slots[sid]; who=emergency_current.assignments.get(sid,"—")
-            return f"#{sid} · {slt.day:02d} {WEEKDAYS[lang][slt.weekday]} · {slt.department} · {block_label(slt.block)} · {who}"
+            rescue_current=refresh_result_payload(
+                db.load_schedule(year,month,"current"),year,month
+            )
+            rescue_slots={s.idx:s for s in make_slots(year,month)}
 
-        if senior_mode:
-            emergency_a_options=emergency_assigned
-        else:
-            emergency_a_options=[sid for sid in emergency_assigned if emergency_current.assignments.get(sid)==active_user]
-        emergency_a=None; emergency_b=None
-        if emergency_a_options:
-            ec1,ec2=st.columns(2)
-            with ec1:
-                emergency_a=st.selectbox(
-                    "1 žmogaus buvusi pamaina" if lang=="LT" else "First person's original assignment",
-                    emergency_a_options,format_func=_emergency_label,key="emergency_actual_a"
+            # The constitutional workflow is self-recording: the resident who was
+            # actually moved records the rescue from their own account.
+            mover=active_user
+            source_options=[]
+            for sid,who in (rescue_current.assignments or {}).items():
+                sl=rescue_slots.get(int(sid))
+                if who!=mover or sl is None:
+                    continue
+                if not is_emergency_lower_priority_donor_slot(sl):
+                    continue
+                target_exists=any(
+                    t.idx!=sl.idx
+                    and is_emergency_critical_slot(t)
+                    and t.day==sl.day
+                    and t.block==sl.block
+                    and rescue_current.assignments.get(t.idx)
+                    and rescue_current.assignments.get(t.idx)!=mover
+                    for t in rescue_slots.values()
                 )
-            emergency_person_a=emergency_current.assignments.get(emergency_a) if emergency_a is not None else None
-            emergency_b_options=[sid for sid in emergency_assigned if sid!=emergency_a and emergency_current.assignments.get(sid)!=emergency_person_a]
-            with ec2:
-                if emergency_b_options:
-                    emergency_b=st.selectbox(
-                        "2 žmogaus buvusi pamaina" if lang=="LT" else "Second person's original assignment",
-                        emergency_b_options,format_func=_emergency_label,key="emergency_actual_b"
+                if target_exists:
+                    source_options.append(sl.idx)
+
+            source_options=sorted(
+                source_options,
+                key=lambda sid:(
+                    rescue_slots[sid].day,
+                    {"AM":0,"PM":1,"FULL":2}.get(rescue_slots[sid].block,9),
+                    rescue_slots[sid].department,
+                    sid,
+                )
+            )
+
+            if not source_options:
+                st.info(
+                    "Šiuo metu tavo ACTUAL grafike nėra tinkamos žemesnio prioriteto pamainos, kurią tuo pačiu laiku būtų galima perkelti į kritinį SPS RO / SPS UG postą."
+                    if lang=="LT" else
+                    "Your ACTUAL schedule currently has no eligible lower-priority assignment that can be moved at the same time into a critical SPS RO / SPS UG post."
+                )
+            else:
+                source_sid=st.selectbox(
+                    "CURRENT LOCATION — iš kur mane perkelia"
+                    if lang=="LT" else
+                    "CURRENT LOCATION — where I am being moved from",
+                    source_options,
+                    format_func=lambda sid:_swap_shift_text(rescue_slots[sid]),
+                    key="emergency_rescue_source",
+                )
+                source_slot=rescue_slots[source_sid]
+
+                target_options=[
+                    t.idx for t in rescue_slots.values()
+                    if t.idx!=source_sid
+                    and is_emergency_critical_slot(t)
+                    and t.day==source_slot.day
+                    and t.block==source_slot.block
+                    and rescue_current.assignments.get(t.idx)
+                    and rescue_current.assignments.get(t.idx)!=mover
+                ]
+                target_options=sorted(
+                    target_options,
+                    key=lambda sid:(
+                        rescue_slots[sid].department,
+                        rescue_current.assignments.get(sid,""),
+                        sid,
+                    )
+                )
+
+                if not target_options:
+                    st.info(
+                        "Šiai CURRENT LOCATION pamainai nėra to paties laiko kritinio SPS targeto."
+                        if lang=="LT" else
+                        "There is no same-time critical SPS target for this CURRENT LOCATION."
                     )
                 else:
-                    st.info("Nėra antros tinkamos paskirtos pamainos." if lang=="LT" else "No second assigned shift is available.")
-            if emergency_b is not None:
-                emergency_person_b=emergency_current.assignments.get(emergency_b)
-                sl_a=emergency_slots[emergency_a]; sl_b=emergency_slots[emergency_b]
-                st.dataframe(pd.DataFrame([
-                    {
-                        ("Žmogus" if lang=="LT" else "Person"):emergency_person_a,
-                        ("Buvo" if lang=="LT" else "Was"):_emergency_label(emergency_a),
-                        ("Po emergency" if lang=="LT" else "After emergency"):f"{sl_b.day:02d} · {sl_b.department} · {block_label(sl_b.block)}",
-                    },
-                    {
-                        ("Žmogus" if lang=="LT" else "Person"):emergency_person_b,
-                        ("Buvo" if lang=="LT" else "Was"):_emergency_label(emergency_b),
-                        ("Po emergency" if lang=="LT" else "After emergency"):f"{sl_a.day:02d} · {sl_a.department} · {block_label(sl_a.block)}",
-                    },
-                ]),use_container_width=True,hide_index=True)
-                emergency_note=st.text_input(
-                    "Trumpa pastaba (kodėl skubiai sukeista)" if lang=="LT" else "Short note (why the urgent change happened)",
-                    key="emergency_actual_note"
-                )
-                emergency_confirm=st.checkbox(
-                    "Patvirtinu, kad tai jau realiai įvykęs / aiškiai sutartas emergency pakeitimas. Suprantu, kad SYSTEM fairness dėl jo nebus perskaičiuojamas."
-                    if lang=="LT" else
-                    "I confirm this is an already occurred / explicitly agreed emergency change. I understand SYSTEM fairness will not be recalculated.",
-                    key=f"emergency_actual_confirm_{emergency_a}_{emergency_b}"
-                )
-                if st.button(
-                    "ĮRAŠYTI Į FAKTINĮ GRAFIKĄ" if lang=="LT" else "RECORD IN ACTUAL SCHEDULE",
-                    type="primary",use_container_width=True,disabled=not emergency_confirm,key="emergency_actual_apply"
-                ):
-                    fresh_em=refresh_result_payload(db.load_schedule(year,month,"current"),year,month)
-                    if fresh_em.assignments.get(emergency_a)!=emergency_person_a or fresh_em.assignments.get(emergency_b)!=emergency_person_b:
-                        st.error("Grafikas jau pasikeitė. Atnaujinkite puslapį ir pasirinkite pamainas iš naujo." if lang=="LT" else "The schedule changed. Refresh and select the assignments again.")
-                    else:
-                        fresh_em.assignments[emergency_a]=emergency_person_b
-                        fresh_em.assignments[emergency_b]=emergency_person_a
-                        db.save_current(year,month,serialize_result(fresh_em))
-                        sync_backup_plan(year,month,fresh_em)
-                        persist_actual_satisfaction(year,month)
-                        refresh_calendar_subscription_feeds([emergency_person_a,emergency_person_b])
-                        recorder=(f"SENIOR:{active_user}" if senior_mode else active_user)
-                        seen=[] if senior_mode else [active_user]
-                        meta={
-                            "kind":"emergency_actual",
-                            "phase":"emergency_applied",
-                            "recorded_by":recorder,
-                            "recorded_at":datetime.now(timezone.utc).isoformat(),
-                            "seen_by":seen,
-                            "note":str(emergency_note or ""),
-                            "fairness_neutral":True,
-                        }
-                        inserted=db.create_swap_request(year,month,emergency_a,emergency_b,emergency_person_a,emergency_person_b,reason=_swap_meta_encode(meta))
-                        if inserted:
-                            db.update_swap_request(int(inserted[0]["id"]),"approved",_swap_meta_encode(meta))
-                        st.success(
-                            "Emergency pakeitimas įrašytas. ACTUAL grafikas atnaujintas; SYSTEM fairness liko nepakeistas."
-                            if lang=="LT" else
-                            "Emergency change recorded. ACTUAL was updated; SYSTEM fairness remains unchanged."
-                        )
-                        st.rerun()
-        else:
-            st.caption("Neturite savo paskirtos pamainos, kurią būtų galima registruoti kaip emergency apsikeitimo pradžią." if lang=="LT" else "You do not have an assigned shift available as the first side of an emergency swap.")
+                    target_sid=st.selectbox(
+                        "MOVING TO — į kurį svarbesnį postą mane perkelia"
+                        if lang=="LT" else
+                        "MOVING TO — critical post I am moving to",
+                        target_options,
+                        format_func=lambda sid:(
+                            f"{_swap_shift_text(rescue_slots[sid])} · "
+                            f"RESCUED: {rescue_current.assignments.get(sid,'—')}"
+                        ),
+                        key="emergency_rescue_target",
+                    )
+                    target_slot=rescue_slots[target_sid]
+                    rescued_person=str(rescue_current.assignments.get(target_sid) or "")
 
-        emergency_all=[r for r in db.list_swap_requests(year,month,None if senior_mode else active_user) if _swap_meta_decode(r.get("reason")).get("kind")=="emergency_actual"]
-        if emergency_all:
-            st.markdown("#### Emergency pakeitimų žurnalas" if lang=="LT" else "#### Emergency change log")
-            emergency_rows=[]
-            for r in emergency_all:
-                meta=_swap_meta_decode(r.get("reason")); seen=set(str(x) for x in (meta.get("seen_by") or []))
-                involved=[str(r.get("person_a") or ""),str(r.get("person_b") or "")]
-                missing=[x for x in involved if x and x not in seen]
-                s_a=emergency_slots.get(int(r["slot_a"])); s_b=emergency_slots.get(int(r["slot_b"]))
-                emergency_rows.append({
-                    ("Būsena" if lang=="LT" else "Status"):("✓ Abu peržiūrėjo" if not missing else "🔔 Laukia: "+", ".join(missing)) if lang=="LT" else ("✓ Seen by both" if not missing else "🔔 Waiting: "+", ".join(missing)),
-                    ("Žmonės" if lang=="LT" else "People"):f"{r['person_a']} ↔ {r['person_b']}",
-                    ("Pakeitimas" if lang=="LT" else "Change"):(f"{s_a.day:02d} {s_a.department} {block_label(s_a.block)} ↔ {s_b.day:02d} {s_b.department} {block_label(s_b.block)}" if s_a and s_b else f"#{r['slot_a']} ↔ #{r['slot_b']}"),
-                    ("Registravo" if lang=="LT" else "Recorded by"):meta.get("recorded_by","—"),
-                    ("Pastaba" if lang=="LT" else "Note"):meta.get("note") or "—",
-                })
-            st.dataframe(pd.DataFrame(emergency_rows),use_container_width=True,hide_index=True)
-            if not senior_mode:
-                for r in emergency_all:
-                    meta=_swap_meta_decode(r.get("reason")); seen=set(str(x) for x in (meta.get("seen_by") or []))
-                    if active_user in (r.get("person_a"),r.get("person_b")) and active_user not in seen:
-                        st.warning(
-                            f"🔔 {r['person_a']} ↔ {r['person_b']} — emergency pakeitimas jau įrašytas į faktinį grafiką. Patikrinkite ir pažymėkite, kad matėte."
+                    st.markdown("#### Vizualus emergency rescue" if lang=="LT" else "#### Emergency rescue preview")
+                    _render_swap_people_line(mover,rescued_person,"→")
+                    rc1,rc2=st.columns(2)
+                    with rc1:
+                        _render_shift_tile(
+                            "CURRENT LOCATION — BUS PALIKTA TUŠČIA"
                             if lang=="LT" else
-                            f"🔔 {r['person_a']} ↔ {r['person_b']} — an emergency change is already recorded in ACTUAL. Review it and mark it as seen."
+                            "CURRENT LOCATION — WILL BECOME VACANT",
+                            mover,source_slot,PERSON_COLORS.get(mover)
                         )
-                        if st.button(
-                            "✓ MAČIAU / ĮRAŠAS TEISINGAS" if lang=="LT" else "✓ SEEN / RECORD IS CORRECT",
-                            key=f"emergency_seen_{r['id']}",use_container_width=True
+                    with rc2:
+                        _render_shift_tile(
+                            "MOVING TO — KRITINIS POSTAS"
+                            if lang=="LT" else
+                            "MOVING TO — CRITICAL POST",
+                            mover,target_slot,PERSON_COLORS.get(mover)
+                        )
+                    st.markdown(
+                        (
+                            '<div style="margin:12px 0;padding:12px 14px;border-radius:14px;'
+                            'border:2px dashed #777;background:rgba(127,127,127,.08);">'
+                            '<b>RESCUED PERSON:</b> '
+                            + badge(rescued_person,include_name=True)
+                            + '<br><span style="opacity:.82;">'
+                            + html.escape(
+                                "Šis žmogus atleidžiamas nuo pasirinkto kritinio posto ir NĖRA perkeliamas į tavo CURRENT LOCATION."
+                                if lang=="LT" else
+                                "This person is released from the selected critical post and is NOT moved to your CURRENT LOCATION."
+                            )
+                            + '</span></div>'
+                        ),
+                        unsafe_allow_html=True,
+                    )
+
+                    rescue_note=st.text_input(
+                        "Trumpa operational pastaba"
+                        if lang=="LT" else
+                        "Short operational note",
+                        key="emergency_rescue_note",
+                    )
+                    rescue_confirm=st.checkbox(
+                        (
+                            "PATVIRTINU: tai realiai įvykęs ONE-WAY emergency rescue. "
+                            "Aš pereinu iš CURRENT LOCATION į MOVING TO; mano senas optional postas lieka tuščias; "
+                            f"{rescued_person} yra rescued ir neina į mano seną vietą."
+                        )
+                        if lang=="LT" else
+                        (
+                            "I CONFIRM: this is an already-occurred ONE-WAY emergency rescue. "
+                            "I move from CURRENT LOCATION to MOVING TO; my old optional post becomes vacant; "
+                            f"{rescued_person} is rescued and does not move to my old post."
+                        ),
+                        key=f"emergency_rescue_confirm_{source_sid}_{target_sid}",
+                    )
+
+                    if st.button(
+                        "🚨 ĮRAŠYTI ONE-WAY RESCUE Į ACTUAL"
+                        if lang=="LT" else
+                        "🚨 RECORD ONE-WAY RESCUE IN ACTUAL",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=not rescue_confirm,
+                        key="emergency_rescue_apply",
+                    ):
+                        fresh_rescue=refresh_result_payload(
+                            db.load_schedule(year,month,"current"),year,month
+                        )
+                        if (
+                            fresh_rescue.assignments.get(source_sid)!=mover
+                            or fresh_rescue.assignments.get(target_sid)!=rescued_person
                         ):
-                            meta.setdefault("seen_by",[]); meta["seen_by"]=sorted(set(str(x) for x in meta["seen_by"]+[active_user]))
-                            db.update_swap_request(int(r["id"]),"approved",_swap_meta_encode(meta))
-                            st.success("Pažymėta kaip peržiūrėta." if lang=="LT" else "Marked as seen.")
+                            st.error(
+                                "ACTUAL grafikas jau pasikeitė. Atnaujink puslapį ir pasirink CURRENT LOCATION / MOVING TO iš naujo."
+                                if lang=="LT" else
+                                "ACTUAL changed. Refresh and select CURRENT LOCATION / MOVING TO again."
+                            )
+                        elif (
+                            source_slot.day!=target_slot.day
+                            or source_slot.block!=target_slot.block
+                            or not is_emergency_lower_priority_donor_slot(source_slot)
+                            or not is_emergency_critical_slot(target_slot)
+                        ):
+                            st.error(
+                                "Rescue neatitinka vienpusio same-time lower-priority → critical SPS modelio."
+                                if lang=="LT" else
+                                "Rescue no longer matches the same-time lower-priority → critical SPS model."
+                            )
+                        else:
+                            repaired=apply_emergency_critical_transfer(
+                                fresh_rescue.assignments,
+                                target_slot,
+                                mover,
+                                source_slot=source_slot,
+                            )
+                            fresh_rescue.assignments=repaired
+                            db.save_current(year,month,serialize_result(fresh_rescue))
+                            sync_backup_plan(year,month,fresh_rescue)
+                            persist_actual_satisfaction(year,month)
+                            refresh_calendar_subscription_feeds([mover,rescued_person])
+
+                            meta={
+                                "kind":"emergency_rescue",
+                                "phase":"applied",
+                                "mover":mover,
+                                "rescued_person":rescued_person,
+                                "source_slot":int(source_sid),
+                                "target_slot":int(target_sid),
+                                "source_department":source_slot.department,
+                                "target_department":target_slot.department,
+                                "day":int(source_slot.day),
+                                "block":source_slot.block,
+                                "source_vacated":True,
+                                "bilateral_swap":False,
+                                "fairness_neutral":True,
+                                "recorded_by":active_user,
+                                "recorded_at":datetime.now(timezone.utc).isoformat(),
+                                "note":str(rescue_note or ""),
+                            }
+                            try:
+                                db.create_emergency_rescue_log(
+                                    year,month,source_sid,target_sid,
+                                    mover,rescued_person,
+                                    reason=_swap_meta_encode(meta),
+                                )
+                            except Exception as exc:
+                                st.warning(
+                                    (
+                                        "ACTUAL rescue pritaikytas, bet audito įrašo išsaugoti nepavyko: "
+                                        + str(exc)
+                                    )
+                                    if lang=="LT" else
+                                    "ACTUAL rescue was applied, but audit logging failed: "+str(exc)
+                                )
+
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                (
+                                    f"ONE-WAY RESCUE įrašytas: {mover} "
+                                    f"{source_slot.department} → {target_slot.department}; "
+                                    f"RESCUED {rescued_person}. CURRENT source paliktas tuščias."
+                                )
+                                if lang=="LT" else
+                                (
+                                    f"ONE-WAY RESCUE recorded: {mover} "
+                                    f"{source_slot.department} → {target_slot.department}; "
+                                    f"RESCUED {rescued_person}. Source post left vacant."
+                                )
+                            )
                             st.rerun()
+
+            rescue_all=[
+                r for r in db.list_swap_requests(
+                    year,month,None if senior_mode else active_user
+                )
+                if _swap_meta_decode(r.get("reason")).get("kind") in {"emergency_rescue","emergency_actual"}
+            ]
+            if rescue_all:
+                st.markdown(
+                    "#### ONE-WAY rescue žurnalas"
+                    if lang=="LT" else
+                    "#### ONE-WAY rescue log"
+                )
+                for idx,r in enumerate(rescue_all,start=1):
+                    meta=_swap_meta_decode(r.get("reason"))
+                    with st.container(border=True):
+                        if meta.get("kind")=="emergency_rescue":
+                            mover_i=str(r.get("person_a") or "")
+                            rescued_i=str(meta.get("rescued_person") or r.get("person_b") or "")
+                            st.markdown(
+                                f"**RESCUE #{idx} · DB #{r.get('id')}**"
+                            )
+                            _render_swap_people_line(mover_i,rescued_i,"→")
+                            lc1,lc2=st.columns(2)
+                            with lc1:
+                                st.markdown(
+                                    f"**CURRENT LOCATION**  \n{meta.get('source_department','—')} · "
+                                    f"{meta.get('day','—')} · {meta.get('block','—')}"
+                                )
+                            with lc2:
+                                st.markdown(
+                                    f"**MOVING TO**  \n{meta.get('target_department','—')} · "
+                                    f"{meta.get('day','—')} · {meta.get('block','—')}"
+                                )
+                            st.markdown(
+                                "**RESCUED PERSON:** "+badge(rescued_i,include_name=True),
+                                unsafe_allow_html=True,
+                            )
+                            st.caption(
+                                (
+                                    "Source postas paliktas tuščias; rescued person neperkeltas atgal. "
+                                    + (f"Pastaba: {meta.get('note')}" if meta.get("note") else "")
+                                )
+                                if lang=="LT" else
+                                (
+                                    "Source post left vacant; rescued person was not moved back. "
+                                    + (f"Note: {meta.get('note')}" if meta.get("note") else "")
+                                )
+                            )
+                        else:
+                            st.warning(
+                                (
+                                    f"LEGACY emergency_actual #{r.get('id')}: "
+                                    f"{r.get('person_a')} ↔ {r.get('person_b')}. "
+                                    "Tai senas bilateralinis įrašas iš ankstesnės, klaidingai pavadintos Emergency logikos."
+                                )
+                                if lang=="LT" else
+                                (
+                                    f"LEGACY emergency_actual #{r.get('id')}: "
+                                    f"{r.get('person_a')} ↔ {r.get('person_b')}. "
+                                    "This is a historical bilateral record from the old misnamed Emergency flow."
+                                )
+                            )
 
         # V2.5.13 — senior-only fairness-neutral post-publication repair workflow.
         if senior_mode:

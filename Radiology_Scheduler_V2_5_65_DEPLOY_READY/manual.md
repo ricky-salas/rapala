@@ -131,3 +131,33 @@ Pavyzdys: 72 penktadienio priskyrimai / 16 rezidentų = 4.5, todėl teisingas wa
 Architektūra: Phase 1 subalansuoja darbo datas/blokus ir penktadienius; Phase 2 ant jau subalansuotų blokų kartu water-fill'ina visus ne-Onko postus. Taip penktadienio darbo perkėlimas kartu suteikia postų solveriui galimybę gerinti Mamografijos / ADC / UG / kitų postų matricą.
 
 Po publikavimo abipusis savanoriškas ACTUAL swapas gali išbalansuoti penktadienius ar postus, jei nepažeidžiami tikri saugos / darbo-laiko HARD reikalavimai ir V2.5.73 exact workload + Onko parity. SYSTEM fairness baseline lieka toks, kokį paskyrė algoritmas.
+
+
+## V2.5.79 — Vizualūs swap requestai ir ONE-WAY EMERGENCY RESCUE
+
+Įprastas `Apsikeitimai` srautas yra **tik bilateralinis swap requestas**: vienas rezidentas pasiūlo savo pamainą už kito rezidento pamainą, gavėjas priima arba atmeta, o po priėmimo seniūnė pritaiko pakeitimą ACTUAL grafike.
+
+Gyvi requestai rodomi kaip platūs vizualūs cards:
+- inicialai / vardai nuspalvinti pagal rezidento spalvą;
+- rodoma `GAUTA UŽKLAUSA 1/3`, `2/3` ir t. t.;
+- aiškiai atskirta, ką siūlytojas ATIDUODA ir kokios gavėjo pamainos PRAŠO;
+- gavėjui išsaugojus naują requestą siunčiamas operational email pranešimas, jei jo paskyroje yra email ir SMTP sukonfigūruotas;
+- email klaida niekada neatšaukia jau išsaugoto DB requesto.
+
+Po `REQUEST SWAP` nebenaudojamas priverstinis `st.rerun()`, todėl puslapis nebeturi perslinkti į žemiau esantį emergency bloką. Emergency funkcija laikoma atskirame **uždarytame expander**, kuris po normalaus swapo automatiškai neatsidaro.
+
+### ONE-WAY EMERGENCY RESCUE — tai nėra swapas
+
+Senas pavadinimas „Emergency swap“ buvo misnomer. Naujas modelis yra vienpusis operational rescue:
+
+1. Pats realiai perkeltas rezidentas savo paskyroje pasirenka `CURRENT LOCATION`.
+2. Pasirenka to paties laiko kritinį `MOVING TO` postą (SPS RO / SPS UG).
+3. Sistema spalvotai parodo `RESCUED PERSON` — žmogų, kuris tuo metu buvo kritiniame poste.
+4. Patvirtinus:
+   - mover pašalinamas iš seno žemesnio prioriteto optional posto;
+   - jo `CURRENT LOCATION` lieka **tuščias**;
+   - mover įrašomas į `MOVING TO` kritinį postą;
+   - `RESCUED PERSON` atleidžiamas nuo target posto;
+   - rescued person **nėra** perkeliamas į mover seną vietą.
+
+Tai keičia tik ACTUAL operational grafiką. SYSTEM fairness, publication post matrix ir post debt lieka užšaldyti. Nauji rescue įrašai žurnale rodomi `CURRENT LOCATION → MOVING TO` formatu, su spalvotais mover / rescued inicialais. Seni `emergency_actual` bilateraliniai įrašai paliekami tik kaip aiškiai pažymėtas LEGACY auditas.

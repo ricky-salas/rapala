@@ -1,0 +1,27 @@
+V2.5.79 VISUAL SWAPS + ONE-WAY RESCUE — TEST REPORT
+====================================================
+
+STATIC
+PASS app.py / db.py / scheduler_engine.py compilation.
+PASS scheduler_engine.py byte-identical to V2.5.78.
+PASS old active bilateral emergency picker removed.
+PASS new Emergency Rescue is a collapsed expander.
+PASS incoming normal requests display numbered color cards.
+PASS target email function exists for normal + backup requests.
+PASS normal request creation has no forced st.rerun.
+
+ONE-WAY RESCUE SEMANTIC REGRESSION
+September 2026 neutral schedule:
+- SYSTEM generation success: YES
+- HARD errors: 0
+- source: I.M. / day 1 / CENTRO RO 1 / AM
+- target: day 1 / SPS RO d.d. / AM
+- rescued target occupant: D.G.
+
+After apply_emergency_critical_transfer:
+- source slot value: None / vacant
+- target slot value: I.M.
+- D.G. moved to source: NO
+PASS
+
+No Supabase schema migration required.

@@ -225,3 +225,22 @@ Pavyzdys: 72 penktadienio priskyrimai / 16 rezidentų = 4.5, todėl teisingas wa
 Architektūra: Phase 1 subalansuoja darbo datas/blokus ir penktadienius; Phase 2 ant jau subalansuotų blokų kartu water-fill'ina visus ne-Onko postus. Taip penktadienio darbo perkėlimas kartu suteikia postų solveriui galimybę gerinti Mamografijos / ADC / UG / kitų postų matricą.
 
 Po publikavimo abipusis savanoriškas ACTUAL swapas gali išbalansuoti penktadienius ar postus, jei nepažeidžiami tikri saugos / darbo-laiko HARD reikalavimai ir V2.5.73 exact workload + Onko parity. SYSTEM fairness baseline lieka toks, kokį paskyrė algoritmas.
+
+
+### V2.5.79 ONE-WAY EMERGENCY RESCUE
+ EMERGENCY RESCUE
+
+
+Senas pavadinimas „Emergency swap“ buvo misnomer. Naujas modelis yra vienpusis operational rescue:
+
+1. Pats realiai perkeltas rezidentas savo paskyroje pasirenka `CURRENT LOCATION`.
+2. Pasirenka to paties laiko kritinį `MOVING TO` postą (SPS RO / SPS UG).
+3. Sistema spalvotai parodo `RESCUED PERSON` — žmogų, kuris tuo metu buvo kritiniame poste.
+4. Patvirtinus:
+   - mover pašalinamas iš seno žemesnio prioriteto optional posto;
+   - jo `CURRENT LOCATION` lieka **tuščias**;
+   - mover įrašomas į `MOVING TO` kritinį postą;
+   - `RESCUED PERSON` atleidžiamas nuo target posto;
+   - rescued person **nėra** perkeliamas į mover seną vietą.
+
+Tai keičia tik ACTUAL operational grafiką. SYSTEM fairness, publication post matrix ir post debt lieka užšaldyti. Nauji rescue įrašai žurnale rodomi `CURRENT LOCATION → MOVING TO` formatu, su spalvotais mover / rescued inicialais. Seni `emergency_actual` bilateraliniai įrašai paliekami tik kaip aiškiai pažymėtas LEGACY auditas.
