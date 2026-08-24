@@ -389,6 +389,28 @@ def create_swap_request(year: int, month: int, slot_a: int, slot_b: int, person_
     return _data(client().table("swap_requests").insert(row).execute())
 
 
+def apply_emergency_rescue_atomic_v2585(
+    year: int, month: int, source_slot: int, target_slot: int,
+    mover: str, rescued_person: str, current_payload: dict,
+    desired_backups: List[dict], reason: str = ""
+) -> dict:
+    """Atomically apply ACTUAL rescue + backup-plan sync + audit on the server."""
+    payload={
+        "p_year":int(year),"p_month":int(month),
+        "p_source_slot":int(source_slot),"p_target_slot":int(target_slot),
+        "p_mover":str(mover),"p_rescued_person":str(rescued_person),
+        "p_current_json":current_payload,
+        "p_backups":list(desired_backups or []),
+        "p_reason":str(reason or ""),
+    }
+    rows=_data(_retry_db(lambda:
+        client().rpc("apply_emergency_rescue_v2585",payload).execute()
+    ))
+    if isinstance(rows,dict):
+        return rows
+    return rows[0] if rows else {}
+
+
 def create_emergency_rescue_log(
     year: int, month: int, source_slot: int, target_slot: int,
     mover: str, rescued_person: str, reason: str = ""

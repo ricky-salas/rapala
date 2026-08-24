@@ -42,8 +42,8 @@ from scheduler_engine import (
 import db
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.84 FROZEN-SNAPSHOT SWAP READ RESILIENCE"
-EXPECTED_ENGINE_API_VERSION = "2.5.84"
+APP_VERSION = "2.5.85 FROZEN WORKLOAD CREDIT + ATOMIC EMERGENCY RESCUE"
+EXPECTED_ENGINE_API_VERSION = "2.5.85"
 DISPLAY_VERSION = "3.0"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "G.M."
@@ -425,10 +425,6 @@ def _render_swap_request_card(req, idx, total, slot_map, incoming=False):
 def _swap_hard_user_explanation(code, details=""):
     """Plain-language explanation for a true ACTUAL swap blocker."""
     lt={
-        "EXACT_MONTHLY_WORKLOAD":(
-            "Tikslus mėnesio krūvis",
-            "Po šio apsikeitimo bent vieno rezidento mėnesio krūvis nebeatitiktų jo tikslaus targeto. Normalus bilateralinis swapas negali pakeisti mėnesio krūvio."
-        ),
         "ONKO_EVEN_PARITY":(
             "Onko porų taisyklė",
             "Po apsikeitimo bent vieno rezidento Onko skaičius taptų nelyginis. Onko ACTUAL grafike turi likti 0 / 2 / 4 / …"
@@ -483,7 +479,6 @@ def _swap_hard_user_explanation(code, details=""):
         ),
     }
     en={
-        "EXACT_MONTHLY_WORKLOAD":("Exact monthly workload","The swap would make at least one resident's ACTUAL monthly workload differ from the exact target."),
         "ONKO_EVEN_PARITY":("Even Onko parity","The swap would leave an odd Onko count. ACTUAL Onko must remain 0 / 2 / 4 / …"),
         "ONKO_COVERAGE":("Required Onko coverage","The swap would break required overall Onko coverage."),
         "OVERLAPPING_ASSIGNMENTS":("No overlapping shifts","The swap would give a resident overlapping assignments at the same time."),
@@ -1190,7 +1185,7 @@ def _preview_manual_backup_takeover(y,m,result,covered_slot,initials,exclude_bac
     continuous weekly rest, and >60h/7d. 48h remains a visible warning because the
     exact legal interpretation depends on the active work-time regime/accounting period.
     """
-    people=load_people(y,m)
+    people=people_for_stored_result(result,y,m)
     byinit={p.initials:p for p in people}
     p=byinit.get(str(initials))
     rows=[]; blockers=[]; warnings=[]
@@ -1359,17 +1354,16 @@ def _operational_repair_validation(y,m,result,new_assignments):
     constraints. They must not prevent a justified post-publication repair. Safety, coverage,
     overlap, HARD unavailability, rest and known-hours rules remain enforced.
     """
-    people=load_people(y,m)
+    people=people_for_stored_result(result,y,m)
     slots=make_slots(y,m)
-    # Give validate_schedule the ACTUAL post-repair workload as operational targets so
-    # publication-time target deviations themselves are not treated as HARD errors.
-    actual_targets={p.initials:0.0 for p in people}
-    slot_by_id={x.idx:x for x in slots}
-    for sid,initials in new_assignments.items():
-        sl=slot_by_id.get(int(sid))
-        if sl is not None and initials in actual_targets:
-            actual_targets[initials]+=sl.workload2/2.0
-    stats=validate_schedule(y,m,people,slots,new_assignments,actual_targets)
+    # V2.5.85: use the published SYSTEM targets as the immutable workload-credit
+    # ledger. Emergency Rescue changes placement only; no target units move.
+    stats=validate_schedule(
+        y,m,people,slots,new_assignments,result.targets,
+        satisfaction_people=people,
+        backup_assignments=(result.backup_snapshot or []),
+        validation_mode="emergency_rescue",
+    )
     errs=list(stats.get("global",{}).get("errors",[]))
     planning_only=[]; blocking=[]
     for e in errs:
@@ -1490,12 +1484,10 @@ def _critical_repair_candidate_rows(y,m,result,target_slot,repair_load):
 def plan_backups(y,m,result):
     """Backup plan with the same ABSOLUTE-HARD / RESIDENT-HARD constitution.
 
-    First use only residents whose Resident-HARD request is fully respected. If a
-    required covered shift has no such candidate, do not destroy the whole monthly
-    schedule: use the ABSOLUTE-HARD-safe fallback pool and assign the unavoidable
-    Resident-HARD burden to the currently/historically least-burdened resident.
+    For a published schedule, resident constraints come from the immutable request
+    snapshot. ACTUAL Rescue/swap placement never rewrites the request model.
     """
-    people=load_people(y,m)
+    people=people_for_stored_result(result,y,m)
     byinit={p.initials:p for p in people}
     initials=[p.initials for p in people]
     claims=db.list_backup_claims(y,m)
@@ -1610,7 +1602,7 @@ def summary_df(result,y,m):
     for i,d in result.stats.get("people",{}).items():
         row={
             tr("person"):i,tr("name"):d.get("name",""),tr("target"):d.get("target"),
-            tr("workload"):d.get("workload"),
+            tr("workload"):d.get("workload_credit",d.get("workload")),
             tr("weekday_assignments"):d.get("weekday_assignments"),
             tr("weekday_days"):d.get("weekday_days"),
             tr("weekend_assignments"):d.get("weekend_assignments"),
@@ -1629,6 +1621,8 @@ def summary_df(result,y,m):
             tr("planned_backups"):planned.get(i,0),
             tr("effective_backups"):effective.get(i,0),
         }
+        if d.get("workload_credit_policy")=="FROZEN_SYSTEM_LEDGER":
+            row[("ACTUAL slotų svoris (ne target)" if lang=="LT" else "ACTUAL placement workload (not target)")]=d.get("actual_assignment_workload",d.get("workload"))
         # V2.5.15: exact monthly number of assignments in every workplace.
         rotation_counts=d.get("rotation_counts") or {}
         for cat in ROTATION_CATEGORIES:
@@ -1690,7 +1684,7 @@ def resident_wishes_audit_df(result):
             ("Žmogus" if lang=="LT" else "Person"):initials,
             ("Vardas" if lang=="LT" else "Name"):d.get("name",""),
             ("Target" if lang=="LT" else "Target"):d.get("target"),
-            ("Krūvis" if lang=="LT" else "Workload"):d.get("workload"),
+            ("Krūvis" if lang=="LT" else "Workload"):d.get("workload_credit",d.get("workload")),
             ("RESIDENT HARD" if lang=="LT" else "RESIDENT HARD"):hard_txt,
             ("Noriu laisvos" if lang=="LT" else "Requested off"):ratio(soft_free),
             ("Pageidauju dirbti" if lang=="LT" else "Prefer to work"):ratio(preferred),
@@ -4905,10 +4899,36 @@ with tabs[pos]:
                                 source_slot=source_slot,
                             )
                             fresh_rescue.assignments=repaired
-                            db.save_current(year,month,serialize_result(fresh_rescue))
-                            sync_backup_plan(year,month,fresh_rescue)
-                            persist_actual_satisfaction(year,month)
-                            refresh_calendar_subscription_feeds([mover,rescued_person])
+                            # Revalidate in-memory under ACTUAL operational rules so the
+                            # stored payload carries refreshed stats + frozen workload credit.
+                            fresh_rescue=revalidate_loaded_result(
+                                year,month,people_for_stored_result(fresh_rescue,year,month),fresh_rescue,
+                                backup_assignments=None,
+                                validation_mode="emergency_rescue",
+                            )
+                            desired_backups,backup_errors=plan_backups(year,month,fresh_rescue)
+                            if backup_errors:
+                                st.error(
+                                    ("Emergency Rescue negalimas, nes po perkėlimo nepavyksta sudaryti privalomo backup plano: " if lang=="LT" else
+                                     "Emergency Rescue cannot be applied because required backup coverage cannot be rebuilt: ")
+                                    + "; ".join(map(str,backup_errors[:3]))
+                                )
+                                st.stop()
+                            # Final payload is validated against the NEW backup plan that
+                            # will be committed in the same DB transaction.
+                            fresh_rescue=revalidate_loaded_result(
+                                year,month,people_for_stored_result(fresh_rescue,year,month),fresh_rescue,
+                                backup_assignments=desired_backups,
+                                validation_mode="emergency_rescue",
+                            )
+                            final_rescue_errors=list((fresh_rescue.stats or {}).get("global",{}).get("errors",[]) or [])
+                            if final_rescue_errors:
+                                st.error(
+                                    ("Emergency Rescue negalimas dėl operational HARD taisyklės: " if lang=="LT" else
+                                     "Emergency Rescue is blocked by an operational HARD rule: ")
+                                    + str(final_rescue_errors[0])
+                                )
+                                st.stop()
 
                             meta={
                                 "kind":"emergency_rescue",
@@ -4924,38 +4944,41 @@ with tabs[pos]:
                                 "source_vacated":True,
                                 "bilateral_swap":False,
                                 "fairness_neutral":True,
+                                "workload_credit_neutral":True,
+                                "workload_credit_source":"PUBLISHED_SYSTEM",
+                                "rescued_person_work_debt":False,
+                                "rescued_person_absence_outcome":"OUTSIDE_SCHEDULER_HR",
                                 "recorded_by":active_user,
                                 "recorded_at":datetime.now(timezone.utc).isoformat(),
                                 "note":str(rescue_note or ""),
                             }
                             try:
-                                db.create_emergency_rescue_log(
-                                    year,month,source_sid,target_sid,
-                                    mover,rescued_person,
+                                saved=db.apply_emergency_rescue_atomic_v2585(
+                                    year,month,source_sid,target_sid,mover,rescued_person,
+                                    serialize_result(fresh_rescue),desired_backups,
                                     reason=_swap_meta_encode(meta),
                                 )
                             except Exception as exc:
-                                st.warning(
-                                    (
-                                        "ACTUAL rescue pritaikytas, bet audito įrašo išsaugoti nepavyko: "
-                                        + str(exc)
-                                    )
-                                    if lang=="LT" else
-                                    "ACTUAL rescue was applied, but audit logging failed: "+str(exc)
+                                st.error(
+                                    ("Emergency Rescue NEĮRAŠYTAS — transakcija atšaukta, ACTUAL grafikas ir backup planas nepakeisti. " if lang=="LT" else
+                                     "Emergency Rescue NOT recorded — transaction rolled back; ACTUAL and backup plan were left unchanged. ")
+                                    + str(exc)
                                 )
+                                st.stop()
+                            refresh_calendar_subscription_feeds([mover,rescued_person])
 
                             st.session_state["_swap_response_flash"]=(
                                 "success",
                                 (
                                     f"ONE-WAY RESCUE įrašytas: {mover} "
                                     f"{source_slot.department} → {target_slot.department}; "
-                                    f"RESCUED {rescued_person}. CURRENT source paliktas tuščias."
+                                    f"RESCUED {rescued_person}. CURRENT source paliktas tuščias. Workload credit visiems nepakitęs."
                                 )
                                 if lang=="LT" else
                                 (
                                     f"ONE-WAY RESCUE recorded: {mover} "
                                     f"{source_slot.department} → {target_slot.department}; "
-                                    f"RESCUED {rescued_person}. Source post left vacant."
+                                    f"RESCUED {rescued_person}. Source post left vacant. Workload credit unchanged for everyone."
                                 )
                             )
                             st.rerun()
@@ -8705,8 +8728,10 @@ if advanced_mode:
                 if pref_requests:
                     score=round(100*(len(pref_requests)-len(pref_miss))/len(pref_requests),1)
                     rows.append({tr("criterion"):tr("preferred_ok"),tr("result"):component_status(score),tr("score"):f"{score}%",tr("explanation"):("—" if not pref_miss else f"{tr('missed_dates')}: {', '.join(map(str,pref_miss))}")})
-                wl_ok=abs(float(cd.get("workload",0))-float(cd.get("target",0)))<1e-9
-                rows.append({tr("criterion"):tr("workload_ok"),tr("result"):tr("matches") if wl_ok else tr("mismatch"),tr("score"):"100%" if wl_ok else "0%",tr("explanation"):f"{cd.get('workload')} / {cd.get('target')}"})
+                wl_credit=float(cd.get("workload_credit",cd.get("workload",0)) or 0)
+                wl_target=float(cd.get("target",0) or 0)
+                wl_ok=abs(wl_credit-wl_target)<1e-9
+                rows.append({tr("criterion"):tr("workload_ok"),tr("result"):tr("matches") if wl_ok else tr("mismatch"),tr("score"):"100%" if wl_ok else "0%",tr("explanation"):(f"{wl_credit:g} / {wl_target:g} · SYSTEM krūvio kreditas užšaldytas publikavimo metu" if lang=="LT" else f"{wl_credit:g} / {wl_target:g} · SYSTEM workload credit frozen at publication")})
                 labels={"weekday_preference":tr("weekday_pref"),"weekend_preference":tr("weekend_pref"),"spread_preference":tr("spread_pref"),"avoid_doubles":tr("avoid_double_shifts")}
                 for key,label in labels.items():
                     if key in comps:

@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.84"
+ENGINE_API_VERSION = "2.5.85"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -3943,7 +3943,12 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                       weekly_hours_override_caps: Optional[Dict[str, float]] = None,
                       validation_mode: str = "generation") -> Dict[str, dict]:
     errors: List[str] = []
-    voluntary_swap_mode = str(validation_mode).startswith("voluntary_swap")
+    validation_mode=str(validation_mode or "generation")
+    post_publication_mode=(
+        validation_mode.startswith("voluntary_swap")
+        or validation_mode in {"emergency_rescue","backup_swap_actual","actual_operational"}
+    )
+    voluntary_swap_mode=post_publication_mode
     weekly_hours_override_caps={str(k):float(v) for k,v in (weekly_hours_override_caps or {}).items()}
     _, ndays = calendar.monthrange(year, month)
 
@@ -4136,13 +4141,22 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                 cur=0
         d["max_consecutive_weekends"]=int(best)
 
-        workload_delta=float(d["workload"])-float(targets[p.initials])
-        d["workload_target_delta"]=round(workload_delta,1)
-        # V2.5.73 ABSOLUTE in SYSTEM and ACTUAL: a voluntary swap may never
-        # create a half-unit monthly workload or an odd Onko count. Onko is 1.5
-        # workload units, so each resident must remain at 0/2/4/... Onko shifts.
-        if abs(workload_delta) > 1e-9:
-            errors.append(f"{p.initials}: workload {d['workload']} must equal exact target {targets[p.initials]}")
+        actual_assignment_workload=float(d["workload"])
+        d["actual_assignment_workload"]=round(actual_assignment_workload,1)
+        if post_publication_mode:
+            # V2.5.85 constitution: publication freezes monthly workload CREDIT.
+            # ACTUAL swaps, backup swaps and Emergency Rescue only change placement.
+            # They never add/subtract/transfer target units and never create a work debt.
+            d["workload_credit"]=float(targets[p.initials])
+            d["workload_target_delta"]=0.0
+            d["workload_credit_policy"]="FROZEN_SYSTEM_LEDGER"
+        else:
+            workload_delta=actual_assignment_workload-float(targets[p.initials])
+            d["workload_credit"]=actual_assignment_workload
+            d["workload_target_delta"]=round(workload_delta,1)
+            d["workload_credit_policy"]="SYSTEM_GENERATION_EXACT"
+            if abs(workload_delta) > 1e-9:
+                errors.append(f"{p.initials}: workload {d['workload']} must equal exact target {targets[p.initials]}")
 
         onko_n = sum(s.department == "Onko RO centre" for s in pslots)
         if onko_n % 2 != 0:
@@ -5198,13 +5212,13 @@ def preview_swap(year: int, month: int, people: List[Person], result: SolveResul
     HARD blockers for a swap are deliberately narrow: ABSOLUTE-HARD/justified
     absence, overlapping assignments, >12h/day, <11h daily rest, >6 workdays in
     any rolling 7, >60h in any rolling 7, mandatory post-duty rest and operational
-    backup/coverage feasibility, exact monthly workload equality and even Onko
-    pairing. Generator-only fatigue shaping, the 48h generation ceiling, consecutive
+    backup/coverage feasibility and even Onko pairing. Monthly workload CREDIT is
+    frozen at publication and is never recalculated from ACTUAL placement. Generator-only
+    fatigue shaping, the 48h generation ceiling, consecutive
     Onko, weekend uniqueness, preference, workplace water-fill, post spread, modality
     diversity and educational exposure are NOT blockers; affected residents may
-    voluntarily create an uneven ACTUAL post matrix by bilateral acceptance. Exact
-    monthly workload equality and Onko parity remain non-relaxable contractual/hour
-    invariants from V2.5.73: a swap still cannot create 1/3/5 Onko or 27.5/28.5 workload.
+    voluntarily create an uneven ACTUAL post matrix by bilateral acceptance. Onko
+    parity remains a separate ACTUAL invariant; target/workload CREDIT does not move.
     """
     # V2.5.81: a stored/published CURRENT may have result.ok=False only because
     # it was live-revalidated against newer SYSTEM-generation fairness rules
@@ -5261,7 +5275,7 @@ def preview_swap(year: int, month: int, people: List[Person], result: SolveResul
     ack_needed={who:_swap_ack_fingerprint(rows) for who,rows in warnings.items() if rows}
     stats["global"]["swap_warning_rows"]=warnings
     stats["global"]["swap_ack_fingerprints"]=dict(ack_needed)
-    stats["global"]["swap_policy"]="V2574_ACTUAL_VOLUNTARY_POST_FAIRNESS_NEVER_BLOCKS; EXACT_TARGET_ONKO_PARITY_STILL_HARD"
+    stats["global"]["swap_policy"]="V2585_ACTUAL_PLACEMENT_FAIRNESS_FREE; FROZEN_SYSTEM_WORKLOAD_CREDIT; ONKO_PARITY_STILL_HARD"
     return True,"SWAP PREVIEW OK",stats,ack_needed
 
 
