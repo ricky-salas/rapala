@@ -24,6 +24,7 @@ from pypdf import PdfReader
 from docx import Document
 from supabase import create_client
 
+import scheduler_engine as _scheduler_engine
 from scheduler_engine import (
     Person, Slot, SolveResult, DEFAULT_PEOPLE, PERSON_COLORS, next_month, weekday_count, round_half_up,
     standard_target, make_slots, solve_schedule, attempt_swap, preview_swap, validate_schedule,
@@ -40,7 +41,9 @@ from scheduler_engine import (
 )
 import db
 
-APP_VERSION = "2.5.81 ACTUAL-ACTION VALIDATION + EXPLICIT HARD REASONS"
+ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
+APP_VERSION = "2.5.82 DEPLOY-SAFE APP + ENGINE SYNC"
+EXPECTED_ENGINE_API_VERSION = "2.5.82"
 DISPLAY_VERSION = "3.0"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "G.M."
@@ -54,6 +57,15 @@ SENIOR_GUIDE_EN = (BASE / "SENIOR_USABILITY_GUIDE_EN.md").read_text(encoding="ut
 db.init_db(DEFAULT_MANUAL_LT, DEFAULT_MANUAL_EN, DEFAULT_PEOPLE)
 
 st.set_page_config(page_title="Shift Happens", layout="wide", initial_sidebar_state="expanded")
+
+if str(ENGINE_API_VERSION) != EXPECTED_ENGINE_API_VERSION:
+    st.error(
+        "APP / ENGINE VERSION MISMATCH. "
+        f"App expects scheduler_engine API {EXPECTED_ENGINE_API_VERSION}, "
+        f"but loaded {ENGINE_API_VERSION}. "
+        "Deploy app.py AND scheduler_engine.py from the same release."
+    )
+    st.stop()
 st.markdown("""
 <style>
 html, body, [class*="css"] {font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
@@ -951,11 +963,21 @@ def refresh_result_payload(payload, y, m, use_actual_backups=True):
             backup_override=db.list_backups(y,m)
         except Exception:
             backup_override=stored.backup_snapshot
-    refreshed=revalidate_loaded_result(
-        y,m,load_people(y,m),stored,
-        backup_assignments=backup_override,
-        validation_mode=("voluntary_swap_actual" if use_actual_backups else "generation"),
-    )
+    try:
+        refreshed=revalidate_loaded_result(
+            y,m,load_people(y,m),stored,
+            backup_assignments=backup_override,
+            validation_mode=("voluntary_swap_actual" if use_actual_backups else "generation"),
+        )
+    except TypeError as exc:
+        # Deployment-safety guard: never let a mixed app/engine deployment crash
+        # the whole Apsikeitimai page with a raw unexpected-keyword TypeError.
+        if "validation_mode" in str(exc):
+            raise RuntimeError(
+                "APP_ENGINE_VERSION_MISMATCH: deployed app.py expects the V2.5.82 "
+                "scheduler_engine.py API. Redeploy BOTH files from the same package."
+            ) from exc
+        raise
     if use_actual_backups:
         # V2.5.57: CURRENT stats are operational / satisfaction facts only.
         # All fairness, post spread, post debt and longitudinal catch-up remain
