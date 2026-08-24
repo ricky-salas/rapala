@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+from copy import deepcopy
 import calendar
 import html
 import unicodedata
@@ -42,8 +43,8 @@ from scheduler_engine import (
 import db
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.85 FROZEN WORKLOAD CREDIT + ATOMIC EMERGENCY RESCUE"
-EXPECTED_ENGINE_API_VERSION = "2.5.85"
+APP_VERSION = "2.5.86 FRIDAY 0-1 PROOF + SAFE DELETE UNDO"
+EXPECTED_ENGINE_API_VERSION = "2.5.86"
 DISPLAY_VERSION = "3.0"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "G.M."
@@ -525,6 +526,105 @@ def _render_swap_hard_block(preview_stats, fallback_reason=""):
         )
     )
     st.dataframe(pd.DataFrame(pretty),use_container_width=True,hide_index=True)
+
+
+def _friday_waterfill_proof(stats):
+    pdata=((stats or {}).get("people") or {})
+    counts={i:int((d or {}).get("friday_assignments",0) or 0) for i,d in pdata.items()}
+    vals=list(counts.values())
+    total=int(sum(vals))
+    n=len(vals)
+    lo=int(total//n) if n else 0
+    hi=int((total+n-1)//n) if n else 0
+    spread=(max(vals)-min(vals)) if vals else 0
+    passed=bool(vals and spread<=1 and all(lo<=v<=hi for v in vals))
+    return {"counts":counts,"total":total,"n":n,"floor":lo,"ceil":hi,"spread":spread,"passed":passed}
+
+
+def _delete_confirm(token, applied=False):
+    state_key="_confirm_delete_schedule_action"
+    label=("IŠTRINTI / UNDO" if lang=="LT" else "DELETE / UNDO") if applied else ("IŠTRINTI" if lang=="LT" else "DELETE")
+    if st.button(label,key=f"delete_open_{token}",use_container_width=True):
+        st.session_state[state_key]=token
+    if st.session_state.get(state_key)!=token:
+        return False
+    st.warning(
+        ("Patvirtinkite. Jei veiksmas jau pakeitė ACTUAL, sistema bandys saugiai grąžinti ankstesnę būseną. Jei tie slotai po to buvo pakeisti dar kartą, DELETE bus atmestas, kad nesugadintų naujesnio grafiko."
+         if lang=="LT" else
+         "Confirm. If this action already changed ACTUAL, the system will safely restore the previous state. If those slots changed again later, DELETE will be refused to protect newer changes.")
+    )
+    c1,c2=st.columns(2)
+    with c1:
+        yes=st.button("PATVIRTINTI DELETE" if lang=="LT" else "CONFIRM DELETE",type="primary",key=f"delete_yes_{token}",use_container_width=True)
+    with c2:
+        no=st.button("ATŠAUKTI" if lang=="LT" else "CANCEL",key=f"delete_no_{token}",use_container_width=True)
+    if no:
+        st.session_state.pop(state_key,None)
+        st.rerun()
+    if yes:
+        st.session_state.pop(state_key,None)
+        return True
+    return False
+
+
+def _prepare_swap_action_undo(row,y,m):
+    meta=_swap_meta_decode(row.get("reason"))
+    kind=str(meta.get("kind") or "")
+    phase=str(meta.get("phase") or "")
+    applied=bool(kind=="emergency_rescue" or phase=="applied")
+    if not applied:
+        return None,None
+
+    fresh=refresh_result_payload(db.load_schedule(y,m,"current"),y,m)
+    candidate=deepcopy(fresh)
+    candidate.assignments=dict(fresh.assignments)
+    sa=int(row["slot_a"]); sb=int(row["slot_b"])
+
+    if kind=="emergency_rescue":
+        if sa in candidate.assignments:
+            raise RuntimeError("Emergency Rescue source slotas nebėra tuščias — po Rescue jis jau buvo pakeistas." if lang=="LT" else "Emergency Rescue source is no longer vacant; it changed after the Rescue.")
+        if candidate.assignments.get(sb)!=row.get("person_a"):
+            raise RuntimeError("Emergency Rescue target slotas po Rescue jau buvo pakeistas." if lang=="LT" else "Emergency Rescue target changed after the Rescue.")
+        candidate.assignments[sa]=row.get("person_a")
+        candidate.assignments[sb]=row.get("person_b")
+        mode="voluntary_swap_actual"
+    else:
+        if candidate.assignments.get(sa)!=row.get("person_b") or candidate.assignments.get(sb)!=row.get("person_a"):
+            raise RuntimeError("Šio swapo slotai po pritaikymo jau buvo pakeisti dar kartą — automatinis UNDO nebesaugus." if lang=="LT" else "These swap slots changed again after application; automatic UNDO is no longer safe.")
+        candidate.assignments[sa]=row.get("person_a")
+        candidate.assignments[sb]=row.get("person_b")
+        mode="voluntary_swap_actual"
+
+    candidate=revalidate_loaded_result(
+        y,m,people_for_stored_result(candidate,y,m),candidate,
+        backup_assignments=None,validation_mode=mode,
+    )
+    desired,backup_errors=plan_backups(y,m,candidate)
+    if backup_errors:
+        raise RuntimeError(("UNDO negalimas: nepavyksta atkurti privalomo backup plano: " if lang=="LT" else "UNDO blocked: required backup plan cannot be rebuilt: ")+str(backup_errors[0]))
+    candidate=revalidate_loaded_result(
+        y,m,people_for_stored_result(candidate,y,m),candidate,
+        backup_assignments=desired,validation_mode=mode,
+    )
+    errs=list(((candidate.stats or {}).get("global") or {}).get("errors") or [])
+    if errs:
+        raise RuntimeError(("UNDO negalimas dėl operational HARD: " if lang=="LT" else "UNDO blocked by operational HARD: ")+str(errs[0]))
+    return candidate,desired
+
+
+def _delete_swap_row(row,y,m):
+    candidate,desired=_prepare_swap_action_undo(row,y,m)
+    saved=db.delete_swap_action_v2586(
+        int(row["id"]),
+        serialize_result(candidate) if candidate is not None else None,
+        desired if desired is not None else None,
+    )
+    if saved.get("undone_actual"):
+        try: persist_actual_satisfaction(y,m)
+        except Exception: pass
+        try: refresh_calendar_subscription_feeds([row.get("person_a"),row.get("person_b")])
+        except Exception: pass
+    return saved
 
 
 def month_label(y,m): return f"{MONTHS[lang][m-1]} {y}"
@@ -4618,7 +4718,31 @@ with tabs[pos]:
                         except Exception as exc:
                             st.error((f"Nepavyko atmesti backup swapo: {exc}" if lang=="LT" else f"Could not reject backup swap: {exc}"))
         if breqs:
-            st.dataframe(pd.DataFrame([{"ID":r["id"],tr("person"):f"{r['requester']} ↔ {r['target']}",tr("status"):r["status"],tr("updated"):r["responded_at"] or r["created_at"]} for r in breqs]),use_container_width=True,hide_index=True)
+            st.markdown("#### Dublių apsikeitimų istorija" if lang=="LT" else "#### Backup swap history")
+            for idx,r in enumerate(breqs,start=1):
+                with st.container(border=True):
+                    applied=bool(r.get("status")=="accepted")
+                    st.markdown(f"**DUBLIO SWAP #{idx} · DB #{r.get('id')} · {str(r.get('status','')).upper()}**")
+                    _render_swap_people_line(str(r.get("requester") or ""),str(r.get("target") or ""),"↔")
+                    st.caption(
+                        ("Jei statusas ACCEPTED, DELETE kartu bandys saugiai grąžinti ankstesnius dublio turėtojus." if lang=="LT" else
+                         "If status is ACCEPTED, DELETE will also safely restore the previous backup holders.")
+                        if applied else
+                        ("DELETE pašalins šį request/history įrašą; ACTUAL backup planas nuo jo dar nepakeistas." if lang=="LT" else
+                         "DELETE removes this request/history row; it has not changed the ACTUAL backup plan.")
+                    )
+                    if _delete_confirm(f"backup_swap_{r['id']}",applied=applied):
+                        try:
+                            saved=db.delete_backup_swap_v2586(int(r["id"]))
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                ("Dublio swapas ištrintas"+(" ir ankstesnis backup planas atkurtas." if saved.get("undone_actual") else ".")
+                                 if lang=="LT" else
+                                 "Backup swap deleted"+(" and previous backup holders restored." if saved.get("undone_actual") else "."))
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(("DELETE nepavyko: " if lang=="LT" else "DELETE failed: ")+str(exc))
         hist=db.list_swap_requests(year,month,None if senior_mode else active_user)
         if senior_mode:
             pending_apply=[]
@@ -4681,7 +4805,37 @@ with tabs[pos]:
                         st.stop()
         regular_hist=[r for r in hist if _swap_meta_decode(r.get("reason")).get("kind") not in {"emergency_actual","emergency_rescue"}]
         if regular_hist:
-            smap={"pending":tr("pending"),"approved":tr("approved"),"rejected":tr("rejected_status")}; st.markdown(f"### {tr('history')}"); st.dataframe(pd.DataFrame([{"ID":r["id"],tr("person"):f"{r['person_a']} ↔ {r['person_b']}",tr("status"):smap.get(r["status"],r["status"]),tr("updated"):r["responded_at"] or r["created_at"]} for r in regular_hist]),use_container_width=True,hide_index=True)
+            smap={"pending":tr("pending"),"approved":tr("approved"),"rejected":tr("rejected_status")}
+            st.markdown(f"### {tr('history')}")
+            for idx,r in enumerate(regular_hist,start=1):
+                meta=_swap_meta_decode(r.get("reason"))
+                applied=bool(meta.get("phase")=="applied")
+                with st.container(border=True):
+                    st.markdown(f"**SWAP #{idx} · DB #{r.get('id')} · {smap.get(r.get('status'),r.get('status'))}**")
+                    _render_swap_people_line(str(r.get("person_a") or ""),str(r.get("person_b") or ""),"↔")
+                    sa=slots.get(int(r.get("slot_a") or -1)); sb=slots.get(int(r.get("slot_b") or -1))
+                    hc1,hc2=st.columns(2)
+                    with hc1: _render_shift_tile("A",str(r.get("person_a") or ""),sa,PERSON_COLORS.get(str(r.get("person_a") or "")))
+                    with hc2: _render_shift_tile("B",str(r.get("person_b") or ""),sb,PERSON_COLORS.get(str(r.get("person_b") or "")))
+                    st.caption(
+                        ("Šis swapas jau pritaikytas ACTUAL. DELETE bandys atlikti UNDO tik jei abu slotai po to nebuvo pakeisti dar kartą." if lang=="LT" else
+                         "This swap is already applied to ACTUAL. DELETE will UNDO it only if neither slot changed again afterwards.")
+                        if applied else
+                        ("Šis įrašas ACTUAL dar nepakeitė; DELETE pašalins request/history įrašą." if lang=="LT" else
+                         "This row has not changed ACTUAL; DELETE removes the request/history row.")
+                    )
+                    if _delete_confirm(f"normal_swap_{r['id']}",applied=applied):
+                        try:
+                            saved=_delete_swap_row(r,year,month)
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                ("Swapas ištrintas"+(" ir ACTUAL grąžintas į būseną prieš šį swapą." if saved.get("undone_actual") else ".")
+                                 if lang=="LT" else
+                                 "Swap deleted"+(" and ACTUAL restored to its pre-swap state." if saved.get("undone_actual") else "."))
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(("DELETE / UNDO nepavyko: " if lang=="LT" else "DELETE / UNDO failed: ")+str(exc))
 
         # V2.5.81 — always-visible EMERGENCY RESCUE operational panel.
         # The logged-in resident is pulled from their own lower-priority optional
@@ -5031,6 +5185,22 @@ with tabs[pos]:
                                     + (f"Note: {meta.get('note')}" if meta.get("note") else "")
                                 )
                             )
+                            st.caption(
+                                "DELETE / UNDO atkurs mover į CURRENT LOCATION ir RESCUED PERSON į ankstesnį kritinį postą tik jei šie slotai po Rescue nebuvo pakeisti dar kartą."
+                                if lang=="LT" else
+                                "DELETE / UNDO restores the mover to CURRENT LOCATION and the RESCUED PERSON to the prior critical post only if those slots have not changed again."
+                            )
+                            if _delete_confirm(f"emergency_rescue_{r['id']}",applied=True):
+                                try:
+                                    saved=_delete_swap_row(r,year,month)
+                                    st.session_state["_swap_response_flash"]=(
+                                        "success",
+                                        ("Emergency Rescue ištrintas ir ACTUAL saugiai atkurtas." if lang=="LT" else
+                                         "Emergency Rescue deleted and ACTUAL safely restored.")
+                                    )
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(("Emergency Rescue DELETE / UNDO nepavyko: " if lang=="LT" else "Emergency Rescue DELETE / UNDO failed: ")+str(exc))
                         else:
                             st.warning(
                                 (
@@ -6654,6 +6824,7 @@ def _research_run_log_df(runs):
             "Monthly workplace imbalance":r.get("monthly_workplace_imbalance"),
             "Weekend spread":r.get("weekend_spread"),
             "Friday spread":r.get("friday_spread"),
+            "Friday 0-1 gate":("PASS" if (r.get("friday_spread") is not None and int(r.get("friday_spread") or 0)<=1) else "LEGACY / INVALID"),
             "Double spread":r.get("double_spread"),
             "Weekday-day spread":r.get("weekday_day_spread"),
             "Distinct workplaces":r.get("mean_distinct_workplaces"),
@@ -7112,9 +7283,17 @@ def _research_shadow_result_from_run(run,people,y,m):
         frozen_stats=validate_schedule(
             y,m,people,make_slots(y,m),assignments,_research_targets(y,m,people)
         )
+    proof=_friday_waterfill_proof(frozen_stats)
+    frozen_ok=bool(run.get("success")) and bool(proof.get("passed"))
+    msg=f"Frozen research shadow run {run.get('run_no')}"
+    if bool(run.get("success")) and not proof.get("passed"):
+        msg+=(
+            f" — LEGACY FRIDAY WATER-FILL INVALID: total {proof['total']} requires "
+            f"{proof['floor']}-{proof['ceil']} each, observed spread {proof['spread']}"
+        )
     return SolveResult(
-        ok=bool(run.get("success")),
-        message=f"Frozen research shadow run {run.get('run_no')}",
+        ok=frozen_ok,
+        message=msg,
         assignments=assignments,
         targets=_research_targets(y,m,people),
         stats=frozen_stats,
@@ -7166,7 +7345,7 @@ def _research_people_stats_df(result):
             "Weekend assignments":d.get("weekend_assignments"),
             "Prior weekends":d.get("prior_weekend_count"),
             "Cumulative weekends":d.get("cumulative_weekend_count"),
-            "Friday assignments":d.get("friday_assignments"),
+            "Friday assignments (frozen SYSTEM run)":d.get("friday_assignments"),
             "Doubles":d.get("doubles"),
             "Max consecutive days":d.get("max_consecutive_days"),
             "Max rolling-7 hours":d.get("max_rolling7_hours"),
@@ -7478,6 +7657,22 @@ def _render_research_shadow_result(rr,run_no,y,m,people,primary=False):
         use_container_width=True,
         height=620,
     )
+
+    friday_proof=_friday_waterfill_proof(rr.stats)
+    if not friday_proof.get("passed"):
+        counts=friday_proof.get("counts") or {}
+        st.error(
+            "FRIDAY WATER-FILL INVALID šiame frozen run: "
+            f"{friday_proof['total']} Friday assignments / {friday_proof['n']} rezidentų → "
+            f"teisingas entitlement {friday_proof['floor']}-{friday_proof['ceil']} kiekvienam; "
+            f"šiame run observed {min(counts.values()) if counts else 0}-{max(counts.values()) if counts else 0} "
+            f"(spread {friday_proof['spread']}). Tai legacy frozen rezultatas; naujas V2.5.86 run su tokiu spread negali būti pažymėtas validžiu."
+        )
+    else:
+        st.success(
+            f"Friday SYSTEM water-fill PASS: {friday_proof['total']} assignments / {friday_proof['n']} residents → "
+            f"{friday_proof['floor']}-{friday_proof['ceil']} each, raw spread {friday_proof['spread']}."
+        )
 
     t1,t2,t3,t4=st.tabs(["Resident stats","Post matrix","Global metrics","HARD / diagnostics"])
     with t1:

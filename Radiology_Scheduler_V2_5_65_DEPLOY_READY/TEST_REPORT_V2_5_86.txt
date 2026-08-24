@@ -1,0 +1,52 @@
+V2.5.86 TEST REPORT
+====================
+
+COMPILE
+PASS app.py
+PASS db.py
+PASS scheduler_engine.py
+
+FRIDAY FRESH GENERATION — SEPTEMBER 2026
+PASS generation success
+PASS HARD errors = 0
+Total Friday assignments = 72
+Residents = 16
+Entitlement floor = 4
+Entitlement ceil = 5
+Observed min = 4
+Observed max = 5
+Raw spread = 1
+Friday gate = PASS
+
+Observed fresh counts:
+A.P. 4
+A.S. 5
+D.G. 5
+E.G. 4
+E.K. 4
+E.S. 5
+G.M. 5
+I.M. 4
+J.G. 5
+K.S. 5
+L.V. 4
+R.M. 5
+R.S. 4
+R.Š. 4
+S.D. 5
+V.S. 4
+
+LIVE LEGACY SEPTEMBER SYSTEM CHECK
+The existing published legacy SYSTEM has Friday counts 4–7 (spread 3).
+It predates the V2.5.77 Friday structural rule and is intentionally not mutated.
+
+DELETE / UNDO STATIC + LIVE MIGRATION
+PASS normal swap DELETE/UNDO UI present
+PASS backup/double swap DELETE/UNDO UI present
+PASS Emergency Rescue DELETE/UNDO UI present
+PASS two-step confirmation present
+PASS schedule_action_deletions audit table exists live
+PASS delete_swap_action_v2586 exists live as SECURITY DEFINER
+PASS delete_backup_swap_v2586 exists live as SECURITY DEFINER
+
+No automatic mutation of old SYSTEM/research baselines.

@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.85"
+ENGINE_API_VERSION = "2.5.86"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -4703,9 +4703,23 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
     # Friday distribution uneven, just like workplace exposure.
     friday_structural_vals=[int(v.get("friday_assignments",0) or 0) for v in pdata.values()]
     friday_structural_spread=(max(friday_structural_vals)-min(friday_structural_vals)) if friday_structural_vals else 0
-    if (not voluntary_swap_mode) and friday_structural_spread>1:
+    friday_structural_total=int(sum(friday_structural_vals))
+    friday_structural_n=max(1,len(friday_structural_vals))
+    friday_structural_floor=int(friday_structural_total//friday_structural_n)
+    friday_structural_ceil=int((friday_structural_total+friday_structural_n-1)//friday_structural_n)
+    friday_structural_entitlement_gate=bool(
+        friday_structural_vals
+        and all(friday_structural_floor <= int(v) <= friday_structural_ceil for v in friday_structural_vals)
+        and friday_structural_spread<=1
+    )
+    if (not voluntary_swap_mode) and not friday_structural_entitlement_gate:
         errors.append(
-            f"Friday structural water-fill violated: raw resident spread {friday_structural_spread} > 1"
+            "Friday structural water-fill violated: "
+            f"total {friday_structural_total} across {len(friday_structural_vals)} residents requires "
+            f"{friday_structural_floor}-{friday_structural_ceil} each, "
+            f"observed {min(friday_structural_vals) if friday_structural_vals else 0}-"
+            f"{max(friday_structural_vals) if friday_structural_vals else 0} "
+            f"(raw spread {friday_structural_spread})"
         )
 
     # Group fairness metrics.
@@ -4959,9 +4973,13 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             "friday_monthly_spread_raw": monthly_friday_spread_raw,
             "friday_monthly_unavoidable_spread": monthly_friday_unavoidable,
             "friday_structural_waterfill_required": True,
+            "friday_structural_total_assignments": int(friday_structural_total),
+            "friday_structural_resident_count": int(len(friday_structural_vals)),
+            "friday_structural_entitlement_floor": int(friday_structural_floor),
+            "friday_structural_entitlement_ceil": int(friday_structural_ceil),
             "friday_structural_spread_raw": int(friday_structural_spread),
             "friday_structural_spread_ceiling": 1,
-            "friday_structural_gate_passed": bool(friday_structural_spread<=1),
+            "friday_structural_gate_passed": bool(friday_structural_entitlement_gate),
             "double_monthly_spread": monthly_double_spread,
             "weekday_day_monthly_spread": monthly_weekday_day_spread,
             "weekend_cumulative_spread": cumulative_weekend_spread,
