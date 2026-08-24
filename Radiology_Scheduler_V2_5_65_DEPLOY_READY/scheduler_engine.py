@@ -4059,7 +4059,12 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
     })
     cat_vals=[cat_gap_counts.get(cat,0) for cat in optional_categories]
     optional_gap_category_spread=(max(cat_vals)-min(cat_vals)) if cat_vals else 0
-    if optional_gap_category_spread>2:
+
+    # V2.5.81: optional-gap pattern/distribution is a SYSTEM-generation structural
+    # rule only. ACTUAL voluntary swaps, backup changes and operational rescues may
+    # create/worsen optional gaps or spread without being blocked. The published
+    # SYSTEM fairness/gap baseline remains frozen for audit.
+    if (not voluntary_swap_mode) and optional_gap_category_spread>2:
         errors.append(
             f"Gap workplace dispersion violated: category spread {optional_gap_category_spread} > 2"
         )
@@ -4069,11 +4074,11 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
     )
     expected_gap_days=sorted(_gap_meta.get("gap_days",[])) if not _gap_plan_errors else []
     actual_gap_days=sorted({r["day"] for r in optional_gap_rows})
-    if not _gap_plan_errors and actual_gap_days!=expected_gap_days:
+    if (not voluntary_swap_mode) and (not _gap_plan_errors) and actual_gap_days!=expected_gap_days:
         errors.append(
             f"Gap-day dispersion pattern outdated: actual {actual_gap_days}, expected {expected_gap_days}"
         )
-    if not _gap_plan_errors:
+    if (not voluntary_swap_mode) and (not _gap_plan_errors):
         expected_counts={int(d):int(c) for d,c in (_gap_meta.get("optional_gap_counts") or {}).items()}
         onko_day=_gap_meta.get("onko_gap_day")
         if onko_day:
@@ -5112,6 +5117,69 @@ def _swap_warning_rows(year: int, month: int, people: List[Person], before: Solv
     return out
 
 
+
+def _swap_hard_rule_row(error: str) -> dict:
+    """Classify a technical validator error into a stable operational HARD code."""
+    e=str(error or "")
+    low=e.lower()
+    code="OTHER_OPERATIONAL_HARD"
+    rule="Operational HARD rule"
+
+    if "workload" in low and "exact target" in low:
+        code="EXACT_MONTHLY_WORKLOAD"
+        rule="Exact monthly workload"
+    elif "odd onko count" in low:
+        code="ONKO_EVEN_PARITY"
+        rule="Onko even-pair parity"
+    elif "onko coverage" in low:
+        code="ONKO_COVERAGE"
+        rule="Onko required coverage"
+    elif "overlapping assignments" in low:
+        code="OVERLAPPING_ASSIGNMENTS"
+        rule="No overlapping assignments"
+    elif "exceeds max hours/day" in low:
+        code="MAX_HOURS_PER_DAY"
+        rule="Maximum hours per day"
+    elif "workdays/7d cap exceeded" in low:
+        code="MAX_WORKDAYS_7D"
+        rule="Maximum working days in rolling 7 days"
+    elif "hours/7d cap exceeded" in low:
+        code="MAX_HOURS_7D"
+        rule="Maximum hours in rolling 7 days"
+    elif "rest between days" in low:
+        code="MIN_DAILY_REST"
+        rule="Minimum daily rest"
+    elif "mandatory post-duty rest" in low:
+        code="POST_DUTY_REST"
+        rule="Mandatory post-duty rest"
+    elif "work during vacation" in low or "work during justified absence" in low:
+        code="ABSOLUTE_UNAVAILABILITY"
+        rule="Absolute unavailability"
+    elif "blocked slot filled" in low:
+        code="BLOCKED_SLOT"
+        rule="Blocked/closed shift"
+    elif "mandatory slot unfilled" in low:
+        code="MANDATORY_COVERAGE"
+        rule="Mandatory service coverage"
+    elif "no hard-available non-overlapping backup resident" in low:
+        code="MANDATORY_BACKUP_AVAILABILITY"
+        rule="Required backup availability"
+    elif "weekend" in low and "cap exceeded" in low:
+        code="WEEKEND_CAP"
+        rule="Weekend assignment cap"
+    elif "consecutive onko" in low:
+        code="CONSECUTIVE_ONKO_GENERATION"
+        rule="Consecutive Onko generation rule"
+    elif "gap " in low or "gap-" in low:
+        code="GENERATOR_GAP_FAIRNESS"
+        rule="Generator-only optional-gap fairness"
+    elif "friday structural" in low:
+        code="GENERATOR_FRIDAY_FAIRNESS"
+        rule="Generator-only Friday fairness"
+
+    return {"severity":"BLOCK","code":code,"rule":rule,"details":e}
+
+
 def _swap_ack_fingerprint(rows: List[dict]) -> str:
     raw="|".join(
         f"{r.get('severity')}::{r.get('kind')}::{r.get('date')}::{r.get('after')}::{r.get('explanation')}"
@@ -5136,8 +5204,26 @@ def preview_swap(year: int, month: int, people: List[Person], result: SolveResul
     monthly workload equality and Onko parity remain non-relaxable contractual/hour
     invariants from V2.5.73: a swap still cannot create 1/3/5 Onko or 27.5/28.5 workload.
     """
+    # V2.5.81: a stored/published CURRENT may have result.ok=False only because
+    # it was live-revalidated against newer SYSTEM-generation fairness rules
+    # (e.g. Friday/gap water-fill introduced after publication). That must never
+    # block an ACTUAL voluntary swap. Revalidate the existing CURRENT using only
+    # ACTUAL operational/safety rules before deciding whether a usable base exists.
     if not result.ok:
-        return False, "Nėra validžios bazinės versijos.", None, {}
+        frozen_people=people_from_request_snapshot(result.request_snapshot)
+        baseline_stats=validate_schedule(
+            year,month,people,make_slots(year,month),result.assignments,result.targets,
+            satisfaction_people=(frozen_people or people),
+            backup_assignments=(backup_assignments if backup_assignments is not None else result.backup_snapshot),
+            validation_mode="voluntary_swap_baseline",
+        )
+        if baseline_stats["global"]["hard_errors"]:
+            block_rows=[_swap_hard_rule_row(e) for e in baseline_stats["global"].get("errors",[])]
+            baseline_stats["global"]["swap_hard_block_rows"]=block_rows
+            return False, (
+                "CURRENT ACTUAL already contains an operational HARD violation before this swap: "
+                + (block_rows[0]["details"] if block_rows else "unknown HARD rule")
+            ), baseline_stats, {}
     if slot_a_idx == slot_b_idx:
         return False, "Pasirinktos tos pačios pamainos.", None, {}
     if slot_a_idx not in result.assignments or slot_b_idx not in result.assignments:
@@ -5155,11 +5241,19 @@ def preview_swap(year: int, month: int, people: List[Person], result: SolveResul
         validation_mode="voluntary_swap",
     )
     if stats["global"]["hard_errors"]:
-        stats["global"]["swap_hard_block_rows"]=[{
-            "severity":"BLOCK","rule":"ABSOLUTE / DK / operational",
-            "details":e
-        } for e in stats["global"].get("errors",[])]
-        return False, stats["global"]["errors"][0], stats, {}
+        rows=[_swap_hard_rule_row(e) for e in stats["global"].get("errors",[])]
+        # Defensive invariant: generator-only fairness must never be an ACTUAL
+        # swap blocker. If a future validator accidentally emits one in voluntary
+        # mode, discard it from the blocking set.
+        generator_only={"GENERATOR_GAP_FAIRNESS","GENERATOR_FRIDAY_FAIRNESS","CONSECUTIVE_ONKO_GENERATION"}
+        real_rows=[r for r in rows if r.get("code") not in generator_only]
+        stats["global"]["swap_hard_block_rows"]=real_rows
+        if real_rows:
+            return False, real_rows[0]["details"], stats, {}
+        # No true ACTUAL blocker remained. Generator-only fairness must not leave
+        # a stale non-zero hard_errors counter on an otherwise valid voluntary swap.
+        stats["global"]["errors"]=[]
+        stats["global"]["hard_errors"]=0
 
     warnings=_swap_warning_rows(year,month,people,result,stats,(a_person,b_person))
     ack_needed={who:_swap_ack_fingerprint(rows) for who,rows in warnings.items() if rows}
@@ -5174,8 +5268,9 @@ def attempt_swap(year: int, month: int, people: List[Person], result: SolveResul
                  backup_assignments: Optional[List[dict]] = None,
                  weekly_hours_override_caps: Optional[Dict[str,float]] = None,
                  acknowledged_fingerprints: Optional[Dict[str,str]] = None) -> Tuple[bool, str, Optional[Dict[str, dict]]]:
-    if not result.ok:
-        return False, "Nėra validžios bazinės versijos.", None
+    # V2.5.81: preview_swap performs an ACTUAL operational base check. Do not
+    # reject merely because a legacy published payload failed a newer generator-
+    # fairness revalidation.
     if slot_a_idx == slot_b_idx:
         return False, "Pasirinktos tos pačios pamainos.", None
     if slot_a_idx not in result.assignments or slot_b_idx not in result.assignments:
@@ -5203,7 +5298,8 @@ def attempt_swap(year: int, month: int, people: List[Person], result: SolveResul
 
 def revalidate_loaded_result(
     year: int, month: int, people: List[Person], result: SolveResult,
-    backup_assignments: Optional[List[dict]] = None
+    backup_assignments: Optional[List[dict]] = None,
+    validation_mode: Optional[str] = None,
 ) -> SolveResult:
     """Recompute a stored schedule while preserving its ORIGINAL request snapshot.
 
@@ -5219,12 +5315,17 @@ def revalidate_loaded_result(
     source_global=(result.stats or {}).get("global",{})
     stored_weekly_override_caps={str(k):float(v) for k,v in (source_global.get("swap_weekly_hours_override_caps") or {}).items()}
     stored_voluntary_swap_actual=bool(source_global.get("voluntary_swap_actual",False))
+    effective_validation_mode=(
+        str(validation_mode)
+        if validation_mode
+        else ("voluntary_swap_actual" if stored_voluntary_swap_actual else "generation")
+    )
     stats=validate_schedule(
         year,month,normalized_people,slots,result.assignments,current_targets,
         satisfaction_people=(frozen_people or normalized_people),
         backup_assignments=(backup_assignments if backup_assignments is not None else result.backup_snapshot),
         weekly_hours_override_caps=stored_weekly_override_caps,
-        validation_mode=("voluntary_swap_actual" if stored_voluntary_swap_actual else "generation")
+        validation_mode=effective_validation_mode
     )
     for key in (
         "solve_stage","fairness_guardrails","fairness_guardrails_established",

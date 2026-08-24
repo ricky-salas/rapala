@@ -1,0 +1,40 @@
+V2.5.81 ACTUAL-ACTION VALIDATION + EXPLICIT HARD REASONS
+
+SYSTEM GENERATION
+- Friday spread <=1 HARD
+- post/SPS/weekend/gap structural fairness remains HARD
+- generator fatigue shaping remains generation-side
+
+ACTUAL NORMAL SWAP
+- fairness spread NEVER blocks:
+  Friday / workplace / SPS exposure / double spread may worsen
+- frozen SYSTEM fairness remains unchanged
+- only true operational/safety HARD blocks
+- old published schedules are not retroactively invalidated by newer generator fairness
+
+TRUE SWAP BLOCKERS
+- exact monthly workload
+- even Onko parity
+- mandatory coverage
+- overlap
+- 12h/day
+- <=6 workdays / rolling 7d
+- ACTUAL absolute rolling-7-day hours ceiling
+- >=11h daily rest
+- post-duty rest
+- absolute absence
+- required backup availability
+
+UI
+- explicit HARD rule name + plain explanation + technical detail
+- Emergency Rescue always visible
+- large 🚨 beacon
+- heading = EMERGENCY RESCUE
+- no “ne apsikeitimas / not a swap” wording
+- colored V2.5.80 UI preserved
+
+BACKUP / RESCUE
+- fairness spread may worsen
+- SYSTEM fairness remains frozen
+
+No DB migration.

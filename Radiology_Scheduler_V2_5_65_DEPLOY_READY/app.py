@@ -40,7 +40,7 @@ from scheduler_engine import (
 )
 import db
 
-APP_VERSION = "2.5.80 UNIFIED COLORED SWAP + BACKUP + RESCUE UI"
+APP_VERSION = "2.5.81 ACTUAL-ACTION VALIDATION + EXPLICIT HARD REASONS"
 DISPLAY_VERSION = "3.0"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "G.M."
@@ -407,6 +407,117 @@ def _render_swap_request_card(req, idx, total, slot_map, incoming=False):
             ("PRAŠO / WANTS" if lang=="LT" else "REQUESTS"),
             b,sb,PERSON_COLORS.get(b)
         )
+
+
+
+def _swap_hard_user_explanation(code, details=""):
+    """Plain-language explanation for a true ACTUAL swap blocker."""
+    lt={
+        "EXACT_MONTHLY_WORKLOAD":(
+            "Tikslus mėnesio krūvis",
+            "Po šio apsikeitimo bent vieno rezidento mėnesio krūvis nebeatitiktų jo tikslaus targeto. Normalus bilateralinis swapas negali pakeisti mėnesio krūvio."
+        ),
+        "ONKO_EVEN_PARITY":(
+            "Onko porų taisyklė",
+            "Po apsikeitimo bent vieno rezidento Onko skaičius taptų nelyginis. Onko ACTUAL grafike turi likti 0 / 2 / 4 / …"
+        ),
+        "ONKO_COVERAGE":(
+            "Privalomas Onko padengimas",
+            "Apsikeitimas sugadintų reikiamą bendrą Onko padengimą."
+        ),
+        "OVERLAPPING_ASSIGNMENTS":(
+            "Persidengiančios pamainos",
+            "Po apsikeitimo tam pačiam rezidentui tuo pačiu metu būtų paskirtos dvi persidengiančios pamainos."
+        ),
+        "MAX_HOURS_PER_DAY":(
+            "Maksimali darbo trukmė per dieną",
+            "Po apsikeitimo būtų viršyta ACTUAL swapo maksimali 12 val. darbo trukmė per vieną dieną."
+        ),
+        "MAX_WORKDAYS_7D":(
+            "Maksimalus darbo dienų skaičius per 7 dienas",
+            "Po apsikeitimo rezidentas dirbtų daugiau nei leidžiamos 6 darbo dienos per slenkantį 7 dienų langą."
+        ),
+        "MAX_HOURS_7D":(
+            "Maksimali darbo trukmė per 7 dienas",
+            "Po apsikeitimo būtų viršytas ACTUAL swapo absoliutus valandų limitas per slenkantį 7 dienų langą (iki 60 val.)."
+        ),
+        "MIN_DAILY_REST":(
+            "Minimalus 11 val. paros poilsis",
+            "Po apsikeitimo tarp dviejų darbo dienų liktų mažiau nei 11 val. nepertraukiamo poilsio."
+        ),
+        "POST_DUTY_REST":(
+            "Privalomas poilsis po budėjimo",
+            "Apsikeitimas paskirtų darbą dieną, kuri turi likti laisva po ilgo budėjimo."
+        ),
+        "ABSOLUTE_UNAVAILABILITY":(
+            "Absoliutus nebuvimas",
+            "Apsikeitimas paskirtų darbą per atostogas ar kitą absoliučiai pateisintą nebuvimą."
+        ),
+        "BLOCKED_SLOT":(
+            "Uždaryta / neegzistuojanti pamaina",
+            "Apsikeitimas bandytų užpildyti pamainą, kuri pagal klinikos modelį tuo metu yra uždaryta."
+        ),
+        "MANDATORY_COVERAGE":(
+            "Privalomas klinikos padengimas",
+            "Po apsikeitimo liktų neužpildyta privaloma klinikos pamaina."
+        ),
+        "MANDATORY_BACKUP_AVAILABILITY":(
+            "Privalomas backup padengimas",
+            "Po apsikeitimo kritinei pamainai neliktų nė vieno HARD-available, nepersidengiančio backup rezidento."
+        ),
+        "OTHER_OPERATIONAL_HARD":(
+            "Kita operational HARD taisyklė",
+            "Šis apsikeitimas pažeistų kitą neapeinamą saugos / darbo laiko / klinikos padengimo taisyklę."
+        ),
+    }
+    en={
+        "EXACT_MONTHLY_WORKLOAD":("Exact monthly workload","The swap would make at least one resident's ACTUAL monthly workload differ from the exact target."),
+        "ONKO_EVEN_PARITY":("Even Onko parity","The swap would leave an odd Onko count. ACTUAL Onko must remain 0 / 2 / 4 / …"),
+        "ONKO_COVERAGE":("Required Onko coverage","The swap would break required overall Onko coverage."),
+        "OVERLAPPING_ASSIGNMENTS":("No overlapping shifts","The swap would give a resident overlapping assignments at the same time."),
+        "MAX_HOURS_PER_DAY":("Maximum hours per day","The swap would exceed the ACTUAL 12-hour daily maximum."),
+        "MAX_WORKDAYS_7D":("Maximum workdays in 7 days","The swap would exceed 6 working days in a rolling 7-day window."),
+        "MAX_HOURS_7D":("Maximum hours in 7 days","The swap would exceed the ACTUAL absolute rolling-7-day limit (up to 60 hours)."),
+        "MIN_DAILY_REST":("Minimum 11-hour daily rest","The swap would leave less than 11 uninterrupted hours of rest between workdays."),
+        "POST_DUTY_REST":("Mandatory post-duty rest","The swap would assign work on a required post-duty rest day."),
+        "ABSOLUTE_UNAVAILABILITY":("Absolute unavailability","The swap would assign work during vacation or another absolute justified absence."),
+        "BLOCKED_SLOT":("Closed / blocked shift","The swap would fill a shift that is closed in the clinic model."),
+        "MANDATORY_COVERAGE":("Mandatory clinical coverage","The swap would leave a mandatory clinical shift unfilled."),
+        "MANDATORY_BACKUP_AVAILABILITY":("Required backup availability","The swap would leave a critical shift without any HARD-available non-overlapping backup resident."),
+        "OTHER_OPERATIONAL_HARD":("Other operational HARD rule","The swap would violate another non-relaxable safety, work-time or clinical-coverage rule."),
+    }
+    table=lt if lang=="LT" else en
+    return table.get(str(code),table["OTHER_OPERATIONAL_HARD"])
+
+
+def _render_swap_hard_block(preview_stats, fallback_reason=""):
+    rows=((preview_stats or {}).get("global",{}) or {}).get("swap_hard_block_rows") or []
+    if not rows:
+        st.error(
+            ("Apsikeitimas negalimas: " if lang=="LT" else "Swap cannot be completed: ")
+            + str(fallback_reason or "unknown reason")
+        )
+        return
+
+    pretty=[]
+    for r in rows:
+        code=str(r.get("code") or "OTHER_OPERATIONAL_HARD")
+        title,why=_swap_hard_user_explanation(code,r.get("details",""))
+        pretty.append({
+            ("HARD taisyklė" if lang=="LT" else "HARD rule"):title,
+            ("Kodėl negalima" if lang=="LT" else "Why blocked"):why,
+            ("Techninė detalė" if lang=="LT" else "Technical detail"):str(r.get("details") or ""),
+        })
+
+    first=pretty[0]
+    st.error(
+        (
+            f"APSIKEITIMAS NEGALIMAS — pažeidžiama HARD taisyklė: {first['HARD taisyklė']}"
+            if lang=="LT" else
+            f"SWAP BLOCKED — HARD rule violated: {first['HARD rule']}"
+        )
+    )
+    st.dataframe(pd.DataFrame(pretty),use_container_width=True,hide_index=True)
 
 
 def month_label(y,m): return f"{MONTHS[lang][m-1]} {y}"
@@ -842,7 +953,8 @@ def refresh_result_payload(payload, y, m, use_actual_backups=True):
             backup_override=stored.backup_snapshot
     refreshed=revalidate_loaded_result(
         y,m,load_people(y,m),stored,
-        backup_assignments=backup_override
+        backup_assignments=backup_override,
+        validation_mode=("voluntary_swap_actual" if use_actual_backups else "generation"),
     )
     if use_actual_backups:
         # V2.5.57: CURRENT stats are operational / satisfaction facts only.
@@ -4129,10 +4241,11 @@ with tabs[pos]:
             their_fp=preview_needed.get(target_person) if preview_ok else None
             my_ack=True
             if not preview_ok:
-                st.error(tr("swap_preview_invalid").format(reason=preview_reason))
                 block_rows=((preview_stats or {}).get("global",{}) or {}).get("swap_hard_block_rows") or []
                 if block_rows:
-                    st.dataframe(pd.DataFrame(block_rows),use_container_width=True,hide_index=True)
+                    _render_swap_hard_block(preview_stats,preview_reason)
+                else:
+                    st.error(tr("swap_preview_invalid").format(reason=preview_reason))
             else:
                 _render_impact_table(preview_stats,active_user,("Tavo swapo pasekmės" if lang=="LT" else "Your swap consequences"))
                 if my_fp:
@@ -4227,8 +4340,18 @@ with tabs[pos]:
                 proposer_missing=bool(proposer_fp and acks.get(r["person_a"])!=proposer_fp)
                 target_fp=pv_needed.get(active_user) if pv_ok else None
                 target_ack=True
-                if stale or not pv_ok:
-                    st.error(tr("swap_preview_invalid").format(reason=("stale" if stale else pv_reason)))
+                if stale:
+                    st.error(
+                        "Šis requestas paseno, nes ACTUAL grafikas nuo jo sukūrimo jau pasikeitė."
+                        if lang=="LT" else
+                        "This request is stale because ACTUAL changed after it was created."
+                    )
+                elif not pv_ok:
+                    block_rows=((pv_stats or {}).get("global",{}) or {}).get("swap_hard_block_rows") or []
+                    if block_rows:
+                        _render_swap_hard_block(pv_stats,pv_reason)
+                    else:
+                        st.error(tr("swap_preview_invalid").format(reason=pv_reason))
                 elif proposer_missing:
                     st.warning(tr("swap_48_reaccept"))
                 else:
@@ -4451,7 +4574,16 @@ with tabs[pos]:
                         year,month,load_people(year,month),fresh,r["slot_a"],r["slot_b"],backup_assignments=db.list_backups(year,month)
                     )
                     if not pv_ok:
-                        db.update_swap_request(r["id"],"rejected",pv_reason); st.error(tr("swap_finalize_failed")); st.rerun()
+                        db.update_swap_request(r["id"],"rejected",pv_reason)
+                        block_rows=((pv_stats or {}).get("global",{}) or {}).get("swap_hard_block_rows") or []
+                        if block_rows:
+                            _render_swap_hard_block(pv_stats,pv_reason)
+                        else:
+                            st.error(
+                                ("Swapo pritaikyti nepavyko: " if lang=="LT" else "Could not apply swap: ")
+                                + str(pv_reason)
+                            )
+                        st.stop()
                     missing=[who for who,fp in pv_needed.items() if acks.get(who)!=fp]
                     if missing:
                         who=missing[0]
@@ -4475,32 +4607,42 @@ with tabs[pos]:
                         meta["phase"]="applied"
                         db.update_swap_request(r["id"],"approved",_swap_meta_encode(meta)); st.success(tr("swap_applied")); st.rerun()
                     else:
-                        db.update_swap_request(r["id"],"rejected",reason); st.error(tr("swap_finalize_failed")); st.rerun()
+                        db.update_swap_request(r["id"],"rejected",reason)
+                        st.error(
+                            ("Swapo pritaikyti nepavyko: " if lang=="LT" else "Could not apply swap: ")
+                            + str(reason)
+                        )
+                        st.stop()
         regular_hist=[r for r in hist if _swap_meta_decode(r.get("reason")).get("kind") not in {"emergency_actual","emergency_rescue"}]
         if regular_hist:
             smap={"pending":tr("pending"),"approved":tr("approved"),"rejected":tr("rejected_status")}; st.markdown(f"### {tr('history')}"); st.dataframe(pd.DataFrame([{"ID":r["id"],tr("person"):f"{r['person_a']} ↔ {r['person_b']}",tr("status"):smap.get(r["status"],r["status"]),tr("updated"):r["responded_at"] or r["created_at"]} for r in regular_hist]),use_container_width=True,hide_index=True)
 
-        # V2.5.79 — ONE-WAY EMERGENCY RESCUE.
-        # This is intentionally NOT a swap. The logged-in resident is pulled from
-        # their own lower-priority optional post into an overlapping critical SPS
-        # post. Their original post becomes vacant; the person previously covering
-        # the critical target is rescued/released and is NOT moved into the donor
-        # post. SYSTEM fairness remains frozen.
+        # V2.5.81 — always-visible EMERGENCY RESCUE operational panel.
+        # The logged-in resident is pulled from their own lower-priority optional
+        # post into an overlapping critical SPS post. The source becomes vacant;
+        # SYSTEM fairness remains frozen.
         st.divider()
-        with st.expander(
-            "🚨 ONE-WAY EMERGENCY RESCUE — ne apsikeitimas"
-            if lang=="LT" else
-            "🚨 ONE-WAY EMERGENCY RESCUE — not a swap",
-            expanded=False,
-        ):
-            st.warning(
-                "Tai NĖRA swapas. Naudok tik kai realiai dirbdamas savo poste esi skubiai paprašomas pereiti į svarbesnį SPS RO / SPS UG postą. "
-                "Tavo CURRENT LOCATION lieka tuščias; žmogus, kurį pakeiti kritiniame poste, yra RESCUED ir neina į tavo seną vietą. "
-                "Įrašas keičia tik ACTUAL; SYSTEM fairness / post debt neperskaičiuojami."
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div style="display:flex;align-items:center;gap:16px;margin:2px 0 10px 0;">
+                    <span style="font-size:3.1rem;line-height:1;">🚨</span>
+                    <div>
+                        <div style="font-size:1.55rem;font-weight:900;letter-spacing:.025em;">EMERGENCY RESCUE</div>
+                        <div style="font-size:.88rem;opacity:.72;font-weight:650;">CURRENT LOCATION → MOVING TO → RESCUED PERSON</div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.info(
+                "Naudok, kai realiai dirbdamas savo poste esi skubiai perkeltas į svarbesnį SPS RO / SPS UG postą. "
+                "CURRENT LOCATION lieka tuščias; RESCUED PERSON atleidžiamas nuo kritinio posto. "
+                "Keičiamas tik ACTUAL grafikas; SYSTEM fairness ir post debt lieka užšaldyti."
                 if lang=="LT" else
-                "This is NOT a swap. Use it only when, while working your assigned post, you are urgently pulled into a more important SPS RO / SPS UG post. "
-                "Your CURRENT LOCATION becomes vacant; the person you replace at the critical post is RESCUED and does not move to your old location. "
-                "Only ACTUAL changes; SYSTEM fairness/post debt remain frozen."
+                "Use this when, while working your assigned post, you are urgently moved into a more important SPS RO / SPS UG post. "
+                "CURRENT LOCATION becomes vacant; the RESCUED PERSON is released from the critical post. "
+                "Only ACTUAL changes; SYSTEM fairness and post debt remain frozen."
             )
 
             rescue_current=refresh_result_payload(
