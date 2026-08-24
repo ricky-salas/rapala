@@ -389,27 +389,6 @@ def create_swap_request(year: int, month: int, slot_a: int, slot_b: int, person_
     return _data(client().table("swap_requests").insert(row).execute())
 
 
-def delete_swap_action_v2586(request_id: int, current_json: Optional[dict] = None, backups: Optional[List[dict]] = None) -> dict:
-    args={
-        "p_request_id":int(request_id),
-        "p_current_json":current_json,
-        "p_backups":backups,
-    }
-    rows=_data(_retry_db(lambda: client().rpc("delete_swap_action_v2586",args).execute()))
-    if isinstance(rows,dict):
-        return rows
-    return rows[0] if rows else {}
-
-
-def delete_backup_swap_v2586(request_id: int) -> dict:
-    rows=_data(_retry_db(lambda: client().rpc(
-        "delete_backup_swap_v2586",{"p_request_id":int(request_id)}
-    ).execute()))
-    if isinstance(rows,dict):
-        return rows
-    return rows[0] if rows else {}
-
-
 def apply_emergency_rescue_atomic_v2585(
     year: int, month: int, source_slot: int, target_slot: int,
     mover: str, rescued_person: str, current_payload: dict,
