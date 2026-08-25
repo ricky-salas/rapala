@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+from copy import deepcopy
 import calendar
 import html
 import unicodedata
@@ -42,8 +43,8 @@ from scheduler_engine import (
 import db
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.85 FROZEN WORKLOAD CREDIT + ATOMIC EMERGENCY RESCUE"
-EXPECTED_ENGINE_API_VERSION = "2.5.85"
+APP_VERSION = "2.5.89 AUTH IDENTITY LOCK + UNLIMITED INVITE RETRIES"
+EXPECTED_ENGINE_API_VERSION = "2.5.89"
 DISPLAY_VERSION = "3.0"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "G.M."
@@ -527,6 +528,105 @@ def _render_swap_hard_block(preview_stats, fallback_reason=""):
     st.dataframe(pd.DataFrame(pretty),use_container_width=True,hide_index=True)
 
 
+def _friday_waterfill_proof(stats):
+    pdata=((stats or {}).get("people") or {})
+    counts={i:int((d or {}).get("friday_assignments",0) or 0) for i,d in pdata.items()}
+    vals=list(counts.values())
+    total=int(sum(vals))
+    n=len(vals)
+    lo=int(total//n) if n else 0
+    hi=int((total+n-1)//n) if n else 0
+    spread=(max(vals)-min(vals)) if vals else 0
+    passed=bool(vals and spread<=1 and all(lo<=v<=hi for v in vals))
+    return {"counts":counts,"total":total,"n":n,"floor":lo,"ceil":hi,"spread":spread,"passed":passed}
+
+
+def _delete_confirm(token, applied=False):
+    state_key="_confirm_delete_schedule_action"
+    label=("IŠTRINTI / UNDO" if lang=="LT" else "DELETE / UNDO") if applied else ("IŠTRINTI" if lang=="LT" else "DELETE")
+    if st.button(label,key=f"delete_open_{token}",use_container_width=True):
+        st.session_state[state_key]=token
+    if st.session_state.get(state_key)!=token:
+        return False
+    st.warning(
+        ("Patvirtinkite. Jei veiksmas jau pakeitė ACTUAL, sistema bandys saugiai grąžinti ankstesnę būseną. Jei tie slotai po to buvo pakeisti dar kartą, DELETE bus atmestas, kad nesugadintų naujesnio grafiko."
+         if lang=="LT" else
+         "Confirm. If this action already changed ACTUAL, the system will safely restore the previous state. If those slots changed again later, DELETE will be refused to protect newer changes.")
+    )
+    c1,c2=st.columns(2)
+    with c1:
+        yes=st.button("PATVIRTINTI DELETE" if lang=="LT" else "CONFIRM DELETE",type="primary",key=f"delete_yes_{token}",use_container_width=True)
+    with c2:
+        no=st.button("ATŠAUKTI" if lang=="LT" else "CANCEL",key=f"delete_no_{token}",use_container_width=True)
+    if no:
+        st.session_state.pop(state_key,None)
+        st.rerun()
+    if yes:
+        st.session_state.pop(state_key,None)
+        return True
+    return False
+
+
+def _prepare_swap_action_undo(row,y,m):
+    meta=_swap_meta_decode(row.get("reason"))
+    kind=str(meta.get("kind") or "")
+    phase=str(meta.get("phase") or "")
+    applied=bool(kind=="emergency_rescue" or phase=="applied")
+    if not applied:
+        return None,None
+
+    fresh=refresh_result_payload(db.load_schedule(y,m,"current"),y,m)
+    candidate=deepcopy(fresh)
+    candidate.assignments=dict(fresh.assignments)
+    sa=int(row["slot_a"]); sb=int(row["slot_b"])
+
+    if kind=="emergency_rescue":
+        if sa in candidate.assignments:
+            raise RuntimeError("Emergency Rescue source slotas nebėra tuščias — po Rescue jis jau buvo pakeistas." if lang=="LT" else "Emergency Rescue source is no longer vacant; it changed after the Rescue.")
+        if candidate.assignments.get(sb)!=row.get("person_a"):
+            raise RuntimeError("Emergency Rescue target slotas po Rescue jau buvo pakeistas." if lang=="LT" else "Emergency Rescue target changed after the Rescue.")
+        candidate.assignments[sa]=row.get("person_a")
+        candidate.assignments[sb]=row.get("person_b")
+        mode="voluntary_swap_actual"
+    else:
+        if candidate.assignments.get(sa)!=row.get("person_b") or candidate.assignments.get(sb)!=row.get("person_a"):
+            raise RuntimeError("Šio swapo slotai po pritaikymo jau buvo pakeisti dar kartą — automatinis UNDO nebesaugus." if lang=="LT" else "These swap slots changed again after application; automatic UNDO is no longer safe.")
+        candidate.assignments[sa]=row.get("person_a")
+        candidate.assignments[sb]=row.get("person_b")
+        mode="voluntary_swap_actual"
+
+    candidate=revalidate_loaded_result(
+        y,m,people_for_stored_result(candidate,y,m),candidate,
+        backup_assignments=None,validation_mode=mode,
+    )
+    desired,backup_errors=plan_backups(y,m,candidate)
+    if backup_errors:
+        raise RuntimeError(("UNDO negalimas: nepavyksta atkurti privalomo backup plano: " if lang=="LT" else "UNDO blocked: required backup plan cannot be rebuilt: ")+str(backup_errors[0]))
+    candidate=revalidate_loaded_result(
+        y,m,people_for_stored_result(candidate,y,m),candidate,
+        backup_assignments=desired,validation_mode=mode,
+    )
+    errs=list(((candidate.stats or {}).get("global") or {}).get("errors") or [])
+    if errs:
+        raise RuntimeError(("UNDO negalimas dėl operational HARD: " if lang=="LT" else "UNDO blocked by operational HARD: ")+str(errs[0]))
+    return candidate,desired
+
+
+def _delete_swap_row(row,y,m):
+    candidate,desired=_prepare_swap_action_undo(row,y,m)
+    saved=db.delete_swap_action_v2586(
+        int(row["id"]),
+        serialize_result(candidate) if candidate is not None else None,
+        desired if desired is not None else None,
+    )
+    if saved.get("undone_actual"):
+        try: persist_actual_satisfaction(y,m)
+        except Exception: pass
+        try: refresh_calendar_subscription_feeds([row.get("person_a"),row.get("person_b")])
+        except Exception: pass
+    return saved
+
+
 def month_label(y,m): return f"{MONTHS[lang][m-1]} {y}"
 def block_label(b): return {"AM":tr("morning"),"PM":tr("afternoon"),"FULL":tr("full_day")}[b]
 def pretty_day(y,m,d): return f"{d:02d} {WEEKDAYS[lang][date(y,m,d).weekday()]}"
@@ -571,9 +671,39 @@ def authenticated_user(sb):
     except Exception:
         return None
 
+def _auth_uid(user):
+    return str(getattr(user,"id","") or "").strip()
+
+
+def clear_cross_account_session_state(*, keep_client=True):
+    """Remove user-specific Streamlit state on logout/account switch.
+
+    The Supabase client may be kept so its authenticated session survives the
+    rerun. Everything else is rebuilt for the exact auth.uid().
+    """
+    keep={"supabase_client"} if keep_client else set()
+    # Language is UI-only and carries no resident data.
+    keep.add("language")
+    for key in list(st.session_state.keys()):
+        if key not in keep:
+            st.session_state.pop(key,None)
+
+
+def enforce_auth_session_identity(user):
+    """Fail closed if Streamlit state belongs to another authenticated account."""
+    uid=_auth_uid(user)
+    if not uid:
+        return
+    previous=str(st.session_state.get("_identity_auth_uid") or "")
+    if previous and previous!=uid:
+        clear_cross_account_session_state(keep_client=True)
+    st.session_state["_identity_auth_uid"]=uid
+
+
 def render_auth_gate():
     sb=get_supabase_client(); user=authenticated_user(sb)
     if user is not None:
+        enforce_auth_session_identity(user)
         return sb,user
     st.title(tr("login_title"))
     login_tab,signup_tab=st.tabs([tr("login_title"),tr("signup_title")])
@@ -601,19 +731,48 @@ def render_auth_gate():
                     try:
                         response=sb.auth.sign_up({"email":email.strip(),"password":p1})
                         st.success(tr("signup_sent"))
+                        st.caption(
+                            "Registracijos bandymų skaičiaus mūsų sistemoje neribojame. Invite kodas sunaudojamas tik vėliau, kai sėkmingai susiejamas rezidento profilis."
+                            if lang=="LT" else
+                            "Our app does not limit registration attempts. The invite code is consumed only later, when the resident profile is successfully linked."
+                        )
                         if getattr(response,"session",None) is not None:
                             st.rerun()
                     except Exception as e:
-                        st.error(str(e))
+                        msg=str(e or "")
+                        low=msg.lower()
+                        if "email rate limit" in low or "rate limit exceeded" in low:
+                            st.error(
+                                "Supabase laikinai pasiekė Auth el. laiškų limitą. Tavo invite kodas NEPANAUDOTAS ir paskyra nuo šio bandymo neužsirakino. "
+                                "Gali bandyti dar kartą vėliau tiek kartų, kiek reikia. Šio providerio valandinio email limito aplikacija pati nunulinti negali."
+                                if lang=="LT" else
+                                "Supabase temporarily reached the Auth email limit. Your invite code is NOT consumed and this attempt did not lock the account. "
+                                "You can retry later as many times as needed. The app cannot reset the provider's hourly email quota itself."
+                            )
+                        else:
+                            st.error(msg)
     st.stop()
 
 def require_linked_profile(sb,user):
     db.set_client(sb)
-    profile=db.current_profile()
-    if profile and profile.get("approved") and (
-        profile.get("initials") or profile.get("access_role")=="observer"
-    ):
-        return profile
+    auth_uid=_auth_uid(user)
+    if not auth_uid:
+        st.error("AUTH IDENTITY ERROR: authenticated user has no UID.")
+        st.stop()
+
+    profile=db.current_profile(auth_uid)
+    if profile:
+        if str(profile.get("user_id") or "")!=auth_uid:
+            st.error(
+                "IDENTITY SAFETY LOCK: prisijungusi paskyra neatitinka rezidento profilio. Prieiga sustabdyta."
+                if lang=="LT" else
+                "IDENTITY SAFETY LOCK: authenticated account does not match the resident profile. Access stopped."
+            )
+            st.stop()
+        if profile.get("approved") and (
+            profile.get("initials") or profile.get("access_role")=="observer"
+        ):
+            return profile
 
     directory=db.directory()
     st.title(tr("claim_title"))
@@ -1749,9 +1908,11 @@ def render_resident_wishes_audit(
         else:
             st.markdown("### SYSTEM pageidavimų auditas" if lang=="LT" else "### SYSTEM request audit")
             st.caption(
-                "Ši lentelė rodo publikavimo momento SYSTEM rezultatą; po publikavimo ACTUAL swapai jo neperrašo."
+                "Ši lentelė rodo publikavimo momento SYSTEM rezultatą ir TIK tuo run metu užšaldytus pageidavimus. "
+                "Vėliau pakeisti Nustatymai čia retroaktyviai nepridedami. Workstyle eilutėje rodomi konkretūs 6 h / 12 h / Onko skaičiai."
                 if lang=="LT" else
-                "This table shows the publication-time SYSTEM result; later ACTUAL swaps do not rewrite it."
+                "This table shows the publication-time SYSTEM result and ONLY the requests frozen for that run. "
+                "Settings changed later are not added retroactively. Workstyle rows show concrete 6 h / 12 h / Onko counts."
             )
 
         audit_df=resident_wishes_audit_df(result)
@@ -1831,6 +1992,28 @@ def _plain_request_sentence(r, initials=""):
     fulfilled=bool(r.get("fulfilled"))
     who=(f"{initials}: " if initials else "")
     if lang=="LT":
+        if r.get("kind") in ("shift_length_preference","avoid_doubles") and r.get("workstyle_proof"):
+            wp=r.get("workstyle_proof") or {}
+            mode=int(wp.get("mode") or 0)
+            if mode==3:
+                threshold=int(wp.get("fulfilled_threshold_min") or 0)
+                cohort=int(wp.get("prefer12_cohort_size") or 0)
+                return (
+                    f"{who}SYSTEM generavimo metu buvo užšaldytas pageidavimas „prefer 12 h“. "
+                    f"Grafike skirta {int(wp.get('double_days') or 0)} 12 h dienų ir "
+                    f"{int(wp.get('single_days') or 0)} 6 h dienų; Onko 9 h dienų — {int(wp.get('onko_9h_days') or 0)}. "
+                    f"Visos grupės dublių intervalas šiame SYSTEM yra {int(wp.get('group_double_min') or 0)}–{int(wp.get('group_double_max') or 0)}. "
+                    f"Kad 12 h workstyle būtų laikomas išpildytu, šiam run pakanka būti viršutiniame intervalo krašte: ≥{threshold} 12 h dienų. "
+                    f"12 h pageidavimą turėjo {cohort} rezidentas(-ai). "
+                    + ("Todėl pageidavimas ĮVYKDYTAS." if fulfilled else "Todėl pageidavimas NEĮVYKDYTAS ir reikia peržiūrėti solverio workstyle paskirstymą.")
+                )
+            if mode==1:
+                return (
+                    f"{who}SYSTEM generavimo metu buvo užšaldytas pageidavimas „prefer 6 h“. "
+                    f"Skirta {int(wp.get('double_days') or 0)} 12 h dienų ir {int(wp.get('single_days') or 0)} 6 h dienų. "
+                    f"Šio run 6 h workstyle riba yra ≤{int(wp.get('fulfilled_threshold_max') or 0)} 12 h dienų. "
+                    + ("Pageidavimas ĮVYKDYTAS." if fulfilled else "Pageidavimas NEĮVYKDYTAS.")
+                )
         if fulfilled:
             if r.get("kind")=="preferred":
                 return f"{who}{date_txt} {block}: „{typ}“ — ĮVYKDYTA, nes grafike yra tinkama darbo pamaina ({station})."
@@ -1842,8 +2025,21 @@ def _plain_request_sentence(r, initials=""):
         if r.get("kind")=="preferred":
             return f"{who}{date_txt} {block}: „{typ}“ — NEĮVYKDYTA, nes grafike nėra tinkamos darbo pamainos šiame bloke."
         return f"{who}{date_txt} {block}: „{typ}“ — NEĮVYKDYTA pagal parodytą rezultatą ({station})."
+    if r.get("kind") in ("shift_length_preference","avoid_doubles") and r.get("workstyle_proof"):
+        wp=r.get("workstyle_proof") or {}
+        mode=int(wp.get("mode") or 0)
+        if mode==3:
+            return (
+                f"{who}The frozen SYSTEM input was 'prefer 12 h'. "
+                f"The schedule contains {int(wp.get('double_days') or 0)} 12 h days and "
+                f"{int(wp.get('single_days') or 0)} 6 h days; Onko 9 h days: {int(wp.get('onko_9h_days') or 0)}. "
+                f"Group double-day range is {int(wp.get('group_double_min') or 0)}–{int(wp.get('group_double_max') or 0)}; "
+                f"this run counts the 12 h preference as honored at ≥{int(wp.get('fulfilled_threshold_min') or 0)} double-days. "
+                + ("HONORED." if fulfilled else "NOT HONORED.")
+            )
     if fulfilled:
         if r.get("kind")=="preferred":
+
             return f"{who}{date_txt} {block}: '{typ}' — HONORED because the schedule contains an eligible assignment ({station})."
         if r.get("kind") in ("resident_hard","soft_free"):
             return f"{who}{date_txt} {block}: '{typ}' — HONORED because no overlapping work/backup exists in that block."
@@ -1875,18 +2071,101 @@ def _plain_verify_instruction(r, initials=""):
     return "Verify the specific statement against the SYSTEM grid / Post Matrix."
 
 
+
+def _workstyle_request_text(r):
+    wp=r.get("workstyle_proof") or {}
+    mode=int(wp.get("mode") or r.get("requested_value") or 0)
+    if lang=="LT":
+        return {
+            1:"Prefer 6 h darbo dienas — FROZEN SYSTEM input",
+            2:"Mišrus 6 h / 12 h darbo stilius — FROZEN SYSTEM input",
+            3:"Prefer 12 h darbo dienas — FROZEN SYSTEM input",
+        }.get(mode,"Darbo dienos trukmės pageidavimas — FROZEN SYSTEM input")
+    return {
+        1:"Prefer 6 h workdays — FROZEN SYSTEM input",
+        2:"Mixed 6 h / 12 h workstyle — FROZEN SYSTEM input",
+        3:"Prefer 12 h workdays — FROZEN SYSTEM input",
+    }.get(mode,"Workday-length preference — FROZEN SYSTEM input")
+
+
+def _workstyle_schedule_text(r):
+    wp=r.get("workstyle_proof") or {}
+    if not wp:
+        return r.get("station","—")
+    mode=int(wp.get("mode") or 0)
+    base=(
+        f"12 h: {int(wp.get('double_days') or 0)} d.; "
+        f"6 h: {int(wp.get('single_days') or 0)} d.; "
+        f"Onko 9 h: {int(wp.get('onko_9h_days') or 0)} d."
+    )
+    if mode==3:
+        base+=(
+            f"; grupės 12 h dienų intervalas {int(wp.get('group_double_min') or 0)}–"
+            f"{int(wp.get('group_double_max') or 0)}; išpildymo riba ≥"
+            f"{int(wp.get('fulfilled_threshold_min') or 0)}"
+        )
+    elif mode==1:
+        base+=f"; išpildymo riba ≤{int(wp.get('fulfilled_threshold_max') or 0)} 12 h dienų"
+    return base
+
+
+def _workstyle_verify_text(r, initials=""):
+    wp=r.get("workstyle_proof") or {}
+    mode=int(wp.get("mode") or 0)
+    if lang=="LT":
+        if mode==3:
+            return (
+                f"Grafike suskaičiuok {initials or 'rezidento'} dienas, kur yra ir AM, ir PM normalios pamainos: "
+                f"jų turi būti {int(wp.get('double_days') or 0)}. Šio SYSTEM grupės max yra "
+                f"{int(wp.get('group_double_max') or 0)}, o 12 h pageidavimo išpildymo riba ≥"
+                f"{int(wp.get('fulfilled_threshold_min') or 0)}. Onko 9 h į 12 h dublių skaičių neįtraukiamas."
+            )
+        return "Patikrink 6 h / 12 h dienų skaičių prieš frozen SYSTEM grafiką; Onko 9 h skaičiuojamas atskirai."
+    if mode==3:
+        return (
+            f"Count {initials or 'the resident'} days with both AM and PM normal assignments: "
+            f"there should be {int(wp.get('double_days') or 0)}. Group maximum is "
+            f"{int(wp.get('group_double_max') or 0)} and the 12 h fulfillment threshold is ≥"
+            f"{int(wp.get('fulfilled_threshold_min') or 0)}. Onko 9 h does not count as a 12 h double-day."
+        )
+    return "Verify the 6 h / 12 h day counts against the frozen SYSTEM schedule."
+
+
 def request_details_df(rows, initials=""):
-    """Plain-language resident/senior request audit table (V2.5.60)."""
+    """Plain-language resident/senior request audit table.
+
+    V2.5.87: workstyle rows are rendered from the FROZEN SYSTEM request snapshot
+    and contain concrete 6 h / 12 h / Onko counts rather than a generic FULL row.
+    """
     out=[]
     for r in rows or []:
         fulfilled=bool(r.get("fulfilled"))
+        is_workstyle=bool(
+            r.get("kind") in ("shift_length_preference","avoid_doubles")
+            and r.get("workstyle_proof")
+        )
+        requested=(
+            _workstyle_request_text(r)
+            if is_workstyle else
+            f"{r.get('type','—')} · {r.get('date','—')} · {r.get('block','—')}"
+        )
+        shown=(
+            _workstyle_schedule_text(r)
+            if is_workstyle else
+            (r.get("station","—") if r.get("station","—")!="—" else ("Nėra persidengiančio paskyrimo" if lang=="LT" else "No overlapping assignment"))
+        )
+        verify=(
+            _workstyle_verify_text(r,initials)
+            if is_workstyle else
+            _plain_verify_instruction(r,initials)
+        )
         out.append({
             ("Lygis" if lang=="LT" else "Level"):r.get("priority","—"),
-            ("Ko prašei" if lang=="LT" else "What was requested"):f"{r.get('type','—')} · {r.get('date','—')} · {r.get('block','—')}",
-            ("Ką rodo grafikas" if lang=="LT" else "What the schedule shows"):(r.get("station","—") if r.get("station","—")!="—" else ("Nėra persidengiančio paskyrimo" if lang=="LT" else "No overlapping assignment")),
+            ("Ko prašei" if lang=="LT" else "What was requested"):requested,
+            ("Ką rodo grafikas" if lang=="LT" else "What the schedule shows"):shown,
             ("Rezultatas" if lang=="LT" else "Result"):("ĮVYKDYTA" if fulfilled else "NEĮVYKDYTA") if lang=="LT" else ("HONORED" if fulfilled else "NOT HONORED"),
             ("Aiškus paaiškinimas" if lang=="LT" else "Plain-language explanation"):_plain_request_sentence(r,initials),
-            ("Kaip patikrinti" if lang=="LT" else "How to verify"):_plain_verify_instruction(r,initials),
+            ("Kaip patikrinti" if lang=="LT" else "How to verify"):verify,
             ("Jei nori taisyti" if lang=="LT" else "If you want to fix it"):(r.get("swap_hint","—") if not fulfilled else "—"),
         })
     return pd.DataFrame(out)
@@ -2812,8 +3091,7 @@ st.sidebar.caption(getattr(auth_user,"email",profile.get("email","")))
 if st.sidebar.button(tr("logout"),use_container_width=True):
     try: sb.auth.sign_out()
     except Exception: pass
-    for k in ["supabase_client"]:
-        st.session_state.pop(k,None)
+    clear_cross_account_session_state(keep_client=False)
     st.rerun()
 
 is_senior_account=directory_map.get(active_user,{}).get("role")=="senior"
@@ -4618,7 +4896,31 @@ with tabs[pos]:
                         except Exception as exc:
                             st.error((f"Nepavyko atmesti backup swapo: {exc}" if lang=="LT" else f"Could not reject backup swap: {exc}"))
         if breqs:
-            st.dataframe(pd.DataFrame([{"ID":r["id"],tr("person"):f"{r['requester']} ↔ {r['target']}",tr("status"):r["status"],tr("updated"):r["responded_at"] or r["created_at"]} for r in breqs]),use_container_width=True,hide_index=True)
+            st.markdown("#### Dublių apsikeitimų istorija" if lang=="LT" else "#### Backup swap history")
+            for idx,r in enumerate(breqs,start=1):
+                with st.container(border=True):
+                    applied=bool(r.get("status")=="accepted")
+                    st.markdown(f"**DUBLIO SWAP #{idx} · DB #{r.get('id')} · {str(r.get('status','')).upper()}**")
+                    _render_swap_people_line(str(r.get("requester") or ""),str(r.get("target") or ""),"↔")
+                    st.caption(
+                        ("Jei statusas ACCEPTED, DELETE kartu bandys saugiai grąžinti ankstesnius dublio turėtojus." if lang=="LT" else
+                         "If status is ACCEPTED, DELETE will also safely restore the previous backup holders.")
+                        if applied else
+                        ("DELETE pašalins šį request/history įrašą; ACTUAL backup planas nuo jo dar nepakeistas." if lang=="LT" else
+                         "DELETE removes this request/history row; it has not changed the ACTUAL backup plan.")
+                    )
+                    if _delete_confirm(f"backup_swap_{r['id']}",applied=applied):
+                        try:
+                            saved=db.delete_backup_swap_v2586(int(r["id"]))
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                ("Dublio swapas ištrintas"+(" ir ankstesnis backup planas atkurtas." if saved.get("undone_actual") else ".")
+                                 if lang=="LT" else
+                                 "Backup swap deleted"+(" and previous backup holders restored." if saved.get("undone_actual") else "."))
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(("DELETE nepavyko: " if lang=="LT" else "DELETE failed: ")+str(exc))
         hist=db.list_swap_requests(year,month,None if senior_mode else active_user)
         if senior_mode:
             pending_apply=[]
@@ -4681,7 +4983,37 @@ with tabs[pos]:
                         st.stop()
         regular_hist=[r for r in hist if _swap_meta_decode(r.get("reason")).get("kind") not in {"emergency_actual","emergency_rescue"}]
         if regular_hist:
-            smap={"pending":tr("pending"),"approved":tr("approved"),"rejected":tr("rejected_status")}; st.markdown(f"### {tr('history')}"); st.dataframe(pd.DataFrame([{"ID":r["id"],tr("person"):f"{r['person_a']} ↔ {r['person_b']}",tr("status"):smap.get(r["status"],r["status"]),tr("updated"):r["responded_at"] or r["created_at"]} for r in regular_hist]),use_container_width=True,hide_index=True)
+            smap={"pending":tr("pending"),"approved":tr("approved"),"rejected":tr("rejected_status")}
+            st.markdown(f"### {tr('history')}")
+            for idx,r in enumerate(regular_hist,start=1):
+                meta=_swap_meta_decode(r.get("reason"))
+                applied=bool(meta.get("phase")=="applied")
+                with st.container(border=True):
+                    st.markdown(f"**SWAP #{idx} · DB #{r.get('id')} · {smap.get(r.get('status'),r.get('status'))}**")
+                    _render_swap_people_line(str(r.get("person_a") or ""),str(r.get("person_b") or ""),"↔")
+                    sa=slots.get(int(r.get("slot_a") or -1)); sb=slots.get(int(r.get("slot_b") or -1))
+                    hc1,hc2=st.columns(2)
+                    with hc1: _render_shift_tile("A",str(r.get("person_a") or ""),sa,PERSON_COLORS.get(str(r.get("person_a") or "")))
+                    with hc2: _render_shift_tile("B",str(r.get("person_b") or ""),sb,PERSON_COLORS.get(str(r.get("person_b") or "")))
+                    st.caption(
+                        ("Šis swapas jau pritaikytas ACTUAL. DELETE bandys atlikti UNDO tik jei abu slotai po to nebuvo pakeisti dar kartą." if lang=="LT" else
+                         "This swap is already applied to ACTUAL. DELETE will UNDO it only if neither slot changed again afterwards.")
+                        if applied else
+                        ("Šis įrašas ACTUAL dar nepakeitė; DELETE pašalins request/history įrašą." if lang=="LT" else
+                         "This row has not changed ACTUAL; DELETE removes the request/history row.")
+                    )
+                    if _delete_confirm(f"normal_swap_{r['id']}",applied=applied):
+                        try:
+                            saved=_delete_swap_row(r,year,month)
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                ("Swapas ištrintas"+(" ir ACTUAL grąžintas į būseną prieš šį swapą." if saved.get("undone_actual") else ".")
+                                 if lang=="LT" else
+                                 "Swap deleted"+(" and ACTUAL restored to its pre-swap state." if saved.get("undone_actual") else "."))
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(("DELETE / UNDO nepavyko: " if lang=="LT" else "DELETE / UNDO failed: ")+str(exc))
 
         # V2.5.81 — always-visible EMERGENCY RESCUE operational panel.
         # The logged-in resident is pulled from their own lower-priority optional
@@ -5031,6 +5363,22 @@ with tabs[pos]:
                                     + (f"Note: {meta.get('note')}" if meta.get("note") else "")
                                 )
                             )
+                            st.caption(
+                                "DELETE / UNDO atkurs mover į CURRENT LOCATION ir RESCUED PERSON į ankstesnį kritinį postą tik jei šie slotai po Rescue nebuvo pakeisti dar kartą."
+                                if lang=="LT" else
+                                "DELETE / UNDO restores the mover to CURRENT LOCATION and the RESCUED PERSON to the prior critical post only if those slots have not changed again."
+                            )
+                            if _delete_confirm(f"emergency_rescue_{r['id']}",applied=True):
+                                try:
+                                    saved=_delete_swap_row(r,year,month)
+                                    st.session_state["_swap_response_flash"]=(
+                                        "success",
+                                        ("Emergency Rescue ištrintas ir ACTUAL saugiai atkurtas." if lang=="LT" else
+                                         "Emergency Rescue deleted and ACTUAL safely restored.")
+                                    )
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(("Emergency Rescue DELETE / UNDO nepavyko: " if lang=="LT" else "Emergency Rescue DELETE / UNDO failed: ")+str(exc))
                         else:
                             st.warning(
                                 (
@@ -6654,6 +7002,7 @@ def _research_run_log_df(runs):
             "Monthly workplace imbalance":r.get("monthly_workplace_imbalance"),
             "Weekend spread":r.get("weekend_spread"),
             "Friday spread":r.get("friday_spread"),
+            "Friday 0-1 gate":("PASS" if (r.get("friday_spread") is not None and int(r.get("friday_spread") or 0)<=1) else "LEGACY / INVALID"),
             "Double spread":r.get("double_spread"),
             "Weekday-day spread":r.get("weekday_day_spread"),
             "Distinct workplaces":r.get("mean_distinct_workplaces"),
@@ -7112,9 +7461,17 @@ def _research_shadow_result_from_run(run,people,y,m):
         frozen_stats=validate_schedule(
             y,m,people,make_slots(y,m),assignments,_research_targets(y,m,people)
         )
+    proof=_friday_waterfill_proof(frozen_stats)
+    frozen_ok=bool(run.get("success")) and bool(proof.get("passed"))
+    msg=f"Frozen research shadow run {run.get('run_no')}"
+    if bool(run.get("success")) and not proof.get("passed"):
+        msg+=(
+            f" — LEGACY FRIDAY WATER-FILL INVALID: total {proof['total']} requires "
+            f"{proof['floor']}-{proof['ceil']} each, observed spread {proof['spread']}"
+        )
     return SolveResult(
-        ok=bool(run.get("success")),
-        message=f"Frozen research shadow run {run.get('run_no')}",
+        ok=frozen_ok,
+        message=msg,
         assignments=assignments,
         targets=_research_targets(y,m,people),
         stats=frozen_stats,
@@ -7166,7 +7523,7 @@ def _research_people_stats_df(result):
             "Weekend assignments":d.get("weekend_assignments"),
             "Prior weekends":d.get("prior_weekend_count"),
             "Cumulative weekends":d.get("cumulative_weekend_count"),
-            "Friday assignments":d.get("friday_assignments"),
+            "Friday assignments (frozen SYSTEM run)":d.get("friday_assignments"),
             "Doubles":d.get("doubles"),
             "Max consecutive days":d.get("max_consecutive_days"),
             "Max rolling-7 hours":d.get("max_rolling7_hours"),
@@ -7478,6 +7835,22 @@ def _render_research_shadow_result(rr,run_no,y,m,people,primary=False):
         use_container_width=True,
         height=620,
     )
+
+    friday_proof=_friday_waterfill_proof(rr.stats)
+    if not friday_proof.get("passed"):
+        counts=friday_proof.get("counts") or {}
+        st.error(
+            "FRIDAY WATER-FILL INVALID šiame frozen run: "
+            f"{friday_proof['total']} Friday assignments / {friday_proof['n']} rezidentų → "
+            f"teisingas entitlement {friday_proof['floor']}-{friday_proof['ceil']} kiekvienam; "
+            f"šiame run observed {min(counts.values()) if counts else 0}-{max(counts.values()) if counts else 0} "
+            f"(spread {friday_proof['spread']}). Tai legacy frozen rezultatas; naujas V2.5.86 run su tokiu spread negali būti pažymėtas validžiu."
+        )
+    else:
+        st.success(
+            f"Friday SYSTEM water-fill PASS: {friday_proof['total']} assignments / {friday_proof['n']} residents → "
+            f"{friday_proof['floor']}-{friday_proof['ceil']} each, raw spread {friday_proof['spread']}."
+        )
 
     t1,t2,t3,t4=st.tabs(["Resident stats","Post matrix","Global metrics","HARD / diagnostics"])
     with t1:

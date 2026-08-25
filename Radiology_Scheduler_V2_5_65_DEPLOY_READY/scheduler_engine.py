@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.85"
+ENGINE_API_VERSION = "2.5.89"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -1648,30 +1648,36 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         for d in p.preferred: add_hit(pi,d,None,-pref_w)
         for d in p.preferred_am: add_hit(pi,d,"AM",-pref_w)
         for d in p.preferred_pm: add_hit(pi,d,"PM",-pref_w)
-    # V2.5.71 two-pass work-pattern solve. First determine the preference-neutral
-    # number of double-days under all higher-ranked constraints and ordinary
-    # monthly requests. Then freeze that total and let 6h/12h work-style only
-    # redistribute the same pool inside the hard resident spread<=2 corridor.
+    # V2.5.88 two-pass work-pattern solve.
+    # First establish a fairness-valid, preference-neutral double-day pool under
+    # all higher-ranked HARD / structural / concrete monthly request constraints.
+    # Then freeze that pool and optimize 6 h / mixed / 12 h workstyle symmetrically.
+    # No workstyle mode has intrinsic priority over another.
     neutral_res=mb.solve(max(8.0,float(seconds)*0.58))
     if neutral_res.x is None: return None
     neutral_total_doubles=int(round(sum(float(neutral_res.x[dbl[(pi,d)]]) for pi in range(n) for d in range(1,ndays+1))))
     mb.constraint({dbl[(pi,d)]:1.0 for pi in range(n) for d in range(1,ndays+1)},float(neutral_total_doubles),float(neutral_total_doubles))
 
     workstyle_applied=False
+    pref12_indices=[]
+    pref6_indices=[]
     for pi,p in enumerate(people):
         shift_len=max(0,min(3,int(getattr(p,"shift_length_preference",0) or 0)))
         if shift_len==0 and bool(getattr(p,"avoid_doubles",False)):
             shift_len=1
         if shift_len==1:
             workstyle_applied=True
+            pref6_indices.append(pi)
             for d in range(1,ndays+1): mb.c[dbl[(pi,d)]] += 9.0
         elif shift_len==3:
             workstyle_applied=True
+            pref12_indices.append(pi)
             for d in range(1,ndays+1): mb.c[dbl[(pi,d)]] -= 9.0
         elif shift_len==2:
             workstyle_applied=True
             if pi in mixed_dev_vars:
-                a,b=mixed_dev_vars[pi]; mb.c[a]+=5.0; mb.c[b]+=5.0
+                a,b=mixed_dev_vars[pi]; mb.c[a]+=9.0; mb.c[b]+=9.0
+
     if workstyle_applied:
         styled_res=mb.solve(max(6.0,float(seconds)*0.42))
         res=styled_res if styled_res.x is not None else neutral_res
@@ -1694,6 +1700,14 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         dvals.append(int(round(sum(float(res.x[dbl[(pi,d)]]) for d in range(1,ndays+1)))))
     pattern["double_counts"]={people[pi].initials:dvals[pi] for pi in range(n)}
     pattern["double_spread"]=int(max(dvals)-min(dvals)) if dvals else 0
+    pref12_vals=[dvals[pi] for pi in pref12_indices]
+    pattern["prefer12_people"]=[people[pi].initials for pi in pref12_indices]
+    pattern["prefer12_cohort_size"]=len(pref12_indices)
+    pattern["prefer12_cohort_min"]=min(pref12_vals) if pref12_vals else None
+    pattern["prefer12_cohort_max"]=max(pref12_vals) if pref12_vals else None
+    pattern["workstyle_style_solve_proven"]=bool(
+        (not workstyle_applied) or int(getattr(res,"status",1))==0
+    )
     fvals=[]
     friday_days=[d for d in range(1,ndays+1) if date(year,month,d).weekday()==4]
     for pi in range(n):
@@ -1909,6 +1923,13 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "double_monthly_spread_ceiling":int(DOUBLE_SPREAD_MAX),
         "double_pattern_counts":pattern.get("double_counts",{}),
         "double_pattern_spread":int(pattern.get("double_spread",0) or 0),
+        "workstyle_input_source":"FROZEN_SYSTEM_REQUEST_SNAPSHOT",
+        "prefer12_people":pattern.get("prefer12_people",[]),
+        "prefer12_cohort_size":int(pattern.get("prefer12_cohort_size",0) or 0),
+        "prefer12_cohort_min":pattern.get("prefer12_cohort_min"),
+        "prefer12_cohort_max":pattern.get("prefer12_cohort_max"),
+        "workstyle_style_solve_proven":bool(pattern.get("workstyle_style_solve_proven",False)),
+        "workstyle_priority_policy":"FAIRNESS_FIRST_THEN_SYMMETRIC_6H_MIXED_12H_SOFT",
         "friday_structural_waterfill_required":True,
         "friday_structural_spread_ceiling":1,
         "friday_pattern_counts":pattern.get("friday_counts",{}),
@@ -4419,6 +4440,22 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
     weekday_day_avg = np.mean([v["weekday_days"] for v in pdata.values()]) if pdata else 0
 
     satisfaction_map={q.initials:q for q in (satisfaction_people or people)}
+    _sat_people=list(satisfaction_map.values())
+    _double_counts={i:int((pdata.get(i) or {}).get("doubles",0) or 0) for i in pdata}
+    _group_double_min=min(_double_counts.values()) if _double_counts else 0
+    _group_double_max=max(_double_counts.values()) if _double_counts else 0
+    _pref12_names=[
+        q.initials for q in _sat_people
+        if max(0,min(3,int(getattr(q,"shift_length_preference",0) or 0)))==3
+    ]
+    _pref6_names=[
+        q.initials for q in _sat_people
+        if max(0,min(3,int(getattr(q,"shift_length_preference",0) or 0)))==1
+        or (
+            max(0,min(3,int(getattr(q,"shift_length_preference",0) or 0)))==0
+            and bool(getattr(q,"avoid_doubles",False))
+        )
+    ]
     for p in people:
         sp=satisfaction_map.get(p.initials,p)
         d = pdata[p.initials]
@@ -4460,14 +4497,47 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             score = 100.0 * spread01 if sp.spread_preference > 0 else 100.0 * (1.0 - spread01)
             components["spread_preference"] = round(score, 1)
         shift_len=max(0,min(3,int(getattr(sp,"shift_length_preference",0) or 0)))
+        workstyle_proof=None
+        # Count actual 12 h workdays as non-Onko days containing >=2 normal shifts.
+        _normal_by_day={}
+        _onko_days=set()
+        for sl in pslots:
+            if sl.department=="Onko RO centre":
+                _onko_days.add(int(sl.day))
+                continue
+            _normal_by_day[int(sl.day)]=_normal_by_day.get(int(sl.day),0)+1
+        _double_days=sum(1 for nday in _normal_by_day.values() if nday>=2)
+        _single_days=sum(1 for nday in _normal_by_day.values() if nday==1)
+
         if shift_len==1 or (shift_len==0 and sp.avoid_doubles):
-            max_reasonable_doubles = max(1.0, d["assignments"] / 2.0)
-            score = 100.0 * max(0.0, 1.0 - d["doubles"] / max_reasonable_doubles)
-            components["shift_length_preference" if shift_len else "avoid_doubles"] = round(score, 1)
+            # Prefer 6 h: requester should be at the low edge of the group's
+            # unavoidable double pool. Allow a one-day corridor for feasibility.
+            _threshold=min(_group_double_max,_group_double_min+1)
+            fulfilled_ws=bool(_double_days<=_threshold)
+            score=100.0 if fulfilled_ws else max(0.0,100.0-25.0*(_double_days-_threshold))
+            components["shift_length_preference" if shift_len else "avoid_doubles"] = round(score,1)
+            workstyle_proof={
+                "mode":1,"requested":"PREFER_6H","frozen_input":True,
+                "double_days":int(_double_days),"single_days":int(_single_days),
+                "onko_9h_days":len(_onko_days),"group_double_min":int(_group_double_min),
+                "group_double_max":int(_group_double_max),"fulfilled_threshold_max":int(_threshold),
+            }
         elif shift_len==3:
-            max_reasonable_doubles = max(1.0, d["assignments"] / 2.0)
-            score = 100.0 * min(1.0, d["doubles"] / max_reasonable_doubles)
+            # Prefer 12 h: requester should be at the upper edge of the frozen
+            # group double pool. A one-day corridor prevents false failure when
+            # equally prioritized 12 h requesters must split an odd remainder.
+            _threshold=max(_group_double_min,_group_double_max-1)
+            fulfilled_ws=bool(_double_days>=_threshold)
+            score=100.0 if fulfilled_ws else max(0.0,100.0-25.0*(_threshold-_double_days))
             components["shift_length_preference"] = round(score,1)
+            workstyle_proof={
+                "mode":3,"requested":"PREFER_12H","frozen_input":True,
+                "double_days":int(_double_days),"single_days":int(_single_days),
+                "onko_9h_days":len(_onko_days),"group_double_min":int(_group_double_min),
+                "group_double_max":int(_group_double_max),"fulfilled_threshold_min":int(_threshold),
+                "prefer12_cohort_size":len(_pref12_names),
+                "prefer12_people":list(_pref12_names),
+            }
         elif shift_len==2:
             by_day_normal={}
             for sl in pslots:
@@ -4479,6 +4549,14 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             denom=max(1,mixed_doubles+mixed_singles)
             score=100.0*max(0.0,1.0-abs(mixed_doubles-mixed_singles)/denom)
             components["shift_length_preference"] = round(score,1)
+            workstyle_proof={
+                "mode":2,"requested":"MIXED_6H_12H","frozen_input":True,
+                "double_days":int(_double_days),"single_days":int(_single_days),
+                "onko_9h_days":len(_onko_days),
+            }
+
+        if workstyle_proof is not None:
+            d["workstyle_proof"]=dict(workstyle_proof)
 
         if sp.holiday_preference and public_holiday_days_in_month(year,month):
             hcount=sum(1 for sl in pslots if is_public_holiday(year,month,sl.day))
@@ -4625,6 +4703,17 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                     f"DUBLIS → {br.get('department')} ({br.get('block')})" for br in backup_here
                 )
             station_text="; ".join(station_parts) if station_parts else "—"
+            if kind in ("shift_length_preference","avoid_doubles") and workstyle_proof:
+                station_text=(
+                    f"12 h dienos: {workstyle_proof.get('double_days',0)}; "
+                    f"6 h dienos: {workstyle_proof.get('single_days',0)}; "
+                    f"Onko 9 h: {workstyle_proof.get('onko_9h_days',0)}"
+                )
+                if int(workstyle_proof.get("mode",0))==3:
+                    station_text+=(
+                        f"; grupės dublių intervalas {_group_double_min}–{_group_double_max}; "
+                        f"12 h pageidavimo išpildymo riba ≥{workstyle_proof.get('fulfilled_threshold_min',0)}"
+                    )
             if station_text=="—" and kind=="backup_claim" and item.get("department"):
                 station_text=str(item.get("department"))
 
@@ -4654,6 +4743,8 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                 "score":round(float(score_value),1),
                 "included_in_score":bool(included),
                 "swap_hint":swap_hint,
+                "workstyle_proof":dict(workstyle_proof) if kind in ("shift_length_preference","avoid_doubles") and workstyle_proof else None,
+                "input_snapshot":"FROZEN_SYSTEM_REQUEST_SNAPSHOT" if kind in ("shift_length_preference","avoid_doubles") else None,
             })
 
         category_scores={
@@ -4703,9 +4794,23 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
     # Friday distribution uneven, just like workplace exposure.
     friday_structural_vals=[int(v.get("friday_assignments",0) or 0) for v in pdata.values()]
     friday_structural_spread=(max(friday_structural_vals)-min(friday_structural_vals)) if friday_structural_vals else 0
-    if (not voluntary_swap_mode) and friday_structural_spread>1:
+    friday_structural_total=int(sum(friday_structural_vals))
+    friday_structural_n=max(1,len(friday_structural_vals))
+    friday_structural_floor=int(friday_structural_total//friday_structural_n)
+    friday_structural_ceil=int((friday_structural_total+friday_structural_n-1)//friday_structural_n)
+    friday_structural_entitlement_gate=bool(
+        friday_structural_vals
+        and all(friday_structural_floor <= int(v) <= friday_structural_ceil for v in friday_structural_vals)
+        and friday_structural_spread<=1
+    )
+    if (not voluntary_swap_mode) and not friday_structural_entitlement_gate:
         errors.append(
-            f"Friday structural water-fill violated: raw resident spread {friday_structural_spread} > 1"
+            "Friday structural water-fill violated: "
+            f"total {friday_structural_total} across {len(friday_structural_vals)} residents requires "
+            f"{friday_structural_floor}-{friday_structural_ceil} each, "
+            f"observed {min(friday_structural_vals) if friday_structural_vals else 0}-"
+            f"{max(friday_structural_vals) if friday_structural_vals else 0} "
+            f"(raw spread {friday_structural_spread})"
         )
 
     # Group fairness metrics.
@@ -4959,9 +5064,13 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             "friday_monthly_spread_raw": monthly_friday_spread_raw,
             "friday_monthly_unavoidable_spread": monthly_friday_unavoidable,
             "friday_structural_waterfill_required": True,
+            "friday_structural_total_assignments": int(friday_structural_total),
+            "friday_structural_resident_count": int(len(friday_structural_vals)),
+            "friday_structural_entitlement_floor": int(friday_structural_floor),
+            "friday_structural_entitlement_ceil": int(friday_structural_ceil),
             "friday_structural_spread_raw": int(friday_structural_spread),
             "friday_structural_spread_ceiling": 1,
-            "friday_structural_gate_passed": bool(friday_structural_spread<=1),
+            "friday_structural_gate_passed": bool(friday_structural_entitlement_gate),
             "double_monthly_spread": monthly_double_spread,
             "weekday_day_monthly_spread": monthly_weekday_day_spread,
             "weekend_cumulative_spread": cumulative_weekend_spread,

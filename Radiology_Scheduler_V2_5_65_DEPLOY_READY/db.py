@@ -85,14 +85,31 @@ def init_db(default_manual_lt: str, default_manual_en: str, default_people: list
     _default_manuals["EN"] = default_manual_en
 
 
-def current_profile() -> Optional[dict]:
-    rows = _data(_retry_db(lambda: client().table("user_profiles").select("user_id,initials,email,approved,preferred_language,access_role").limit(1).execute()))
-    return rows[0] if rows else None
+def current_profile(expected_user_id: Optional[str] = None) -> Optional[dict]:
+    """Return ONLY the profile bound to auth.uid() through a dedicated RPC.
+
+    The RPC itself ignores senior visibility and derives identity exclusively from
+    auth.uid(). `expected_user_id` is an additional client-side consistency check.
+    """
+    uid=str(expected_user_id or "").strip()
+    rows=_data(_retry_db(lambda:
+        client().rpc("current_identity_v2589",{}).execute()
+    ))
+    if len(rows)>1:
+        raise RuntimeError("IDENTITY_INVARIANT_BROKEN: multiple identity rows")
+    row=rows[0] if rows else None
+    if row and uid and str(row.get("user_id") or "")!=uid:
+        raise RuntimeError("IDENTITY_INVARIANT_BROKEN: auth UID/profile UID mismatch")
+    return row
 
 
 def auth_user_id():
-    p=current_profile()
-    return p.get("user_id") if p else None
+    try:
+        auth_resp=client().auth.get_user()
+        auth_user=getattr(auth_resp,"user",None)
+        return str(getattr(auth_user,"id","") or "") or None
+    except Exception:
+        return None
 
 
 def directory() -> Dict[str, dict]:
@@ -387,6 +404,27 @@ def get_schedule_state(year: int, month: int) -> dict:
 def create_swap_request(year: int, month: int, slot_a: int, slot_b: int, person_a: str, person_b: str, reason: str = ""):
     row={"year":year,"month":month,"slot_a":slot_a,"slot_b":slot_b,"person_a":person_a,"person_b":person_b,"status":"pending","reason":str(reason or ""),"created_at":_now()}
     return _data(client().table("swap_requests").insert(row).execute())
+
+
+def delete_swap_action_v2586(request_id: int, current_json: Optional[dict] = None, backups: Optional[List[dict]] = None) -> dict:
+    args={
+        "p_request_id":int(request_id),
+        "p_current_json":current_json,
+        "p_backups":backups,
+    }
+    rows=_data(_retry_db(lambda: client().rpc("delete_swap_action_v2586",args).execute()))
+    if isinstance(rows,dict):
+        return rows
+    return rows[0] if rows else {}
+
+
+def delete_backup_swap_v2586(request_id: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc(
+        "delete_backup_swap_v2586",{"p_request_id":int(request_id)}
+    ).execute()))
+    if isinstance(rows,dict):
+        return rows
+    return rows[0] if rows else {}
 
 
 def apply_emergency_rescue_atomic_v2585(

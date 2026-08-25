@@ -1,0 +1,33 @@
+V2.5.89 AUTH IDENTITY LOCK + UNLIMITED INVITE RETRIES
+
+IDENTITY
+- auth.uid() is the only logged-in resident identity source
+- current_identity_v2589 server RPC returns only auth.uid() profile
+- app checks returned user_id == authenticated SDK user id
+- mismatch = FAIL CLOSED
+- senior visibility cannot change own identity
+
+BINDING
+- one auth user -> one resident
+- one resident -> one auth user
+- existing binding cannot be changed to another initials
+- same binding is idempotent
+- DB PRIMARY KEY(user_id) + UNIQUE(initials) preserved
+
+SESSION
+- account switch clears previous resident Streamlit state
+- logout clears resident-specific state
+
+REGISTRATION
+- no app-level retry count
+- failed signup never consumes resident invite
+- invite consumed only after successful profile claim
+- Supabase built-in SMTP hourly quota cannot be reset by app
+- rate-limit error now explains safe retry behavior
+
+LIVE
+- migration applied
+- G.M. and R.Š. bindings confirmed separate/correct
+- E.K. invite confirmed unused
+
+No scheduling-rule changes from V2.5.88.
