@@ -1,0 +1,42 @@
+V2.5.90 FINAL TEST REPORT
+==========================
+
+STATIC / COMPILE
+PASS app.py
+PASS db.py
+PASS scheduler_engine.py
+PASS R.S. is operational Seniūnė
+PASS G.M. has no senior account role
+PASS R.Š. has one resident-facing account with embedded researcher/admin capabilities
+PASS all accounts have Paprastas / Išplėstinis
+PASS no Resident/Seniūnė profile selector remains
+PASS V2.5.89 identity lock preserved
+
+WEEKEND INPUT
+PASS recurring weekend `Pageidauju dirbti` is accepted
+PASS recurring weekend `Noriu laisvos` remains blocked
+
+FULL SEP 2026 REGRESSION — ONE RESIDENT VOLUNTEERS FOR ALL 4 SUNDAYS
+PASS schedule generated
+PASS HARD errors = 0
+PASS 4/4 Sunday volunteer requests honored
+PASS resident raw weekend count = 4
+PASS resident volunteer fairness-exemption units = 4
+PASS resident current fairness-counted weekend units = 0
+PASS volunteer-adjusted SPS RO spread = 1
+PASS volunteer-adjusted SPS UG spread = 1
+PASS volunteer-adjusted weekend spread = 1
+PASS Friday spread = 1
+PASS RAW SPS RO/weekend spread remains visible as 4
+PASS no unfulfilled Sunday request rows
+
+MULTI-VOLUNTEER REGRESSION
+PASS two volunteers requesting four weekend days each
+PASS volunteer water-fill = 4 / 4
+PASS remaining non-voluntary weekend spread = 1
+
+LATER-MONTH REGRESSION
+PASS with prior weekend history present, baseline volunteer exception is disabled
+PASS standard raw weekend fairness resumes
+
+No new database migration is required for the weekend-volunteer rule.

@@ -43,11 +43,12 @@ from scheduler_engine import (
 import db
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.89 AUTH IDENTITY LOCK + UNLIMITED INVITE RETRIES"
-EXPECTED_ENGINE_API_VERSION = "2.5.89"
+APP_VERSION = "2.5.90 SINGLE-WINDOW ROLE TRANSFER + BASELINE WEEKEND VOLUNTEERS"
+EXPECTED_ENGINE_API_VERSION = "2.5.90"
 DISPLAY_VERSION = "3.0"
 BASE = Path(__file__).parent
-SENIOR_INITIALS = "G.M."
+SENIOR_INITIALS = "R.S."
+RESEARCHER_INITIALS = "R.Š."
 DEFAULT_SUPABASE_URL = "https://gqdlwhjgwqmuoolybusy.supabase.co"
 DEFAULT_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_kHX4M55rZoHJr61S9kzdLg_tgKN-oDI"
 DEFAULT_MANUAL_LT = (BASE / "manual_lt.md").read_text(encoding="utf-8")
@@ -149,30 +150,30 @@ TR = {
 }}
 
 TR["LT"].update({
-"research":"Anketa","research_title":"Radiology Scheduler anketos langas","research_survey":"Anketa","research_dashboard":"Tyrimo skydas","research_phase":"Etapas","research_baseline":"Prieš naudojimą","research_followup":"Po naudojimo","research_likert_help":"1 = visiškai nesutinku · 5 = visiškai sutinku","research_submit":"IŠSAUGOTI ANKETĄ","research_saved":"Tyrimo anketa išsaugota.","research_privacy":"Atsakymai analizei saugomi atskirai nuo grafiko. G.M. mato tik grupės suvestines ir anoniminius komentarus; R.Š. tyrimo lange gali matyti deidentifikuotus atsakymus. Individualūs vardai šiame lange nerodomi.","research_response_count":"Atsakymų skaičius","research_mean":"Vidurkis","research_change":"Pokytis","research_operational":"Operaciniai mėnesio rodikliai","research_survey_results":"Anketos rezultatai","research_deidentified":"Deidentifikuoti atsakymai","research_comments":"Anoniminiai komentarai","research_gm_note":"Seniūnės vaizde rodomi tik grupės lygio rezultatai, kad individualūs atsakymai nebūtų naudojami personalo vertinimui.","research_rs_note":"R.Š. tyrėjo vaizde papildomai rodomi deidentifikuoti individualūs įrašai kokybės kontrolei ir vėlesnei analizei.","research_no_data":"Dar nėra tyrimo duomenų.","research_month_note":"Operaciniai rodikliai skaičiuojami pasirinktam mėnesiui; anketų suvestinė apima visus pateiktus įrašus.","research_stress":"Kiek stresą kelia grafiko sudarymo / keitimo procesas? (0–10)","research_changes":"Kiek kartų per mėnesį paprastai prašote ar atliekate grafiko pakeitimą?","research_contact":"Kaip dažnai reikia kreiptis į seniūnę dėl neaiškaus ar neteisingo grafiko?","research_problem":"Didžiausia dabartinio proceso problema","research_improve":"Ką labiausiai reikėtų pagerinti?","research_easy":"Sistema lengva naudotis","research_mobile":"Mobilioji versija lengva naudotis","research_actual":"Sistema rodo realų aktualų grafiką po pakeitimų","research_system_actual":"Naudingas skirtumas tarp sistemos pradinio ir faktinio grafiko","research_continue":"Norėčiau tęsti šios sistemos naudojimą vietoje ankstesnio metodo","research_access_denied":"Tyrimo skydas prieinamas tik R.Š. ir G.M.","research_hard_errors":"Privalomų taisyklių klaidos","research_changed_assignments":"Pakeistos normalios pamainos","research_normal_swaps":"Normalių apsikeitimų","research_backup_swaps":"Dublių apsikeitimų","research_completed_covers":"Realiai įvykdyti pavadavimai"
+"research":"Anketa","research_title":"Radiology Scheduler anketos langas","research_survey":"Anketa","research_dashboard":"Tyrimo skydas","research_phase":"Etapas","research_baseline":"Prieš naudojimą","research_followup":"Po naudojimo","research_likert_help":"1 = visiškai nesutinku · 5 = visiškai sutinku","research_submit":"IŠSAUGOTI ANKETĄ","research_saved":"Tyrimo anketa išsaugota.","research_privacy":"Atsakymai analizei saugomi atskirai nuo grafiko. Seniūnė R.S. mato tik grupės suvestines ir anoniminius komentarus; R.Š. tyrimo lange gali matyti deidentifikuotus atsakymus. Individualūs vardai šiame lange nerodomi.","research_response_count":"Atsakymų skaičius","research_mean":"Vidurkis","research_change":"Pokytis","research_operational":"Operaciniai mėnesio rodikliai","research_survey_results":"Anketos rezultatai","research_deidentified":"Deidentifikuoti atsakymai","research_comments":"Anoniminiai komentarai","research_gm_note":"Seniūnės vaizde rodomi tik grupės lygio rezultatai, kad individualūs atsakymai nebūtų naudojami personalo vertinimui.","research_rs_note":"R.Š. tyrėjo vaizde papildomai rodomi deidentifikuoti individualūs įrašai kokybės kontrolei ir vėlesnei analizei.","research_no_data":"Dar nėra tyrimo duomenų.","research_month_note":"Operaciniai rodikliai skaičiuojami pasirinktam mėnesiui; anketų suvestinė apima visus pateiktus įrašus.","research_stress":"Kiek stresą kelia grafiko sudarymo / keitimo procesas? (0–10)","research_changes":"Kiek kartų per mėnesį paprastai prašote ar atliekate grafiko pakeitimą?","research_contact":"Kaip dažnai reikia kreiptis į seniūnę dėl neaiškaus ar neteisingo grafiko?","research_problem":"Didžiausia dabartinio proceso problema","research_improve":"Ką labiausiai reikėtų pagerinti?","research_easy":"Sistema lengva naudotis","research_mobile":"Mobilioji versija lengva naudotis","research_actual":"Sistema rodo realų aktualų grafiką po pakeitimų","research_system_actual":"Naudingas skirtumas tarp sistemos pradinio ir faktinio grafiko","research_continue":"Norėčiau tęsti šios sistemos naudojimą vietoje ankstesnio metodo","research_access_denied":"Tyrimo skydas prieinamas tik R.Š. ir G.M.","research_hard_errors":"Privalomų taisyklių klaidos","research_changed_assignments":"Pakeistos normalios pamainos","research_normal_swaps":"Normalių apsikeitimų","research_backup_swaps":"Dublių apsikeitimų","research_completed_covers":"Realiai įvykdyti pavadavimai"
 })
 TR["EN"].update({
-"research":"Research","research_title":"Radiology Scheduler research window","research_survey":"Research survey","research_dashboard":"Research dashboard","research_phase":"Phase","research_baseline":"Before use","research_followup":"After use","research_likert_help":"1 = strongly disagree · 5 = strongly agree","research_submit":"SAVE RESEARCH SURVEY","research_saved":"Research survey saved.","research_privacy":"Research answers are stored separately from scheduling data. G.M. sees group summaries and anonymous comments only; the R.Š. research view can inspect de-identified responses. Individual names are not shown in this window.","research_response_count":"Response count","research_mean":"Mean","research_change":"Change","research_operational":"Monthly operational metrics","research_survey_results":"Survey results","research_deidentified":"De-identified responses","research_comments":"Anonymous comments","research_gm_note":"The senior view shows group-level results only so individual responses are not used for personnel evaluation.","research_rs_note":"The R.Š. researcher view additionally shows de-identified individual records for quality control and later analysis.","research_no_data":"No research data yet.","research_month_note":"Operational metrics use the selected month; survey summaries include all submitted responses.","research_stress":"How stressful is the scheduling / change process? (0–10)","research_changes":"How many schedule changes do you usually request or participate in per month?","research_contact":"How often do you need to contact the senior because the schedule is unclear or incorrect?","research_problem":"Biggest problem with the current process","research_improve":"What should be improved most?","research_easy":"The platform is easy to use","research_mobile":"The mobile version is easy to use","research_actual":"The platform reflects the real current schedule after changes","research_system_actual":"The SYSTEM versus ACTUAL distinction is useful","research_continue":"I would prefer to continue using this platform rather than return to the previous method","research_access_denied":"The research dashboard is available only to R.Š. and G.M.","research_hard_errors":"HARD errors","research_changed_assignments":"Changed normal assignments","research_normal_swaps":"Normal swaps","research_backup_swaps":"Backup swaps","research_completed_covers":"Completed actual covers"
+"research":"Research","research_title":"Radiology Scheduler research window","research_survey":"Research survey","research_dashboard":"Research dashboard","research_phase":"Phase","research_baseline":"Before use","research_followup":"After use","research_likert_help":"1 = strongly disagree · 5 = strongly agree","research_submit":"SAVE RESEARCH SURVEY","research_saved":"Research survey saved.","research_privacy":"Research answers are stored separately from scheduling data. The current senior R.S. sees group summaries and anonymous comments only; the R.Š. research view can inspect de-identified responses. Individual names are not shown in this window.","research_response_count":"Response count","research_mean":"Mean","research_change":"Change","research_operational":"Monthly operational metrics","research_survey_results":"Survey results","research_deidentified":"De-identified responses","research_comments":"Anonymous comments","research_gm_note":"The senior view shows group-level results only so individual responses are not used for personnel evaluation.","research_rs_note":"The R.Š. researcher view additionally shows de-identified individual records for quality control and later analysis.","research_no_data":"No research data yet.","research_month_note":"Operational metrics use the selected month; survey summaries include all submitted responses.","research_stress":"How stressful is the scheduling / change process? (0–10)","research_changes":"How many schedule changes do you usually request or participate in per month?","research_contact":"How often do you need to contact the senior because the schedule is unclear or incorrect?","research_problem":"Biggest problem with the current process","research_improve":"What should be improved most?","research_easy":"The platform is easy to use","research_mobile":"The mobile version is easy to use","research_actual":"The platform reflects the real current schedule after changes","research_system_actual":"The SYSTEM versus ACTUAL distinction is useful","research_continue":"I would prefer to continue using this platform rather than return to the previous method","research_access_denied":"The research dashboard is available only to R.Š. and G.M.","research_hard_errors":"HARD errors","research_changed_assignments":"Changed normal assignments","research_normal_swaps":"Normal swaps","research_backup_swaps":"Backup swaps","research_completed_covers":"Completed actual covers"
 })
 
 # V2.5.53 — wording aligned with critical exposure + weekly recovery constitution.
 # The legacy 0–100 summary score remains visible for continuity, but it is NOT
 # the optimizer hierarchy and never overrules the explicit lexicographic locks.
 TR["LT"].update({
-    "fairness_100_note":"100 % yra suvestinis diagnostinis rodiklis, o ne solverio prioritetų formulė. V2.5.53 sprendžia leksikografiškai: TRUE ABSOLUTE HARD → kritinis SPS RO / SPS UG / savaitgalių 0–1 water-filling → RESIDENT HARD → critical spacing → weekly load/recovery water-filling → kitas burden → kitų postų guardrail → SOFT → post debt catch-up. Savanoriškai pasirinktas savaitgalis vis tiek skaičiuojamas kaip reali ekspozicija ir nuovargio krūvis.",
-    "fairness_formula_month":"Rodoma 0–100 formulė yra tęstinis suvestinis indikatorius, bet ji NĖRA solverio prioritetų hierarchija. Kritinių SPS RO, SPS UG, savaitgalių IR penktadienių spreadą saugo atskiri SYSTEM 0–1 structural guardrailai.",
+    "fairness_100_note":"100 % yra suvestinis diagnostinis rodiklis, o ne solverio prioritetų formulė. Pirmame mėnesyje be ankstesnės savaitgalių istorijos aiškiai pasirinktas savaitgalio „Pageidauju dirbti“ laikomas savanoriška nepopuliaria pamaina: įvykdytas savanoriškas vienetas gali būti išimtas iš DABARTINIO savaitgalio / SPS RO fairness skaičiaus, o likęs nesavanoriškas krūvis lieka 0–1 water-fill. Tikras RAW dirbtas savaitgalio krūvis vis tiek išsaugomas istorijoje ir veikia vėlesnių mėnesių balansą.",
+    "fairness_formula_month":"Rodoma 0–100 formulė yra tęstinis suvestinis indikatorius, bet ji NĖRA solverio prioritetų hierarchija. SPS UG ir penktadienių exposure išlieka raw 0–1 struktūriniai guardrail. Pirmame mėnesyje su savaitgalio savanoriais SPS RO / savaitgalio 0–1 fairness taikomas likusiam NESAVANORIŠKAM krūviui; RAW matomas skirtumas rodomas atskirai ir nėra paslepiamas.",
     "fairness_formula_cumulative":"Kaupiamasis 0–100 indikatorius naudoja paskelbtų mėnesių sukauptą istoriją. Papildomai postų lygybė sekama atskirai per cumulative exposure ir POST DEBT, kad laikinas necritical nukrypimas būtų kompensuotas ateityje.",
-    "voluntary_unpopular_goal":"Konkreti pageidaujama darbo data yra SOFT-2; ją vykdyti tik nepažeidžiant kritinio SPS RO / SPS UG / savaitgalių water-filling ir aukštesnių taisyklių.",
-    "voluntary_unpopular_explain":"Savanoriškai pageidauta savaitgalio ar SPS data gali pagerinti individualų SOFT išpildymą, tačiau pati pamaina vis tiek skaičiuojama į kritinę exposure ir fatigue apskaitą. Pageidavimas negali sukurti 2+ kritinio spread vien todėl, kad žmogus pats pasirinko tą datą.",
-    "other_preferences_explain":"SOFT optimizuojami tik aukštesniuose užraktuose: po TRUE ABSOLUTE HARD, kritinio SPS RO / SPS UG / savaitgalių 0–1 water-filling, RESIDENT HARD, kritinio temporal spacing, weekly load/recovery water-filling, kitų burden taisyklių ir noncritical postų guardrail. SOFT-1 → SOFT-2 → SOFT-3; kiekviename range horizontalus water-filling. Legitimus SOFT negali pralaužti critical 0–1, ≤48h/7d ar recovery užraktų.",
+    "voluntary_unpopular_goal":"Savaitgalio „Pageidauju dirbti“ pirmame mėnesyje be istorijos gauna atskirą savanoriškos nepopuliarios pamainos sluoksnį: po ABSOLUTE HARD ir RESIDENT HARD sistema pirmiausia bando išpildyti savanorius, o likusį nesavanorišką savaitgalių krūvį water-fillina 0–1.",
+    "voluntary_unpopular_explain":"Visa diena „Pageidauju dirbti“ savaitgalį reiškia vieną savanorišką tos dienos vienetą, o ne automatiškai AM+PM. Jei grafikas nepriklausomai skiria ir antrą pusdienį, papildomas vienetas lieka fairness apskaitoje. RAW realiai dirbtos pamainos išsaugomos ir kitą mėnesį grįžta į cumulative balansą.",
+    "other_preferences_explain":"Įprastas SOFT vis dar optimizuojamas tik aukštesniuose užraktuose ir negali pralaužti saugos, RESIDENT HARD, SPS UG, penktadienių ar kitų struktūrinių guardrail. Vienintelė aiški išimtis — pirmo mėnesio savanoriškas savaitgalio „Pageidauju dirbti“: savanoriškas vienetas gali būti išimtas iš dabartinio SPS RO / savaitgalio fairness skaičiaus, o likęs nesavanoriškas krūvis privalo likti 0–1.",
 })
 TR["EN"].update({
-    "fairness_100_note":"100% is a summary diagnostic, not the solver priority formula. V2.5.53 solves lexicographically: TRUE ABSOLUTE HARD → critical SPS RO / SPS UG / weekend 0–1 water-filling → RESIDENT HARD → critical spacing → weekly load/recovery water-filling → other burden → other-post guardrail → SOFT → post-debt catch-up. A voluntarily preferred weekend still counts as real weekend exposure and fatigue burden.",
-    "fairness_formula_month":"The displayed 0–100 formula is a continuity summary indicator, NOT the solver hierarchy. SPS RO, SPS UG, weekend AND Friday exposure are protected separately by SYSTEM structural raw-spread 0–1 guardrails.",
+    "fairness_100_note":"100% is a summary diagnostic, not the solver priority formula. In the first month with no prior weekend history, an explicit weekend “prefer to work” is treated as volunteering for unpopular duty: an honored volunteer unit may sit outside the CURRENT weekend / SPS RO fairness count, while the remaining non-voluntary burden stays at 0–1 water-fill. The real RAW weekend workload is still saved to history and affects later-month balancing.",
+    "fairness_formula_month":"The displayed 0–100 formula is a continuity summary indicator, NOT the solver hierarchy. SPS UG and Friday remain raw 0–1 structural guardrails. In a first-month volunteer case, SPS RO / weekend 0–1 fairness is applied to the remaining NON-voluntary burden; the RAW visible spread is reported separately rather than hidden.",
     "fairness_formula_cumulative":"The cumulative 0–100 indicator uses published-month history. Post equality is also tracked separately through cumulative exposure and POST DEBT so temporary noncritical imbalance is repaid later.",
-    "voluntary_unpopular_goal":"An exact preferred work date is SOFT-2 and is fulfilled only inside the higher critical SPS RO / SPS UG / weekend water-fill locks.",
-    "voluntary_unpopular_explain":"A voluntarily preferred weekend or SPS date can improve individual SOFT satisfaction, but the assignment still counts toward critical exposure and fatigue. Volunteering cannot create a critical spread of 2+ merely because the resident requested the date.",
-    "other_preferences_explain":"SOFT is optimized only inside higher locks: TRUE ABSOLUTE HARD, critical SPS RO / SPS UG / weekend 0–1 water-filling, RESIDENT HARD, critical temporal spacing, weekly load/recovery water-filling, other burden fairness and the noncritical-post guardrail. SOFT-1 → SOFT-2 → SOFT-3, each with horizontal water-filling. Legitimate SOFT cannot break critical 0–1, the ≤48h/7d ceiling or recovery locks.",
+    "voluntary_unpopular_goal":"A weekend “prefer to work” in the first no-history month gets a dedicated unpopular-duty volunteer layer: after ABSOLUTE HARD and RESIDENT HARD, the engine first tries to honor willing residents and water-fills the remaining non-voluntary weekend burden at 0–1.",
+    "voluntary_unpopular_explain":"A whole-day weekend “prefer to work” means one voluntary day unit, not an automatic AM+PM double. If the schedule independently needs a second half-day, that extra unit remains in the fairness count. RAW worked exposure is retained in history and returns to cumulative balancing in later months.",
+    "other_preferences_explain":"Ordinary SOFT is still optimized only inside higher safety, Resident-HARD, SPS UG, Friday and structural guardrails. The one explicit exception is the first-month weekend-work volunteer rule: an honored volunteer unit may sit outside current SPS RO / weekend fairness, while the remaining non-voluntary burden must stay at 0–1.",
 })
 
 # V2.5.55 — voluntary swap consequence/ACK layer with labour-time reality guardrails.
@@ -229,19 +230,19 @@ TR["LT"].update({
 "research_checkpoint":"Tyrimo matavimo taškas","research_baseline_checkpoint":"Pradinis vertinimas · prieš paleidimą (2026 rugsėjis)","research_month3_checkpoint":"3 mėn. pakartotinis vertinimas (2026 gruodis)","research_month6_checkpoint":"6 mėn. pakartotinis vertinimas (2027 kovas)",
 "research_checkpoint_done":"Užpildyta","research_checkpoint_locked":"Dar neaktyvuota","research_checkpoint_pending":"Neužpildyta","research_next_task":"Kitas tyrimo veiksmas","research_resident_note":"Rezidentui reikia tik trijų trumpų anketų per visą tyrimą: pradinio vertinimo, po ~3 mėn. ir po ~6 mėn.",
 "research_completion":"Anketų užpildymas","research_expected":"Numatyta","research_export":"Eksportas analizei","research_download_surveys":"ATSISIŲSTI DEIDENTIFIKUOTAS ANKETAS (.csv)","research_download_monthly":"ATSISIŲSTI MĖNESIO RODIKLIUS (.csv)",
-"research_monthly_table":"Spalis–kovas: automatiniai operaciniai rodikliai","research_scheduler_section":"G.M. grafikų sudarytojos darbo krūvis","research_scheduler_intro":"G.M. pildo du trumpus įrašus kiekvienam tyrimo mėnesiui: iškart paruošus grafiką ir mėnesiui pasibaigus. Operacinių apsikeitimų ir pavadavimų skaičius sistema renka automatiškai.",
-"research_scheduler_month":"Tyrimo mėnuo","research_scheduler_checkpoint":"G.M. matavimo taškas","research_after_creation":"Iškart paruošus grafiką","research_after_month":"Mėnesiui pasibaigus",
+"research_monthly_table":"Spalis–kovas: automatiniai operaciniai rodikliai","research_scheduler_section":"R.S. / Seniūnės grafikų sudarymo darbo krūvis","research_scheduler_intro":"R.S. kaip dabartinė Seniūnė pildo du trumpus įrašus kiekvienam tyrimo mėnesiui: iškart paruošus grafiką ir mėnesiui pasibaigus. Operacinių apsikeitimų ir pavadavimų skaičius sistema renka automatiškai.",
+"research_scheduler_month":"Tyrimo mėnuo","research_scheduler_checkpoint":"Seniūnės R.S. matavimo taškas","research_after_creation":"Iškart paruošus grafiką","research_after_month":"Mėnesiui pasibaigus",
 "research_workflow_method":"Kaip šį mėnesį buvo sudarytas grafikas?","research_method_tool":"Tik sistema","research_method_excel":"Tik Excel","research_method_shadow":"Excel + sistema: lygiagretus palyginimas",
 "research_total_minutes":"Bendras tavo aktyvus laikas grafikui paruošti (min.)","research_corrections":"Rankinių korekcijų / iteracijų skaičius","research_resident_contacts":"Kiek rezidentų kontaktų / derinimų reikėjo?","research_communication_minutes":"Kiek laiko užėmė komunikacija dėl grafiko? (min.)",
 "research_scheduler_stress":"Grafiko sudarymo stresas (0–10)","research_fairness_confidence":"Pasitikėjimas, kad paskirstymas teisingas (1–5)","research_hard_confidence":"Pasitikėjimas, kad privalomos taisyklės išlaikytos (1–5)","research_scheduler_satisfaction":"Pasitenkinimas galutiniu grafiku (1–5)",
 "research_excel_minutes":"Excel laikas (min.)","research_tool_minutes":"Sistemos laikas (min.)","research_excel_corrections":"Excel korekcijų sk.","research_tool_corrections":"Sistemos korekcijų / pakartotinių generavimų sk.",
 "research_post_minutes":"Laikas po publikavimo pakeitimams / problemoms (min.)","research_post_interventions":"Kiek pakeitimų reikėjo tavo tiesioginio įsikišimo?","research_post_contacts":"Kiek žinučių / skambučių dėl grafiko gavai per mėnesį?",
 "research_actual_confidence":"Pasitikėjimas, kad portalas rodė realų faktinį grafiką (1–5)","research_use_next":"Ar rinktumeisi sistemą kitam mėnesiui?","research_yes":"Taip","research_unsure":"Neaišku","research_no":"Ne",
-"research_scheduler_notes":"Pastabos / kas užėmė daugiausia laiko","research_scheduler_saved":"G.M. tyrimo įrašas išsaugotas.","research_scheduler_status":"G.M. duomenų užpildymas",
+"research_scheduler_notes":"Pastabos / kas užėmė daugiausia laiko","research_scheduler_saved":"Seniūnės R.S. tyrimo įrašas išsaugotas.","research_scheduler_status":"Seniūnės R.S. duomenų užpildymas",
 "research_generation_telemetry":"Automatiniai generavimo rodikliai","research_generation_attempts":"Generavimo bandymų","research_solver_seconds":"Skaičiavimo laikas, s","research_generation_success":"Sėkmingų generavimų",
 "research_observer_tab":"Tyrimo atsiliepimai","research_observer_intro":"Tik peržiūros teisės grafikui nesikeičia. Šiame lange galima tik pateikti tyrimo atsiliepimą apie stebėsenos patogumą.","research_observer_checkpoint":"Administratorės vertinimas",
 "research_obs_actual":"Lengva nustatyti, kas realiai dirba kiekvieną pamainą.","research_obs_changes":"Lengva peržiūrėti pakeitimus po publikavimo.","research_obs_system_actual":"Sistemos pradinio ir faktinio grafiko skirtumas yra naudingas.","research_obs_privacy":"Sistema suteikia pakankamai matomumo neatskleisdama nereikalingų privačių rezidentų duomenų.","research_obs_log":"Pakeitimų žurnalas yra suprantamas.","research_obs_fairness":"Teisingumo informacija yra suprantama.","research_obs_trust":"Pasitikiu portale rodoma operacine informacija.","research_obs_missing":"Kokios informacijos trūksta, kai reikia suprasti realią skyriaus situaciją?","research_observer_saved":"Administratorės tyrimo feedback išsaugotas.",
-"research_data_quality":"Duomenų pilnumas","research_missing_scheduler":"Trūksta G.M. įrašo","research_complete":"Pilna","research_researcher_only":"Ši išsami skiltis matoma tik R.Š. tyrėjo paskyroje."
+"research_data_quality":"Duomenų pilnumas","research_missing_scheduler":"Trūksta Seniūnės R.S. įrašo","research_complete":"Pilna","research_researcher_only":"Ši išsami skiltis matoma tik R.Š. tyrėjo paskyroje."
 })
 TR["EN"].update({
 "research_role_resident":"Resident · study participant","research_role_researcher":"Resident · researcher","research_role_senior":"Resident · senior scheduler",
@@ -249,19 +250,19 @@ TR["EN"].update({
 "research_checkpoint":"Research checkpoint","research_baseline_checkpoint":"Baseline · pre-launch (September 2026)","research_month3_checkpoint":"3-month follow-up (December 2026)","research_month6_checkpoint":"6-month follow-up (March 2027)",
 "research_checkpoint_done":"Completed","research_checkpoint_locked":"Not active yet","research_checkpoint_pending":"Not completed","research_next_task":"Next research task","research_resident_note":"Residents complete only three short surveys during the whole study: baseline, ~3 months, and ~6 months.",
 "research_completion":"Survey completion","research_expected":"Expected","research_export":"Analysis export","research_download_surveys":"DOWNLOAD DE-IDENTIFIED SURVEYS (.csv)","research_download_monthly":"DOWNLOAD MONTHLY METRICS (.csv)",
-"research_monthly_table":"October–March: automatic operational metrics","research_scheduler_section":"G.M. scheduler workload","research_scheduler_intro":"G.M. completes two short records per study month: immediately after preparing the schedule and after the month ends. Operational swap / cover counts are collected automatically.",
-"research_scheduler_month":"Study month","research_scheduler_checkpoint":"G.M. checkpoint","research_after_creation":"Immediately after schedule preparation","research_after_month":"After the month is complete",
+"research_monthly_table":"October–March: automatic operational metrics","research_scheduler_section":"R.S. / senior scheduler workload","research_scheduler_intro":"R.S. as the current senior completes two short records per study month: immediately after preparing the schedule and after the month ends. Operational swap / cover counts are collected automatically.",
+"research_scheduler_month":"Study month","research_scheduler_checkpoint":"Senior R.S. checkpoint","research_after_creation":"Immediately after schedule preparation","research_after_month":"After the month is complete",
 "research_workflow_method":"How was this month's schedule prepared?","research_method_tool":"Tool only","research_method_excel":"Excel only","research_method_shadow":"Excel + Tool parallel comparison",
 "research_total_minutes":"Total active time you spent preparing the schedule (min)","research_corrections":"Manual corrections / iterations","research_resident_contacts":"Resident contacts / coordination episodes","research_communication_minutes":"Time spent on schedule communication (min)",
 "research_scheduler_stress":"Schedule-preparation stress (0–10)","research_fairness_confidence":"Confidence allocation is fair (1–5)","research_hard_confidence":"Confidence HARD rules are respected (1–5)","research_scheduler_satisfaction":"Satisfaction with final schedule (1–5)",
 "research_excel_minutes":"Excel time (min)","research_tool_minutes":"Tool time (min)","research_excel_corrections":"Excel corrections","research_tool_corrections":"Tool corrections / regenerations",
 "research_post_minutes":"Time spent on post-publication changes/problems (min)","research_post_interventions":"Changes requiring your direct intervention","research_post_contacts":"Schedule-related messages/calls received during month",
 "research_actual_confidence":"Confidence portal reflected the true ACTUAL schedule (1–5)","research_use_next":"Would you choose the Tool next month?","research_yes":"Yes","research_unsure":"Unsure","research_no":"No",
-"research_scheduler_notes":"Notes / what consumed the most time","research_scheduler_saved":"G.M. research record saved.","research_scheduler_status":"G.M. data completion",
+"research_scheduler_notes":"Notes / what consumed the most time","research_scheduler_saved":"Senior R.S. research record saved.","research_scheduler_status":"Senior R.S. data completion",
 "research_generation_telemetry":"Automatic generation telemetry","research_generation_attempts":"Generation attempts","research_solver_seconds":"Solver time, s","research_generation_success":"Successful generations",
 "research_observer_tab":"Research feedback","research_observer_intro":"Read-only scheduling rights remain unchanged. This tab only allows research feedback about the monitoring experience.","research_observer_checkpoint":"Administrator evaluation",
 "research_obs_actual":"It is easy to determine who is actually working each shift.","research_obs_changes":"It is easy to review changes made after publication.","research_obs_system_actual":"The SYSTEM baseline versus ACTUAL distinction is useful.","research_obs_privacy":"The platform provides enough visibility without exposing unnecessary private resident information.","research_obs_log":"The change log is understandable.","research_obs_fairness":"The fairness information is understandable.","research_obs_trust":"I trust the operational information shown in the portal.","research_obs_missing":"What information is missing when you need to understand the real departmental staffing situation?","research_observer_saved":"Administrator research feedback saved.",
-"research_data_quality":"Data completeness","research_missing_scheduler":"Missing G.M. record","research_complete":"Complete","research_researcher_only":"This detailed section is visible only to the R.Š. researcher account."
+"research_data_quality":"Data completeness","research_missing_scheduler":"Missing senior R.S. record","research_complete":"Complete","research_researcher_only":"This detailed section is visible only to the R.Š. researcher account."
 })
 
 RESEARCH_ITEMS = {
@@ -1043,12 +1044,12 @@ def load_people(y,m):
         # Specific monthly requests override an opposite recurring whole-day pattern on that date.
         any_short_pref=short_pref|short_pref_am|short_pref_pm
         any_short_soft=short_soft|short_soft_am|short_soft_pm
-        # V2.5.52 anti-gaming: recurring weekend SOFT is not accepted because it
-        # can become a disguised "never schedule me weekends" rule. Exact monthly
-        # weekend dates remain valid SOFT; genuine recurring impossibility belongs
-        # in RESIDENT HARD.
+        # V2.5.90 BASELINE WEEKEND VOLUNTEER OVERRIDE.
+        # Recurring weekend "Noriu laisvos" remains blocked because it can dump
+        # unavoidable weekend burden onto peers. The OPPOSITE signal is allowed:
+        # recurring weekend "Pageidauju dirbti" is a voluntary unpopular-duty offer.
         recurring_soft_allowed={d for d in set(rp["soft_free"]) if date(y,m,d).weekday()<5}
-        recurring_pref_allowed={d for d in set(rp["preferred"]) if date(y,m,d).weekday()<5}
+        recurring_pref_allowed=set(rp["preferred"])
         effective_soft=(recurring_soft_allowed-any_short_pref)|short_soft
         effective_pref=(recurring_pref_allowed-any_short_soft)|short_pref
         # Long-term RESIDENT HARD cannot be overridden by an opposite monthly SOFT
@@ -2159,6 +2160,21 @@ def request_details_df(rows, initials=""):
             if is_workstyle else
             _plain_verify_instruction(r,initials)
         )
+        fix_hint=(r.get("swap_hint","—") if not fulfilled else "—")
+        if not fulfilled and r.get("kind")=="preferred":
+            try:
+                _rd=str(r.get("date") or "")
+                _dt=date.fromisoformat(_rd) if _rd and _rd!="—" else None
+            except Exception:
+                _dt=None
+            if _dt is not None and _dt.weekday()>=5:
+                fix_hint=(
+                    "Sistema pirmiausia bandė įvykdyti tavo savanorišką savaitgalio pasirinkimą, bet aukštesnės grafiko taisyklės to neleido. "
+                    "Sugeneravus grafiką gali pasiūlyti asmeninį apsikeitimą Apsikeitimų lange."
+                    if lang=="LT" else
+                    "The engine first tried to honor your voluntary weekend choice, but higher scheduling rules prevented it. "
+                    "After generation you can propose a personal swap in the Swaps window."
+                )
         out.append({
             ("Lygis" if lang=="LT" else "Level"):r.get("priority","—"),
             ("Ko prašei" if lang=="LT" else "What was requested"):requested,
@@ -2166,7 +2182,7 @@ def request_details_df(rows, initials=""):
             ("Rezultatas" if lang=="LT" else "Result"):("ĮVYKDYTA" if fulfilled else "NEĮVYKDYTA") if lang=="LT" else ("HONORED" if fulfilled else "NOT HONORED"),
             ("Aiškus paaiškinimas" if lang=="LT" else "Plain-language explanation"):_plain_request_sentence(r,initials),
             ("Kaip patikrinti" if lang=="LT" else "How to verify"):verify,
-            ("Jei nori taisyti" if lang=="LT" else "If you want to fix it"):(r.get("swap_hint","—") if not fulfilled else "—"),
+            ("Jei nori taisyti" if lang=="LT" else "If you want to fix it"):fix_hint,
         })
     return pd.DataFrame(out)
 
@@ -3084,7 +3100,7 @@ except Exception as exc:
         st.stop()
 people_map={p["initials"]:p for p in DEFAULT_PEOPLE}
 st.sidebar.markdown(badge(active_user),unsafe_allow_html=True)
-research_role = "researcher" if active_user=="R.Š." else "senior" if active_user=="G.M." else "resident"
+research_role = "researcher" if active_user==RESEARCHER_INITIALS else "senior" if active_user==SENIOR_INITIALS else "resident"
 role_key={"researcher":"research_role_researcher","senior":"research_role_senior","resident":"research_role_resident"}[research_role]
 st.sidebar.caption(tr(role_key))
 st.sidebar.caption(getattr(auth_user,"email",profile.get("email","")))
@@ -3094,12 +3110,16 @@ if st.sidebar.button(tr("logout"),use_container_width=True):
     clear_cross_account_session_state(keep_client=False)
     st.rerun()
 
-is_senior_account=directory_map.get(active_user,{}).get("role")=="senior"
-admin_ok=is_senior_account
-profile_mode=tr("resident_profile")
-if is_senior_account:
-    profile_mode=st.sidebar.radio(tr("profile"),[tr("resident_profile"),tr("senior_profile")],horizontal=False)
-senior_mode=(profile_mode==tr("senior_profile") and is_senior_account)
+# V2.5.90: one visible interface per account. There is no profile switch.
+# R.S. = operational Seniūnė.
+# R.Š. = resident-facing account with embedded researcher + senior/admin capabilities.
+# G.M. and all others = resident-only.
+is_seniune_account=(active_user==SENIOR_INITIALS)
+is_researcher_account=(active_user==RESEARCHER_INITIALS)
+has_senior_functions=(is_seniune_account or is_researcher_account)
+admin_ok=has_senior_functions
+# Legacy name retained as a capability flag for existing protected senior-only blocks.
+senior_mode=has_senior_functions
 
 ui_simple=("Paprastas" if lang=="LT" else "Simple")
 ui_advanced=("Išplėstinis" if lang=="LT" else "Advanced")
@@ -3170,12 +3190,12 @@ if advanced_mode:
             a2.metric("HARD","—"); a3.metric(("Mėnesio fairness" if lang=="LT" else "Monthly fairness"),"—"); a4.metric(("Solverio etapas" if lang=="LT" else "Solver stage"),"—")
 
 names=[]
-if active_user=="R.Š." and advanced_mode:
+if active_user==RESEARCHER_INITIALS and advanced_mode:
     names.append("AVAILABLE GPT + HUMAN vs MY ENGINE")
 if senior_mode:
     names.append(tr("senior_dashboard"))
 names += [tr("preferences"),tr("settings")]
-if senior_mode or active_user=="R.Š.":
+if senior_mode:
     names.append(tr("generation"))
 names.append(tr("schedule"))
 if advanced_mode:
@@ -3186,20 +3206,27 @@ if advanced_mode:
 if senior_mode:
     names.append(tr("senior_guide"))
 names.append(tr("rules"))
+
+# R.Š. keeps the isolated research-shadow generator, but it is a tab inside the
+# same single account interface rather than a second profile/window.
+research_shadow_label=("TYRĖJO SUDARYMAS" if lang=="LT" else "RESEARCHER WORKBENCH")
+if active_user==RESEARCHER_INITIALS and advanced_mode:
+    names.append(research_shadow_label)
+
 tabs=st.tabs(names)
 research_shadow_tab_index=(
-    names.index(tr("generation"))
-    if active_user=="R.Š." and not senior_mode and tr("generation") in names
+    names.index(research_shadow_label)
+    if active_user==RESEARCHER_INITIALS and advanced_mode and research_shadow_label in names
     else None
 )
 
 # R.Š. research comparison is an advanced analytical tool, so it does not occupy
 # mobile/simple navigation.
-pos=1 if (active_user=="R.Š." and advanced_mode) else 0
-if active_user=="R.Š." and advanced_mode:
+pos=1 if (active_user==RESEARCHER_INITIALS and advanced_mode) else 0
+if active_user==RESEARCHER_INITIALS and advanced_mode:
     st.sidebar.success("Research: FIRST TAB — AVAILABLE GPT + HUMAN vs MY ENGINE")
-elif active_user=="R.Š." and not advanced_mode:
-    st.sidebar.caption("AVAILABLE GPT + HUMAN vs MY ENGINE → Išplėstinis režimas" if lang=="LT" else "AVAILABLE GPT + HUMAN vs MY ENGINE → Advanced mode")
+elif active_user==RESEARCHER_INITIALS and not advanced_mode:
+    st.sidebar.caption("Tyrėjo įrankiai → Išplėstinis režimas" if lang=="LT" else "Researcher tools → Advanced mode")
 if st.session_state.get("_save_flash"):
     st.success("✓ " + str(st.session_state.pop("_save_flash")))
 
@@ -3455,6 +3482,16 @@ with tabs[pos]:
                     else:
                         flash_saved(tr("settings_saved"))
         st.divider(); st.markdown(f"### {tr('long_term')}"); st.caption(tr("long_term_help"))
+        st.caption(
+            "Savaitgalio „Pageidauju dirbti“ leidžiamas kaip savanoriškas nepopuliarios pamainos pasirinkimas. "
+            "Pirmame mėnesyje be ankstesnio savaitgalių balanso sistema pirmiausia bando išnaudoti tokius savanorius, "
+            "o likusį nesavanorišką savaitgalių krūvį dalija tolygiai. Jei aukštesnės taisyklės neleidžia pageidavimo įvykdyti, "
+            "po grafiko sugeneravimo galima siūlyti asmeninį apsikeitimą."
+            if lang=="LT" else
+            "Weekend 'prefer to work' is allowed as volunteering for an unpopular duty. In the first month with no prior weekend history, "
+            "the engine first tries to use such volunteers and water-fills the remaining non-voluntary weekend burden. "
+            "If a higher rule prevents it, the resident can propose a personal swap after generation."
+        )
         existing_rec={int(r["weekday"]):r for r in db.get_recurring_preferences(active_user)}
         rule_to_label={"hard_unavailable":tr("rec_hard"),"soft_free":tr("rec_soft"),"preferred":tr("rec_preferred"),"none":tr("rec_none")}
         label_to_rule={v:k for k,v in rule_to_label.items()}
@@ -3470,11 +3507,21 @@ with tabs[pos]:
             payload=[]; invalid_weekend_soft=[]
             for _,r in edited.iterrows():
                 wd=int(r["_weekday"]); typ=label_to_rule.get(r[tr("recurring_rule")],"none"); block=label_to_block.get(r[tr("recurring_time")],"FULL")
-                if wd>=5 and typ in ("soft_free","preferred"):
+                # Weekend "Noriu laisvos" may not become a blanket escape from
+                # weekend burden. Weekend "Pageidauju dirbti" is intentionally
+                # accepted as an unpopular-duty volunteer signal.
+                if wd>=5 and typ=="soft_free":
                     invalid_weekend_soft.append(WEEKDAY_FULL[lang][wd]); continue
                 payload.append({"weekday":wd,"preference_type":typ,"block":block})
             if invalid_weekend_soft:
-                st.error("Pasikartojantis savaitgalio SOFT nepriimamas, nes apeitų kritinį savaitgalių water-filling. Rinkitės konkrečią mėnesio datą; jei iš tikrųjų negalite dirbti kiekvieną tokį savaitgalį, naudokite RESIDENT HARD.")
+                st.error(
+                    "Pasikartojantis savaitgalio „Noriu laisvos“ nepriimamas, nes perkeltų privalomą savaitgalių krūvį kitiems. "
+                    "Jei iš tikrųjų negalite dirbti kiekvieną tokį savaitgalį, naudokite RESIDENT HARD. "
+                    "Tačiau savaitgalio „Pageidauju dirbti“ LEIDŽIAMAS — tai laikoma savanorišku nepopuliarios pamainos pasirinkimu."
+                    if lang=="LT" else
+                    "Recurring weekend 'want off' is not accepted because it would shift unavoidable weekend burden to peers. "
+                    "Use RESIDENT HARD if you truly cannot work those weekends. Weekend 'prefer to work' IS allowed and is treated as volunteering for unpopular duty."
+                )
             else:
                 db.save_recurring_preferences(active_user,payload); flash_saved(tr("long_term_saved"))
 pos+=1
@@ -7721,7 +7768,7 @@ def research_shadow_xlsx(y,m,case,people,runs):
         pd.DataFrame([
             ["Research object","MY ENGINE SHADOW / FAKE GENERATOR"],
             ["Cycle",f"{y}-{m:02d}"],
-            ["Operational status","RESEARCH ONLY — unconfirmed; never published; never changes G.M. operational schedule"],
+            ["Operational status","RESEARCH ONLY — unconfirmed; never published; never changes the operational Seniūnė schedule"],
             ["Profile","R.Š. resident profile / researcher access"],
             ["Input source","Uploaded wishes / HARD workbook"],
             ["Input SHA-256",case.get("input_hash")],
@@ -7868,10 +7915,10 @@ def _render_research_shadow_result(rr,run_no,y,m,people,primary=False):
 
 def render_research_shadow_generator():
     st.subheader("FAKE GENERATOR — RESEARCH SHADOW")
-    st.success("R.Š. RESEARCHER ACCESS — available from the REZIDENTAS profile. Senior/Seniūnė profile is not required.")
+    st.success("R.Š. RESEARCHER ACCESS — embedded in the same single R.Š. account window. No profile switching is required.")
     st.error(
         "RESEARCH ONLY. Šis generatorius NIEKADA nepublikuoja grafiko, "
-        "nekeičia G.M. realaus grafiko, backupų, fairness_history ar operacinių duomenų."
+        "nekeičia realaus operacinio Seniūnės grafiko, backupų, fairness_history ar operacinių duomenų."
     )
     st.caption(
         "GENERATE MOCK SCHEDULE naudoja tą patį solve_schedule engine kaip normalus Seniūnės Sudarymas. "
@@ -8024,11 +8071,11 @@ def render_research_shadow_generator():
     )
 
     # Researcher-only reset: intentionally available in R.Š. resident profile so
-    # handing the Seniūnė account to G.M. never removes research control.
+    # operational Seniūnė role changes never remove R.Š. research control.
     with st.expander("DELETE / RESET FROZEN MOCK EXPERIMENT",expanded=False):
         st.warning(
             "This deletes the active research-shadow case and all its frozen runs for this month, then lets you upload wishes and generate a new FIRST SHOT. "
-            "It does NOT delete or change G.M.'s draft/published schedule, operational backups, swaps or fairness_history. A reset audit tombstone is kept."
+            "It does NOT delete or change the operational Seniūnė draft/published schedule, backups, swaps or fairness_history. A reset audit tombstone is kept."
         )
         reset_token=f"DELETE SHADOW {year}-{month:02d}"
         typed=st.text_input(
@@ -8820,12 +8867,12 @@ def render_available_gpt_vs_engine_research():
 
 
 # --- R.Š.-only Sudarymas: isolated research shadow / fake generator ---
-if active_user=="R.Š." and research_shadow_tab_index is not None:
+if active_user==RESEARCHER_INITIALS and research_shadow_tab_index is not None:
     with tabs[research_shadow_tab_index]:
         render_research_shadow_generator()
 
 # --- R.Š.-only locked research comparison: general GPT+human vs specialized engine ---
-if active_user=="R.Š." and advanced_mode:
+if active_user==RESEARCHER_INITIALS and advanced_mode:
     with tabs[0]:
         render_available_gpt_vs_engine_research()
 
@@ -8887,22 +8934,22 @@ with tabs[pos]:
             db.submit_research_survey(phase,sy,sm,answers,{"problem":problem,"improve":improve,"checkpoint":cp})
             st.success(tr("research_saved"))
 
-    # G.M.: workflow-burden checkpoints, separate from her resident survey.
-    if active_user=="G.M.":
+    # Current Seniūnė: workflow-burden checkpoints, separate from the resident survey.
+    if active_user==SENIOR_INITIALS:
         st.divider(); st.markdown(f"### {tr('research_scheduler_section')}")
         st.caption(tr("research_scheduler_intro"))
         study_options=[f"{yy:04d}-{mm:02d}" for yy,mm in STUDY_MONTHS]
         current_key=f"{year:04d}-{month:02d}"
         default_idx=study_options.index(current_key) if current_key in study_options else 0
-        month_key=st.selectbox(tr("research_scheduler_month"),study_options,index=default_idx,format_func=lambda x:study_month_label(int(x[:4]),int(x[5:])),key="gm_research_month")
+        month_key=st.selectbox(tr("research_scheduler_month"),study_options,index=default_idx,format_func=lambda x:study_month_label(int(x[:4]),int(x[5:])),key="senior_research_month")
         gy,gm=map(int,month_key.split("-"))
-        checkpoint=st.radio(tr("research_scheduler_checkpoint"),["post_creation","post_month"],format_func=lambda x:tr("research_after_creation") if x=="post_creation" else tr("research_after_month"),horizontal=True,key="gm_research_checkpoint")
+        checkpoint=st.radio(tr("research_scheduler_checkpoint"),["post_creation","post_month"],format_func=lambda x:tr("research_after_creation") if x=="post_creation" else tr("research_after_month"),horizontal=True,key="senior_research_checkpoint")
         old=db.get_my_scheduler_research_checkpoint(gy,gm,checkpoint) or {}
         oa=old.get("answers") or {}; of=old.get("free_text") or {}
         if checkpoint=="post_creation":
             methods=["tool","excel","shadow"]
             method_labels={"tool":tr("research_method_tool"),"excel":tr("research_method_excel"),"shadow":tr("research_method_shadow")}
-            with st.form(f"gm_creation_{gy}_{gm}"):
+            with st.form(f"senior_creation_{gy}_{gm}"):
                 method=st.selectbox(tr("research_workflow_method"),methods,index=methods.index(oa.get("method","shadow") if oa.get("method","shadow") in methods else "shadow"),format_func=lambda x:method_labels[x])
                 c1,c2=st.columns(2)
                 total_minutes=c1.number_input(tr("research_total_minutes"),0,2000,int(oa.get("total_minutes",0) or 0),5)
@@ -8924,19 +8971,19 @@ with tabs[pos]:
                     db.submit_scheduler_research_checkpoint(gy,gm,checkpoint,{"method":method,"total_minutes":total_minutes,"corrections":corrections,"resident_contacts":contacts,"communication_minutes":comm_minutes,"stress":stress,"fairness_confidence":fairness,"hard_confidence":hard,"satisfaction":sat,"excel_minutes":excel_minutes,"tool_minutes":tool_minutes,"excel_corrections":excel_corr,"tool_corrections":tool_corr},{"notes":notes})
                     st.success(tr("research_scheduler_saved"))
         else:
-            with st.form(f"gm_month_{gy}_{gm}"):
+            with st.form(f"senior_month_{gy}_{gm}"):
                 c1,c2=st.columns(2)
                 post_minutes=c1.number_input(tr("research_post_minutes"),0,3000,int(oa.get("post_minutes",0) or 0),5)
                 interventions=c2.number_input(tr("research_post_interventions"),0,500,int(oa.get("interventions",0) or 0),1)
                 contacts=st.number_input(tr("research_post_contacts"),0,1000,int(oa.get("post_contacts",0) or 0),1)
-                stress=st.slider(tr("research_stress"),0,10,int(oa.get("stress",5) or 5),1,key=f"gm_post_stress_{gy}_{gm}")
+                stress=st.slider(tr("research_stress"),0,10,int(oa.get("stress",5) or 5),1,key=f"senior_post_stress_{gy}_{gm}")
                 q1,q2=st.columns(2)
                 actual_conf=q1.slider(tr("research_actual_confidence"),1,5,int(oa.get("actual_confidence",3) or 3),1)
-                sat=q2.slider(tr("research_scheduler_satisfaction"),1,5,int(oa.get("satisfaction",3) or 3),1,key=f"gm_post_sat_{gy}_{gm}")
+                sat=q2.slider(tr("research_scheduler_satisfaction"),1,5,int(oa.get("satisfaction",3) or 3),1,key=f"senior_post_sat_{gy}_{gm}")
                 use_opts=["yes","unsure","no"]; use_labels={"yes":tr("research_yes"),"unsure":tr("research_unsure"),"no":tr("research_no")}
                 old_use=oa.get("use_next","unsure") if oa.get("use_next","unsure") in use_opts else "unsure"
                 use_next=st.selectbox(tr("research_use_next"),use_opts,index=use_opts.index(old_use),format_func=lambda x:use_labels[x])
-                notes=st.text_area(tr("research_scheduler_notes"),value=of.get("notes","") or "",key=f"gm_post_notes_{gy}_{gm}")
+                notes=st.text_area(tr("research_scheduler_notes"),value=of.get("notes","") or "",key=f"senior_post_notes_{gy}_{gm}")
                 if st.form_submit_button(tr("research_submit"),type="primary"):
                     db.submit_scheduler_research_checkpoint(gy,gm,checkpoint,{"post_minutes":post_minutes,"interventions":interventions,"post_contacts":contacts,"stress":stress,"actual_confidence":actual_conf,"satisfaction":sat,"use_next":use_next},{"notes":notes})
                     st.success(tr("research_scheduler_saved"))
@@ -8949,10 +8996,10 @@ with tabs[pos]:
             nsw=len(db.list_swap_requests(gy,gm,None)); bsw=len(db.list_backup_swap_requests(gy,gm,None)); covers=sum(1 for r in db.list_backups(gy,gm) if r.get("completed_at"))
             m1,m2,m3,m4=st.columns(4); m1.metric(tr("research_changed_assignments"),changed); m2.metric(tr("research_normal_swaps"),nsw); m3.metric(tr("research_backup_swaps"),bsw); m4.metric(tr("research_completed_covers"),covers)
 
-    # Aggregate dashboard: G.M. gets group-only results; R.Š. gets full research QA / exports.
-    if active_user in ("R.Š.","G.M.") and advanced_mode:
+    # Aggregate dashboard: current Seniūnė gets group-only results; R.Š. gets full research QA / exports.
+    if active_user in (RESEARCHER_INITIALS,SENIOR_INITIALS) and advanced_mode:
         st.divider(); st.markdown(f"### {tr('research_dashboard')}")
-        st.info(tr("research_rs_note") if active_user=="R.Š." else tr("research_gm_note"))
+        st.info(tr("research_rs_note") if active_user==RESEARCHER_INITIALS else tr("research_gm_note"))
         counts=db.research_checkpoint_counts(); summary=db.research_checkpoint_summary()
         count_map={(int(r.get("cycle_year")),int(r.get("cycle_month"))):int(r.get("response_count",0)) for r in counts}
         c1,c2,c3=st.columns(3)
