@@ -1,0 +1,20 @@
+Radiology Scheduler / Shift Happens
+V2.5.74 ALL-POST STRUCTURAL WATERFILL + WORKSTYLE
+
+SYSTEM GENERATION — STRUCTURAL HARD
+- Phase 1 freezes exact workload + work dates/AM-PM/FULL blocks.
+- Phase 2 assigns ALL non-Onko post labels jointly.
+- SPS RO / SPS UG / weekends: raw spread target <=1.
+- Every ordinary non-Onko post: raw spread target <=1 (floor/ceil entitlement).
+- A 1-vs-3 pattern is forbidden when a valid post exchange/cycle can produce 2-vs-2.
+- Wider ordinary corridor <=2, then <=3, is allowed only after the tighter corridor is mathematically proven infeasible.
+- Timeout/no incumbent is NOT proof of infeasibility.
+- Onko remains separate ABSOLUTE: exact workload, 0/2/4... only, monthly spread <=2.
+
+POST-PUBLICATION VOLUNTARY ACTUAL SWAPS
+- Workplace/post fairness, modality mix, UG/Mamografijos exposure, diversity and SYSTEM water-fill NEVER block a mutually accepted swap.
+- SYSTEM fairness/post matrix stay frozen at publication.
+- True safety/legal/physical HARD checks still apply.
+- V2.5.73 exact monthly workload and even Onko parity remain non-relaxable.
+
+WORKSTYLE / DOUBLE FAIRNESS / SETTINGS FIX / HIDDEN _weekday preserved.

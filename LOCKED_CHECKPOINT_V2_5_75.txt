@@ -1,0 +1,27 @@
+Radiology Scheduler / Shift Happens
+V2.5.75 PRE-PUBLICATION SUMMARY AUDIT + WATERFILL
+
+SENIOR WORKFLOW
+Generate draft
+→ open Suvestinė
+→ see JUODRAŠČIO SUVESTINĖ — DAR NEPASKELBTA
+→ audit every resident's wishes + exact misses + post matrix + fairness
+→ improve/regenerate if needed
+→ only then Publish / Confirm.
+
+A pending new draft is shown even if an older month schedule remains published.
+Generating/reviewing never replaces the published operational schedule by itself.
+
+AFTER PUBLICATION
+Suvestinė switches to frozen SYSTEM publication baseline.
+ACTUAL changes remain separate.
+
+ENGINE
+Byte-identical to V2.5.74.
+All-post structural water-fill preserved.
+Exact workload + even Onko parity preserved.
+Voluntary ACTUAL fairness-neutral swap policy preserved.
+
+DB
+Byte-identical to V2.5.74.
+No migration required.

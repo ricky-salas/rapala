@@ -1,0 +1,31 @@
+V2.5.86 FRIDAY 0-1 PROOF + SAFE DELETE UNDO
+
+FRIDAY SYSTEM GENERATION
+- total Friday assignments T / active residents N
+- exact entitlement = floor(T/N) .. ceil(T/N)
+- every resident must remain inside this corridor
+- raw max-min spread <=1
+- fail closed if not satisfied
+- Sep 2026 fresh regression: 72 / 16 -> 4-5 each, spread 1, HARD 0
+
+LEGACY DATA
+- old published/frozen schedules are NOT silently rewritten
+- old research run with Friday spread >1 is labelled LEGACY / INVALID for current engine
+
+DELETE / UNDO
+- normal swap: delete request or safely undo applied ACTUAL swap
+- backup/double swap: delete request or safely restore prior backup holders
+- Emergency Rescue: safely restore source mover + rescued target person
+- applied undo refused when the relevant slots changed again later
+- backup plan rebuilt atomically where schedule placement changes
+- visible original row deleted only after successful safe action
+- deleted payload copied to private schedule_action_deletions audit table
+
+ACTUAL FAIRNESS
+- voluntary swaps / backup swaps / Rescue may still worsen fairness spreads
+- DELETE does not change the frozen SYSTEM fairness baseline
+
+LIVE DB
+- v2586_delete_undo_actions migration applied
+- delete_swap_action_v2586 SECURITY DEFINER
+- delete_backup_swap_v2586 SECURITY DEFINER

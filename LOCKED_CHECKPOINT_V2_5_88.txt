@@ -1,0 +1,24 @@
+V2.5.88 FAIRNESS-FIRST SYMMETRIC WORKSTYLE OPTIMIZATION
+
+RULE:
+Fairness first. Workstyle second.
+
+6 h / mixed / 12 h are EQUAL-RANK long-term SOFT preferences.
+12 h has no special priority.
+
+FLOW:
+HARD -> structural fairness -> concrete monthly requests -> freeze fair double pool
+-> optimize all explicit workstyle preferences symmetrically.
+
+Aistė prefer 12 h:
+If feasible inside the fair solution space, give her the available 12 h pattern.
+This is preference optimization, not 12 h priority.
+
+PRESERVED:
+- frozen per-run workstyle input/audit
+- Friday 0-1 generation proof
+- safe DELETE/UNDO
+- frozen post-publication workload credit
+- atomic Emergency Rescue
+
+No DB migration.

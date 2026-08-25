@@ -1,0 +1,27 @@
+V2.5.78 ATOMIC SWAP RESPONSE + STATUS SYNC
+
+NORMAL SWAP:
+- ACCEPT = atomic server RPC, target/senior only
+- REJECT = atomic server RPC, target/senior only
+- CANCEL = atomic server RPC, proposer/senior only
+- row must still be pending
+- app verifies authoritative returned DB status
+- persistent confirmation shown after rerun
+
+BACKUP SWAP:
+- missing cancel db.py wrapper fixed
+- reject errors caught locally
+
+STATUS SYNC:
+- explicit REFRESH SWAP STATUS button
+- other already-open browser may be stale until refresh/rerun
+- swap list reads use retry wrapper
+
+LIVE DB:
+- migration v2578_atomic_swap_response applied
+- observed request #6 is rejected, not pending
+- email rate limit screen is Supabase Auth/signup, not swap DB
+
+ENGINE:
+unchanged byte-for-byte from V2.5.77.
+No scheduling/fairness rule changes.

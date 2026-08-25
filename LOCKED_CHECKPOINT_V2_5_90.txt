@@ -1,0 +1,25 @@
+V2.5.90 FINAL — SINGLE-WINDOW ROLE TRANSFER + BASELINE WEEKEND VOLUNTEERS
+
+ACCOUNT MODEL
+- one visible interface per account
+- everyone: Paprastas / Išplėstinis
+- R.S. = operational Seniūnė, target_adjustment -2
+- R.Š. = resident-facing UI + embedded researcher/senior/admin functions, target_adjustment 0
+- G.M. = ordinary resident only, target_adjustment 0
+- no Resident/Seniūnė profile switch
+- V2.5.89 auth.uid() identity lock preserved
+
+WEEKEND VOLUNTEERS
+- recurring weekend Noriu laisvos: rejected
+- recurring weekend Pageidauju dirbti: allowed
+- first no-history month only:
+  explicit weekend volunteers may exceed raw water-fill
+  honored volunteer unit excluded from CURRENT weekend/SPS RO fairness count
+  remaining NON-voluntary weekend/SPS RO burden must remain max-min <=1
+- whole-day request = one volunteer day unit, not automatic AM+PM
+- multiple volunteers water-filled among volunteers
+- RAW worked exposure is preserved in audit/history
+- later months use cumulative fairness again
+- if higher rules prevent fulfillment, resident is directed to personal swap workflow
+
+NO NEW DB MIGRATION FOR WEEKEND VOLUNTEER RULE.

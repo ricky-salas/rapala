@@ -1,0 +1,23 @@
+V2.5.83 TEST REPORT
+====================
+
+PASS app.py compile
+PASS db.py compile
+PASS scheduler_engine.py compile
+
+TRANSIENT RETRY
+PASS synthetic RemoteProtocolError classified as transient
+PASS first 2 protocol failures + third success returned successfully
+
+SWAP WRITE RECONCILIATION
+PASS simulated HTTP response loss after committed ACCEPT:
+     authoritative approved row + matching reason was returned as success
+PASS simulated HTTP failure with row still pending:
+     error was re-raised; no false ACCEPT
+
+DEPLOY CONTRACT
+PASS ENGINE_API_VERSION = 2.5.83
+PASS revalidate_loaded_result supports validation_mode
+PASS engine scheduling code unchanged from V2.5.82 except API marker
+
+No DB migration required.

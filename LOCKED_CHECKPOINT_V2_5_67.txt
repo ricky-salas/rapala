@@ -1,0 +1,9 @@
+Radiology Scheduler Web V2.5.67 EXACT WORKLOAD + ONKO PAIRS FINAL
+
+LOCKED RULES:
+- calculated monthly workload target = exact HARD, deviation 0.0
+- Onko = 1.5 workload units, individual count even only
+- monthly Onko spread <=2
+- cumulative published Onko history drives next-month catch-up
+- no V2.5.65 +/-0.5 workload allowance
+- all V2.5.66 multi-swap conflict protection preserved

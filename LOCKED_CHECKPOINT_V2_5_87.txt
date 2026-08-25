@@ -1,0 +1,10 @@
+V2.5.87 FROZEN WORKSTYLE INPUT + 12H PRIORITY PROOF
+
+- Workstyle is frozen per SYSTEM run.
+- Old run audit never uses later Settings.
+- Prefer 12 h cohort receives priority within the existing double pool.
+- Cohort minimum double-days is maximized before residual allocation.
+- Workstyle audit gives exact 12 h / 6 h / Onko 9 h numbers.
+- V2.5.86 Friday 0-1 and safe DELETE/UNDO preserved.
+- V2.5.85 frozen workload credit and atomic Emergency Rescue preserved.
+No DB migration.

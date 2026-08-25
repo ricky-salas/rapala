@@ -1,0 +1,163 @@
+# Manual
+
+V2.5.6 BETA LOCKED naudoja atskirus `manual_lt.md` ir `manual_en.md` dokumentus. Fairness hierarchija, Monthly/Cumulative formulės ir interpretacija aprašytos abiejose versijose. Portale manualą gali redaguoti tik seniūnės profilis.
+
+
+## UŽTVIRTINTA FAIRNESS TAISYKLĖ — DARBO VIETŲ / MODALITETŲ ĮVAIROVĖ
+
+Kiekvieną mėnesį sistema turi stengtis, kad kiekvienas rezidentas pabūtų kuo daugiau skirtingų darbo vietų:
+CENTRO RO, Onko RO, SPS RO, Centro UG, SPS UG, ADC 144, ADC 145, Vaikų UG ir Mamografijos.
+
+Tai yra pagrindinis ilgalaikio fairness principas, tačiau ne absoliuti HARD feasibility sąlyga. HARD saugumas,
+DK / poilsio taisyklės, neprieinamumas ir darbo valandų targetai visada yra aukščiau. Jei konkrečiame mėnesyje
+dėl šių apribojimų ar realaus pamainų skaičiaus vienodo darbo vietų paskirstymo pasiekti neįmanoma, sistema
+neturi laikyti grafiko klaidingu. Ji turi išsaugoti paskelbto SYSTEM grafiko ekspozicijų istoriją ir per
+artimiausias tinkamas pamainas bei kitą mėnesį prioritetiškai mažinti susidariusį skirtumą.
+
+Kiekviena darbo vieta balansuojama tarp rezidentų atskirai. Pvz., Mamografijos kiekiai lyginami tarp rezidentų,
+bet nėra reikalavimo, kad Mamografijos kiekis būtų toks pats kaip CENTRO RO kiekis. Mėnesio tikslas taip pat yra
+maksimizuoti skirtingų darbo vietų skaičių vienam rezidentui ir vengti bereikalingo to paties rezidento
+kartojimo toje pačioje vietoje, kai egzistuoja lygiavertis validus paskirstymas.
+
+
+
+## UŽTVIRTINTA V2.5.21 TAISYKLĖ — MĖNESIO POSTŲ LYGYBĖ PIRMA
+
+Pagrindinis postų fairness tikslas yra kiekviename pasirinktame mėnesyje kiekvieną postą paskirstyti tarp rezidentų kuo lygiau.
+Kiekvienam postui atskirai minimizuojamas šio mėnesio spread = didžiausias pamainų skaičius tame poste minus mažiausias pamainų skaičius tame poste.
+Idealus spread yra 0; jei pamainų skaičius nesidalina tolygiai ar egzistuoja realūs apribojimai, mažiausias pasiekiamas spread dažniausiai yra 1 ar kitas matematiškai neišvengiamas dydis.
+
+Tik tada, kai dėl HARD taisyklių, darbo valandų, availability ar realios pamainų pasiūlos mėnesio postų lygybės pilnai pasiekti neįmanoma, likęs skirtumas persikelia į kaupiamąją SYSTEM istoriją ir ateinančiomis pamainomis / kitą mėnesį sistema prioritetiškai bando jį ištaisyti.
+
+Trumpai: MONTHLY POST EQUALITY FIRST → CUMULATIVE CATCH-UP SECOND.
+
+
+
+## LOCKED V2.5.28 — GENERATORIAUS BAZINĖ FILOSOFIJA
+
+**Normalize inputs → satisfy HARD → establish fairness-optimal space → optimize true SOFT within that space → maximize diversity → use cumulative history as catch-up → keep best valid solution found.**
+
+1. Prieš solverį individualūs SOFT pageidavimai normalizuojami ir nedubliuojami su jau veikiančiomis HARD arba globaliomis engine taisyklėmis.
+2. HARD taisyklės yra absoliučios.
+3. Dabartinio mėnesio fairness sudaro pagrindinę gero grafiko erdvę: postų spread, workload, weekendai, Fridays, doubles, consecutive-days/fatigue ir kiti bendri fairness kriterijai vertinami kaip sistemos taisyklės.
+4. N/A = 0 pageidavimo svorio ir veikia kaip lanksti talpa.
+5. Tikri individualūs SOFT optimizuojami gero fairness erdvėje; jų tenkinimas neturi neproporcingai sugadinti visos grupės fairness.
+6. Tarp panašiai gerų variantų didinama darbo vietų / modalitetų įvairovė.
+7. Cumulative SYSTEM istorija yra antrinis catch-up tik tam disbalansui, kurio dabartiniame mėnesyje išvengti nepavyko.
+8. Generatorius saugo geriausią rastą HARD-valid kandidatą. Timeout nėra lygu „grafikas neįmanomas“.
+9. Kai visi N/A, sistema turi beveik visą optimizavimo galią skirti fairness ir pateikti stiprų pirmą juodraštį.
+
+Ši filosofija yra **FROZEN BASELINE** ir nekeičiama be aiškaus sprendimo keisti optimizerio taisykles.
+
+
+
+## LOCKED V2.5.29 — TAISYKLĖS = ENGINE
+
+Jokia taisyklė negali egzistuoti tik aprašyme. Jei taisyklė rodoma sistemoje, ją turi vykdyti engine arba aiškiai vykdyti kitas sistemos mechanizmas.
+
+Generatoriaus seka:
+**Preference normalization → HARD feasibility → global fairness/fatigue baseline → real fairness guardrails → true individual SOFT guardrail erdvėje → diversity/cumulative tie-breakers → best valid solution.**
+
+Fairness guardrail mechanika:
+- kiekvieno posto šio mėnesio spread po SOFT optimizavimo negali būti blogesnis už fairness-only baseline;
+- weekend, weekday workload, Friday, double ir weekday-day mėnesio spread gali pablogėti daugiausia +1, kad SOFT turėtų ribotą manevro laisvę;
+- šios ribos yra realios solverio constraints, ne tik display score;
+- jei SOFT etapas nespėja, paliekamas fairness baseline;
+- jei fairness etapas nespėja, paliekamas HARD-valid fallback;
+- timeout nėra automatiškai laikomas infeasible.
+
+
+
+## V2.5.58 — Public-holiday allocation
+
+Settings now include one persistent normalized SOFT signal: **prefer holiday work**, **neutral**, or **prefer holiday rest**. This is not a right to claim or avoid every holiday.
+
+Official Lithuanian public holidays use a dedicated preference-cohort water-fill layer after ABSOLUTE HARD, critical SPS/weekend equality, Resident-HARD and weekly-recovery locks. Holiday duty goes to holiday-work volunteers first, neutral residents next, and holiday-rest residents only when coverage requires it. Within each cohort, one holiday unit is distributed across peers before a second unit is given to the same person, and prior published SYSTEM holiday burden is used for longitudinal rotation.
+
+A statutory holiday falling on a weekday uses the non-working-day SPS RO AM/PM duty pattern rather than ordinary outpatient rows. The holiday preference enters the frozen ORIGINAL request ledger only in months that actually contain public holidays. Post-publication swaps/repairs do not rewrite SYSTEM holiday burden.
+
+## V2.5.65 update
+
+- Sparse educational posts: everyone receives a first exposure before avoidable second exposures when mathematically feasible.
+- Approved vacation/leave: separate absolute no-work input with proportional workload-target reduction.
+- Reminder setting: explicitly tied to the preference-submission deadline and its concrete date.
+- Personal calendar: one-time `.ics` plus private multi-month subscription URL; automatic best-effort refresh after publication and important ACTUAL changes; Google / Apple / Outlook handoff and generic iCalendar fallback.
+
+
+## V2.5.67 — tikslus mėnesio krūvis ir Onko poros
+
+Mėnesio krūvio targetas yra privalomas ir tikslus (nuokrypis 0.0). Onko 08:00–17:00 trunka 9 val., todėl skaičiuojamas kaip 1.5 standartinės 6 val. pamainos. Kad targetas liktų sveikas ir tikslus, Onko SYSTEM grafike skiriamas lyginėmis poromis (0, 2, 4...). To paties mėnesio Onko skirtumas tarp rezidentų negali viršyti 2. Rezidentai, kurie šį mėnesį gauna mažiau Onko, turi prioritetą kitais mėnesiais pagal publikuotą cumulative Onko istoriją.
+
+
+## V2.5.68 — Onko RO recovery guard
+
+Onko RO (08:00–17:00) may not be assigned to the same resident on two consecutive calendar days. This is a non-relaxable generation rule and also applies across the boundary from the last day of the previous published SYSTEM month to day 1 of the new month.
+
+The existing exact-workload and Onko-pair rules remain: even individual Onko counts, monthly Onko spread ≤2, and longitudinal catch-up without consecutive-day Onko assignments.
+
+
+## V2.5.69 — voluntary Onko swap override
+
+Generator: consecutive Onko RO remains forbidden. Bilateral voluntary swaps: consecutive Onko RO is allowed with explicit acknowledgement, provided true ABSOLUTE HARD safety/feasibility rules remain satisfied. SYSTEM fairness remains frozen; ACTUAL changes.
+
+
+## V2.5.71 — DUBLIŲ APSAUGA
+
+6/12 val. darbo pobūdžio pasirinkimas nekeičia bendro grupės AM+PM dublių skaičiaus. Neutralus dublių poreikis užrakinamas prieš individualų paskirstymą, mėnesio dublių max−min tarp rezidentų ≤2, o jau reikalingi dubliai pirmiausia derinami su SPS RO / SPS UG vietomis. Onko RO yra atskira 9 val. FULL pamaina, ne AM+PM dublis.
+
+
+## V2.5.73 — absolute Onko pairing
+
+Exact monthly workload and even Onko counts are non-negotiable in SYSTEM and ACTUAL. Each resident must have 0/2/4/... Onko. If active monthly Onko supply is odd, one Onko row stays unfilled. Voluntary swaps cannot create odd Onko or half-unit monthly workload; only the consecutive-Onko planning rule may remain an explicit bilateral ACK exception.
+
+
+## V2.5.74 — VISŲ POSTŲ STRUKTŪRINIS WATER-FILL
+
+SYSTEM generatorius po darbo datų / AM-PM blokų parinkimo visus ne-Onko postų labelius sprendžia **vienu bendru modeliu**. Kiekvienam postui pirmiausia taikomas floor/ceil entitlement koridorius raw spread 0–1. Tai reiškia, kad trečia ekspozicija negali likti vienam rezidentui, kol kitas tame pačiame poste turi tik vieną, jeigu egzistuoja validus dviejų ar daugiau rezidentų postų perkeitimas, kuris išlaiko darbo datas, blokus, tikslų krūvį ir aukštesnes HARD taisykles.
+
+Jei 0–1 koridorius neturi sprendinio, sistema gali pereiti į 0–2, o po to 0–3 tik tada, kai ankstesnis siauresnis koridorius yra **matematiškai įrodytas neįmanomas**. Timeout nėra toks įrodymas.
+
+Po publikavimo savanoriški bilateraliniai ACTUAL swapai yra fairness-neutral. Jei abu rezidentai sutinka ir nėra tikro saugos / darbo-laiko / fizinio HARD pažeidimo, postų ekspozicijos, UG/Mamografijos kiekiai, diversity ar SYSTEM water-fill nėra swapo blokatoriai. SYSTEM fairness ir postų matrica lieka užšaldyti publikavimo momentu. V2.5.73 tikslus mėnesio workload ir lyginė Onko parity lieka neperžengiami.
+
+
+## V2.5.77 — PENKTADIENIŲ STRUKTŪRINIS WATER-FILL
+
+SYSTEM generatoriuje penktadieniai yra **struktūrinė HARD fairness taisyklė**. Suskaičiavus visus užpildomus penktadienio priskyrimus, kiekvieno rezidento penktadienių skaičius turi patekti į matematinį `floor(total/rezidentai)..ceil(total/rezidentai)` koridorių. Todėl raw max−min spread turi būti **0–1**.
+
+Pavyzdys: 72 penktadienio priskyrimai / 16 rezidentų = 4.5, todėl teisingas water-fill yra **8 rezidentai po 4 ir 8 rezidentai po 5**, o ne 2–8.
+
+Ši taisyklė taikoma **visiems** SYSTEM penktadienio priskyrimams, įskaitant pageidautas penktadienio datas. Pageidavimas yra SOFT ir negali pralaužti structural 0–1.
+
+Architektūra: Phase 1 subalansuoja darbo datas/blokus ir penktadienius; Phase 2 ant jau subalansuotų blokų kartu water-fill'ina visus ne-Onko postus. Taip penktadienio darbo perkėlimas kartu suteikia postų solveriui galimybę gerinti Mamografijos / ADC / UG / kitų postų matricą.
+
+Po publikavimo abipusis savanoriškas ACTUAL swapas gali išbalansuoti penktadienius ar postus, jei nepažeidžiami tikri saugos / darbo-laiko HARD reikalavimai ir V2.5.73 exact workload + Onko parity. SYSTEM fairness baseline lieka toks, kokį paskyrė algoritmas.
+
+
+## V2.5.79 — Vizualūs swap requestai ir ONE-WAY EMERGENCY RESCUE
+
+Įprastas `Apsikeitimai` srautas yra **tik bilateralinis swap requestas**: vienas rezidentas pasiūlo savo pamainą už kito rezidento pamainą, gavėjas priima arba atmeta, o po priėmimo seniūnė pritaiko pakeitimą ACTUAL grafike.
+
+Gyvi requestai rodomi kaip platūs vizualūs cards:
+- inicialai / vardai nuspalvinti pagal rezidento spalvą;
+- rodoma `GAUTA UŽKLAUSA 1/3`, `2/3` ir t. t.;
+- aiškiai atskirta, ką siūlytojas ATIDUODA ir kokios gavėjo pamainos PRAŠO;
+- gavėjui išsaugojus naują requestą siunčiamas operational email pranešimas, jei jo paskyroje yra email ir SMTP sukonfigūruotas;
+- email klaida niekada neatšaukia jau išsaugoto DB requesto.
+
+Po `REQUEST SWAP` nebenaudojamas priverstinis `st.rerun()`, todėl puslapis nebeturi perslinkti į žemiau esantį emergency bloką. Emergency funkcija laikoma atskirame **uždarytame expander**, kuris po normalaus swapo automatiškai neatsidaro.
+
+### ONE-WAY EMERGENCY RESCUE — tai nėra swapas
+
+Senas pavadinimas „Emergency swap“ buvo misnomer. Naujas modelis yra vienpusis operational rescue:
+
+1. Pats realiai perkeltas rezidentas savo paskyroje pasirenka `CURRENT LOCATION`.
+2. Pasirenka to paties laiko kritinį `MOVING TO` postą (SPS RO / SPS UG).
+3. Sistema spalvotai parodo `RESCUED PERSON` — žmogų, kuris tuo metu buvo kritiniame poste.
+4. Patvirtinus:
+   - mover pašalinamas iš seno žemesnio prioriteto optional posto;
+   - jo `CURRENT LOCATION` lieka **tuščias**;
+   - mover įrašomas į `MOVING TO` kritinį postą;
+   - `RESCUED PERSON` atleidžiamas nuo target posto;
+   - rescued person **nėra** perkeliamas į mover seną vietą.
+
+Tai keičia tik ACTUAL operational grafiką. SYSTEM fairness, publication post matrix ir post debt lieka užšaldyti. Nauji rescue įrašai žurnale rodomi `CURRENT LOCATION → MOVING TO` formatu, su spalvotais mover / rescued inicialais. Seni `emergency_actual` bilateraliniai įrašai paliekami tik kaip aiškiai pažymėtas LEGACY auditas.

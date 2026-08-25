@@ -1,0 +1,52 @@
+V2.5.91 FINAL TEST REPORT
+=========================
+
+CODE
+PASS app.py compile
+PASS db.py compile
+PASS scheduler_engine.py compile
+PASS app expects engine API 2.5.91
+PASS engine API 2.5.91
+PASS old direct Publish control removed from Sudarymas workflow
+PASS operational generation/improve disabled after lifecycle reaches SWAP_OPEN
+PASS Grafikas contains colored Grafiko tvirtinimas lifecycle panel
+PASS FINAL Excel requires lifecycle FINAL
+PASS FINAL Excel uses frozen final_backups override
+PASS normal swap request button gated by lifecycle permission
+PASS backup swap request button gated by lifecycle permission
+PASS normal swap senior-apply UI restricted to is_seniune_account (R.S.)
+
+LIVE SUPABASE
+PASS schedule_lifecycle exists
+PASS late_swap_access exists
+PASS final_backups column exists
+PASS get_swap_permission_v2591 exists
+PASS finalization_blockers_v2591 exists
+PASS create_swap_request_v2591 exists
+PASS create_backup_swap_request_v2591 exists
+PASS direct INSERT policies for swap_requests/backup_swap_requests removed
+PASS lifecycle ownership proof: R.S.=true, R.Š.=false, G.M.=false
+PASS privilege proof remains: R.S.=true, R.Š.=true, G.M.=false
+PASS bundled post-V2.5.90 R.Š. embedded-admin RLS migration included
+PASS reset RPC clears lifecycle/late grants pre-FINAL and blocks reset after FINAL
+
+LIFECYCLE CONSTITUTION
+PASS DRAFT -> SWAP_OPEN -> SWAP_CLOSED -> FINAL
+PASS open requires published SYSTEM and future deadline
+PASS late access requires SWAP_CLOSED
+PASS FINAL requires SWAP_CLOSED
+PASS FINAL blocked by pending normal, waiting R.S. apply, pending backup, active late grants
+PASS FINAL rejects stale client snapshot
+PASS FINAL snapshots effective backup rows
+
+EMAIL / DEPLOYMENT
+PASS operational mail uses SMTP integration
+PASS opening swap window fail-closed when SMTP missing
+PASS opening swap window fail-closed when resident emails missing
+PASS initial email text includes exact deadline and swap workflow
+PASS late-access email implemented
+PASS FINAL email implemented
+PASS resend swap-window email implemented
+PASS resend FINAL email implemented
+
+NOTE: SMTP credentials themselves are deployment secrets and are intentionally NOT bundled in the ZIP.

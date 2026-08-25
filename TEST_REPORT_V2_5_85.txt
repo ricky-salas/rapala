@@ -1,0 +1,21 @@
+V2.5.85 TEST REPORT
+
+PASS app.py/db.py/scheduler_engine.py compile.
+PASS Engine API 2.5.85.
+PASS live SECURITY DEFINER rescue RPC exists.
+
+September 2026 neutral SYSTEM:
+- generation success
+- HARD errors 0
+
+Synthetic Emergency Rescue:
+Mover: target 28, credit 28, ACTUAL placement 28, delta 0.
+Rescued: target 28, credit 28, ACTUAL placement 27, delta 0.
+No exact-target workload error.
+
+Unequal slot-weight normal swap preview:
+No exact-workload target blocker was emitted; separate existing ACTUAL rules
+(e.g. Onko parity/overlap/daily-hours) may still block a chosen pair.
+
+The failed screenshot Rescue was checked live and had not changed the shown
+CURRENT source/target slots.

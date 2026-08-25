@@ -1,0 +1,23 @@
+V2.5.85 FROZEN WORKLOAD CREDIT + ATOMIC EMERGENCY RESCUE
+
+WORKLOAD CREDIT
+- SYSTEM target ledger immutable after publication
+- normal swap = credit neutral
+- backup/double swap = credit neutral
+- Emergency Rescue = credit neutral
+- RESCUED PERSON gets no work debt
+- no automatic make-up shift
+- absence reason stays outside scheduler target mathematics
+
+EMERGENCY RESCUE
+- atomic server transaction
+- source becomes vacant
+- mover goes to critical target
+- rescued person is released
+- backup plan rebuilt in same transaction
+- audit written in same transaction
+- any failure rolls everything back
+- idempotent against lost-response retry
+
+SYSTEM generation exact workload remains HARD.
+Existing fairness rules otherwise unchanged.

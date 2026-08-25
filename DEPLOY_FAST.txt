@@ -1,0 +1,12 @@
+FAST DEPLOY
+1. Create a PRIVATE GitHub repository.
+2. Upload the CONTENTS of this folder to the repo root.
+3. In Streamlit Community Cloud create app from that repo.
+4. Branch: main. Entrypoint: app.py.
+5. Deploy. Supabase public connection is already configured in the app.
+6. After deployment copy the https://...streamlit.app URL.
+7. In Streamlit app Settings > Secrets add:
+SCHEDULER_PUBLIC_URL = "https://YOUR-APP.streamlit.app"
+Optional SMTP fields can be added later.
+8. Reboot app and test login/invites.
+Never upload invite-code files or .streamlit/secrets.toml.

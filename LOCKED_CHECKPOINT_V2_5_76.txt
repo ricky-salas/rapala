@@ -1,0 +1,16 @@
+V2.5.76 PRIVACY-SAFE SUMMARY AUDIT + WATERFILL
+
+RESIDENT:
+- group table: Person / Name / Overall satisfaction % only
+- no peer HARD/SOFT counts or request details
+- no all-resident detail dropdown
+- own personal detailed proof remains
+
+SENIOR:
+- full all-resident audit remains
+- exact request-level drill-down remains
+- pre-publication draft audit remains
+
+ENGINE:
+unchanged byte-for-byte from V2.5.75 package.
+No DB migration.

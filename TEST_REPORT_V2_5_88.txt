@@ -1,0 +1,25 @@
+V2.5.88 TEST REPORT
+====================
+
+PASS app.py / db.py / scheduler_engine.py compile.
+PASS no prefer-12h cohort floor remains.
+PASS 6h and 12h use equal and opposite workstyle cost magnitude.
+PASS mixed uses the same workstyle optimization magnitude.
+
+TEST 1 — only A.P. prefer 12 h
+HARD = 0
+Friday spread = 1
+Group double range = 4-5
+A.P. double-days = 5
+A.P. workstyle = 100% HONORED
+
+TEST 2 — simultaneous different modes
+A.P. = prefer 12 h
+E.S. = prefer 6 h
+G.M. = mixed
+HARD = 0
+Friday spread = 1
+No 12 h special-priority variable exists.
+Policy = FAIRNESS_FIRST_THEN_SYMMETRIC_6H_MIXED_12H_SOFT
+
+No DB migration required.

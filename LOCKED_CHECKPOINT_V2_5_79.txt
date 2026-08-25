@@ -1,0 +1,29 @@
+V2.5.79 VISUAL SWAPS + ONE-WAY EMERGENCY RESCUE
+
+NORMAL SWAPS
+- wide color-coded request cards
+- initials + names use PERSON_COLORS
+- incoming requests numbered 1/N
+- offered vs requested shifts visually separated
+- ACCEPT / REJECT / CANCEL remain V2.5.78 atomic DB actions
+- new normal request -> target email notification
+- new backup request -> target email notification
+- DB save happens before email; email failure never loses request
+- REQUEST SWAP does not force rerun
+- Emergency Rescue is collapsed and cannot auto-open from normal request
+
+ONE-WAY EMERGENCY RESCUE
+- NOT A SWAP
+- self-recorded by the resident actually moved
+- CURRENT LOCATION = own lower-priority optional post
+- MOVING TO = same-day/same-block critical SPS RO/SPS UG
+- RESCUED PERSON shown with resident color
+- source post becomes vacant
+- mover occupies critical target
+- rescued person is released, NOT moved to source
+- ACTUAL only; SYSTEM fairness/post debt frozen
+- historical emergency_actual records = LEGACY only
+
+ENGINE
+byte-identical to V2.5.78.
+No new DB migration.

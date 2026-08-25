@@ -1,0 +1,59 @@
+V2.5.81 TEST REPORT
+====================
+
+COMPILE
+PASS app.py
+PASS db.py
+PASS scheduler_engine.py
+
+SYSTEM REGRESSION — September 2026
+PASS generated schedule
+HARD errors = 0
+Friday raw spread = 1
+CENTRO RO = 1
+SPS RO = 1
+SPS UG = 1
+Centro UG = 1
+ADC 144 = 1
+ADC 145 = 1
+Vaikų UG = 1
+Mamografijos = 1
+Onko = 2
+Solve time ~34.0 s in regression environment
+
+LEGACY PUBLISHED BASE
+PASS
+Artificially marked a valid published assignment result.ok=False.
+preview_swap performed ACTUAL operational revalidation.
+Result: SWAP PREVIEW OK.
+No “Nėra validžios bazinės versijos” rejection.
+
+GENERATION vs ACTUAL
+PASS
+Same schedule with Friday spread 2:
+- generation revalidation -> INVALID with Friday structural HARD;
+- voluntary_swap_actual revalidation -> VALID, HARD 0.
+
+FAIRNESS-SPREAD FREEDOM
+PASS post spread worsening allowed (including SPS UG 1 -> 3)
+PASS Friday spread 1 -> 2 allowed
+PASS double spread 2 -> 3 allowed
+All above remained HARD 0 in voluntary-swap validation.
+
+TRUE HARD CLASSIFICATION
+PASS invalid Onko/ordinary swap rejected.
+Returned stable blocker codes included:
+- EXACT_MONTHLY_WORKLOAD
+- ONKO_EVEN_PARITY
+- OVERLAPPING_ASSIGNMENTS
+- MAX_HOURS_PER_DAY
+No GENERATOR_FRIDAY_FAIRNESS / GENERATOR_GAP_FAIRNESS blocker.
+
+EMERGENCY RESCUE UI
+PASS no expander for active rescue panel
+PASS large 3.1rem 🚨
+PASS heading EMERGENCY RESCUE
+PASS no user-facing “ne apsikeitimas / not a swap”
+PASS V2.5.80 colored structure retained
+
+No Supabase migration required.

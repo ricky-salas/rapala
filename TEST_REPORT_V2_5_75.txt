@@ -1,0 +1,42 @@
+V2.5.75 PRE-PUBLICATION SUMMARY AUDIT — TEST REPORT
+===================================================
+
+1) Python compilation
+PASS
+- app.py
+- db.py
+- scheduler_engine.py
+
+2) All-resident request-audit transformation
+PASS
+Synthetic resident audit verified:
+- RESIDENT HARD 2/2
+- requested-off 0/1
+- prefer-to-work 1/1
+- missed count 1
+- Onko/SPS counts transferred correctly
+- lower-satisfaction resident surfaces first
+
+3) Draft/published state logic
+PASS by structural inspection
+- draft with no publication => DRAFT summary
+- draft different from frozen baseline => pending DRAFT summary, even if older schedule is still published
+- draft equal to frozen baseline after publish => published SYSTEM summary
+- no draft/current => explicit instruction to Generate first
+
+4) Engine preservation
+PASS
+scheduler_engine.py SHA-256 byte-identical to V2.5.74 source.
+
+5) DB preservation
+PASS
+db.py SHA-256 byte-identical to V2.5.74 source.
+
+6) Publication safety
+PASS by code-path inspection
+- Summary performs no publish write
+- Generate continues to save only draft_json
+- Publish / Confirm remains explicit in Sudarymas
+- draft audit cannot overwrite current/baseline
+
+No Supabase migration required.

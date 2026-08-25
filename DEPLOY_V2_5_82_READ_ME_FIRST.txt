@@ -1,0 +1,14 @@
+V2.5.82 DEPLOY — READ ME FIRST
+
+THE ERROR IN THE SCREENSHOT = MIXED APP.PY / SCHEDULER_ENGINE.PY VERSIONS.
+
+REPLACE BOTH FILES TOGETHER:
+1. app.py
+2. scheduler_engine.py
+
+Expected pair:
+APP_VERSION = 2.5.82 DEPLOY-SAFE APP + ENGINE SYNC
+ENGINE_API_VERSION = 2.5.82
+
+Do not commit only app.py.
+No Supabase migration required.

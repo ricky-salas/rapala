@@ -1,0 +1,26 @@
+V2.5.89 TEST REPORT
+====================
+
+COMPILE
+PASS app.py
+PASS db.py
+PASS scheduler_engine.py
+
+IDENTITY UNIT TEST
+PASS current_identity_v2589 wrapper returns G.M. for expected G.M. UID.
+PASS mismatching expected UID raises RuntimeError and fails closed.
+
+STATIC
+PASS no old unfiltered `user_profiles ... limit(1)` identity query remains.
+PASS require_linked_profile passes authenticated UID explicitly.
+PASS cross-account Streamlit state guard installed.
+PASS logout clears resident-specific state.
+PASS signup rate-limit message confirms invite is not consumed.
+
+LIVE SUPABASE
+PASS current_identity_v2589 migration exists.
+PASS hardened claim_resident_profile migration applied.
+PASS G.M. and R.Š. have separate auth user_ids and correct initials.
+PASS E.K. invite remains unused after failed signup/email-rate-limit attempt.
+
+No scheduler logic changes from V2.5.88.

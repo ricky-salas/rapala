@@ -1,0 +1,19 @@
+V2.5.87 TEST REPORT
+
+PASS app.py / db.py / scheduler_engine.py compile.
+
+Synthetic September 2026:
+Prefer 12 h = A.P., E.S., G.M.
+Generation PASS, HARD 0, Friday spread 1.
+Double-days:
+A.P. 5
+E.S. 5
+G.M. 5
+Group double range 4-5.
+All three workstyle rows = 100% HONORED.
+
+Historical audit:
+Frozen workstyle 0 + later current setting 3 => no workstyle request row.
+PASS.
+
+No DB migration required.
