@@ -1,3 +1,16 @@
+# V2.5.96 — DABARTINĖ FAIRNESS KONSTITUCIJA: MONTHLY BASELINE + LIVE ACTUAL, BE CATCH-UP
+
+> **Šis skyrius yra viršesnis už visus ankstesnius manualo / README teiginius apie fairness-neutral swapus, post debt, cumulative catch-up ar ankstesnių mėnesių kompensavimą.**
+
+- **Kiekvienas naujas mėnuo prasideda nuo švaraus SYSTEM water-fill baseline.** Ankstesnių mėnesių savaitgalių, penktadienių, dublių, darbo dienų, postų ekspozicijų, švenčių ar RESIDENT-HARD nuostolių istorija **nėra solverio input** ir nesukuria kompensacinės skolos.
+- **Jei niekas nieko nekeičia po generavimo, gaunamas neutralus water-fill grafikas.** Individualūs SOFT pageidavimai optimizuojami baseline fairness ribose; jie negali nupirkti platesnio SYSTEM water-fill koridoriaus.
+- **Po publikavimo manual override, abipusis swapas, emergency repair ir kiti leidžiami ACTUAL pakeitimai gali sulaužyti water-fill.** Tai leidžiama, jei praeina išliekantys ABSOLUTE / fizinio įmanomumo / darbo-laiko blokatoriai ir kitos neapeinamos taisyklės.
+- **SYSTEM baseline lieka nekintamas auditui ir tyrimui. ACTUAL fairness yra gyva realybės statistika.** Po kiekvieno pakeitimo ACTUAL postų ekspozicija ir mėnesiniai spread perskaičiuojami pagal tai, kas realiai turi pamainas dabar.
+- **Completed backup cover** perkelia konkretaus covered slot ACTUAL ekspoziciją realiai pavadavusiam žmogui. Vien suplanuotas ar aktyvuotas standby be `completed_at` ACTUAL fairness nekeičia.
+- **Istoriją saugome tik stebėjimui / auditui.** Galima matyti SYSTEM ir ACTUAL skirtumą kiekvieną mėnesį ir trendą, tačiau istorija **niekada negrįžta į kito mėnesio solverį kaip catch-up**.
+- **Post debt / future fairness catch-up išjungtas.** Rule Profile laukas paliktas tik schemos suderinamumui ir V2.5.96 engine jo nenaudoja.
+- **Per mėnesio ribą išlieka tik saugos / spacing kontekstas**, pvz. realiai dirbtų iš eilės savaitgalių tail ir paskutinės dienos Onko būsena. Tai nėra fairness kompensacija.
+
 # V2.5.92 — OPERATOR CONTROL + PRELIMINARY SWAPS + FINAL
 
 Naujausias locked workflow: **Generate SYSTEM → privatus ACTUAL koregavimas (optional) → preliminarus paskelbimas / rezidentų apsikeitimai (optional) → FINAL**.

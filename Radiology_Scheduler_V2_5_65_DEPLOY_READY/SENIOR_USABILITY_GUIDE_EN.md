@@ -1,3 +1,7 @@
+# V2.5.96 current rule
+
+Every month starts from a clean SYSTEM water-fill baseline. After publication, allowed overrides/swaps/repairs may break that water-fill and ACTUAL fairness is recalculated from reality. History is audit-only and never creates next-month catch-up. Completed backup cover transfers fairness exposure only when the cover is marked completed.
+
 # Senior Scheduler Usability and Audit Guide
 
 ## Purpose
@@ -43,7 +47,7 @@ If the tool says `SPS UG = 2`, the SYSTEM schedule / Post Matrix must show exact
 - A SOFT preference may remain unmet because a higher-ranked fairness or HARD rule dominates it.
 - A noncritical post may temporarily reach the allowed guardrail if the trade-off is justified and POST DEBT is carried forward.
 - Voluntary swaps change ACTUAL, not the frozen SYSTEM fairness baseline.
-- Sickness pull-down from an optional post to SPS is an operational fairness-neutral repair.
+- A sickness pull-down from an optional post to SPS leaves the SYSTEM baseline unchanged but recalculates ACTUAL workplace/fairness statistics from real work.
 
 ## Full monthly workflow
 
@@ -89,4 +93,4 @@ The old “Emergency swap” name was a misnomer. The new model is a one-way ope
    - the RESCUED PERSON is released from the target;
    - the rescued person is **not** moved into the mover's old post.
 
-Only ACTUAL changes. SYSTEM fairness, the publication post matrix and post debt remain frozen. New rescue audit entries use `CURRENT LOCATION → MOVING TO` and colored mover/rescued identities. Historical bilateral `emergency_actual` rows remain visible only as explicitly marked LEGACY records.
+ACTUAL schedule and ACTUAL fairness change. The SYSTEM publication baseline remains frozen for audit; V2.5.96 has no post debt or future catch-up. New rescue audit entries use `CURRENT LOCATION → MOVING TO` and colored mover/rescued identities. Historical bilateral `emergency_actual` rows remain visible only as explicitly marked LEGACY records.

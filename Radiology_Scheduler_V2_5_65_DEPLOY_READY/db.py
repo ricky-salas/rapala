@@ -141,10 +141,8 @@ def claim_observer_profile(invite_code: str) -> dict:
     return rows[0] if rows else {}
 
 
-def save_preference(year: int, month: int, initials: str, payload: dict):
-    old = get_preference(year, month, initials) or {}
-    row = {
-        "year": int(year), "month": int(month), "initials": initials,
+def _preference_payload_json(payload: dict) -> dict:
+    return {
         "unavailable": sorted(payload.get("unavailable", [])),
         "unavailable_am": sorted(payload.get("unavailable_am", [])),
         "unavailable_pm": sorted(payload.get("unavailable_pm", [])),
@@ -157,23 +155,46 @@ def save_preference(year: int, month: int, initials: str, payload: dict):
         "preferred": sorted(payload.get("preferred", [])),
         "preferred_am": sorted(payload.get("preferred_am", [])),
         "preferred_pm": sorted(payload.get("preferred_pm", [])),
-        "note": payload.get("note", ""),
-        "prior_weekend_count": int(old.get("prior_weekend_count", payload.get("prior_weekend_count", 0))),
-        # V2.5.5: old generic credit selector is frozen at zero.
-        "backup_credits_to_use": 0,
-        "backup_credits_am_to_use": int(payload.get("backup_credits_am_to_use", old.get("backup_credits_am_to_use", 0))),
-        "backup_credits_pm_to_use": int(payload.get("backup_credits_pm_to_use", old.get("backup_credits_pm_to_use", 0))),
+        "note": str(payload.get("note", "") or ""),
+        "backup_credits_am_to_use": int(payload.get("backup_credits_am_to_use", 0) or 0),
+        "backup_credits_pm_to_use": int(payload.get("backup_credits_pm_to_use", 0) or 0),
         "backup_credits_night_to_use": 0,
-        "submission_source": "resident",
-        "submitted_at": _now(),
-        "updated_at": _now(),
     }
-    client().table("preferences").upsert(row, on_conflict="year,month,initials").execute()
+
+
+def save_preference(year: int, month: int, initials: str, payload: dict):
+    """Save the authenticated resident's own preferences before the server cutoff.
+
+    `initials` is retained in the Python signature for compatibility, but the RPC
+    resolves identity from auth.uid() and rejects any cross-account write.
+    """
+    rows=_data(_retry_db(lambda: client().rpc("save_my_preferences_v2595", {
+        "p_year": int(year),
+        "p_month": int(month),
+        "p_payload": _preference_payload_json(payload),
+    }).execute()))
+    return rows[0] if isinstance(rows,list) and rows else (rows if isinstance(rows,dict) else {})
+
+
+def save_preference_for_resident_v2595(year: int, month: int, target_initials: str, payload: dict, reason: str):
+    """Lifecycle-operator manual entry for another resident (or a late self-entry).
+
+    The backend authorizes R.S./R.Š., preserves account identity, and writes an audit row.
+    """
+    rows=_data(_retry_db(lambda: client().rpc("save_preferences_for_resident_v2595", {
+        "p_year": int(year),
+        "p_month": int(month),
+        "p_target_initials": str(target_initials),
+        "p_payload": _preference_payload_json(payload),
+        "p_reason": str(reason or ""),
+    }).execute()))
+    return rows[0] if isinstance(rows,list) and rows else (rows if isinstance(rows,dict) else {})
+
+
 
 
 def set_prior_weekend_count(year: int, month: int, initials: str, count: int):
-    old = get_preference(year, month, initials) or {}
-    save_preference(year, month, initials, {**old, "prior_weekend_count": int(count)})
+    raise RuntimeError("set_prior_weekend_count is retired in V2.5.95; cumulative weekend history is authoritative.")
 
 
 def _pref_from_row(row):
@@ -198,6 +219,8 @@ def _pref_from_row(row):
         "backup_credits_night_to_use": int(row.get("backup_credits_night_to_use", 0)),
         "submission_source": str(row.get("submission_source") or "resident"),
         "submitted_at": row.get("submitted_at") or row.get("updated_at", ""),
+        "submitted_by_user_id": row.get("submitted_by_user_id"),
+        "submitted_by_initials": row.get("submitted_by_initials") or "",
         "updated_at": row.get("updated_at", ""),
     }
 
@@ -423,7 +446,7 @@ def load_schedule(year: int, month: int, kind: str = "current") -> Optional[dict
 def list_published_schedules() -> List[dict]:
     """Return all published ACTUAL schedule payloads for calendar-feed assembly."""
     rows = _data(_retry_db(lambda: client().table("schedules")
-        .select("year,month,current_json,status,published_at,updated_at")
+        .select("year,month,baseline_json,current_json,status,published_at,updated_at")
         .eq("status", "published")
         .order("year")
         .order("month")

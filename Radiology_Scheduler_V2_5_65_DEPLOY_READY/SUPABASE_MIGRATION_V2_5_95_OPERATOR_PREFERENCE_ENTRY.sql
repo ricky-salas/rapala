@@ -1,0 +1,10 @@
+-- V2.5.95 migration was applied to the live Supabase project.
+-- Canonical changes:
+-- 1) preferences.submission_source now allows resident / deadline_zero / operator_manual.
+-- 2) submitted_by_user_id and submitted_by_initials audit fields.
+-- 3) preference_operator_audit table.
+-- 4) preference_cutoff_v2595() computes the authoritative server cutoff from active rule profile.
+-- 5) save_my_preferences_v2595() enforces auth.uid identity and blocks resident writes at cutoff.
+-- 6) save_preferences_for_resident_v2595() is lifecycle-operator-only and audits before/after.
+-- 7) direct resident INSERT/UPDATE RLS policies on preferences are removed; writes use RPC.
+-- 8) auto_submit_zero_preferences_v2594() now uses the server-computed cutoff.

@@ -1,3 +1,7 @@
+# V2.5.96 dabartinė taisyklė
+
+Kiekvienas mėnuo generuojamas nuo švaraus SYSTEM water-fill baseline. Po publikavimo leidžiami override'ai / swapai / repair gali jį pralaužti, o ACTUAL fairness perskaičiuojamas pagal realybę. Istorija yra tik auditui — jokio kito mėnesio catch-up. Completed backup cover fairness ekspoziciją perkelia tik tada, kai realus pavadavimas pažymėtas completed.
+
 # Seniūnės naudojimo ir audito vadovas
 
 ## 1. Kam skirtas šis įrankis
@@ -86,7 +90,7 @@ Nepublikuoti, jei:
 - SOFT pageidavimas gali būti neįvykdytas, jei aukštesnio prioriteto fairness / HARD reikalavimai to neleidžia.
 - Noncritical posto spread gali laikinai būti iki leidžiamo guardrail, jei tai pagrįstas kompromisas ir sukuriamas POST DEBT ateinančiam mėnesiui.
 - Po publikavimo voluntary swapas keičia ACTUAL grafiką, bet neperrašo SYSTEM fairness baseline.
-- Ligos / neatvykimo atveju jau dirbantis žmogus gali būti perkeltas iš optional posto į SPS; toks operacinis pull-down yra fairness-neutral.
+- Ligos / neatvykimo atveju jau dirbantis žmogus gali būti perkeltas iš optional posto į SPS; SYSTEM baseline nekinta, tačiau ACTUAL postų/fairness statistika perskaičiuojama pagal realų darbą.
 
 ## 6. Rekomenduojamas visas mėnesio workflow
 
@@ -176,4 +180,4 @@ Senas pavadinimas „Emergency swap“ buvo misnomer. Naujas modelis yra vienpus
    - `RESCUED PERSON` atleidžiamas nuo target posto;
    - rescued person **nėra** perkeliamas į mover seną vietą.
 
-Tai keičia tik ACTUAL operational grafiką. SYSTEM fairness, publication post matrix ir post debt lieka užšaldyti. Nauji rescue įrašai žurnale rodomi `CURRENT LOCATION → MOVING TO` formatu, su spalvotais mover / rescued inicialais. Seni `emergency_actual` bilateraliniai įrašai paliekami tik kaip aiškiai pažymėtas LEGACY auditas.
+Tai keičia ACTUAL operational grafiką ir ACTUAL fairness statistiką. SYSTEM publication baseline lieka užšaldytas auditui; post debt / future catch-up V2.5.96 nebenaudojamas. Nauji rescue įrašai žurnale rodomi `CURRENT LOCATION → MOVING TO` formatu, su spalvotais mover / rescued inicialais. Seni `emergency_actual` bilateraliniai įrašai paliekami tik kaip aiškiai pažymėtas LEGACY auditas.

@@ -1,0 +1,19 @@
+V2.5.96 LOCKED — MONTHLY BASELINE + LIVE ACTUAL FAIRNESS — NO CATCH-UP
+
+CONSTITUTION
+1. Every month starts from a clean SYSTEM fairness baseline.
+2. Prior-month fairness history is audit-only and is never solver input.
+3. SYSTEM generation applies structural water-fill before SOFT preferences.
+4. Preferences cannot deliberately widen SYSTEM water-fill.
+5. After publication, permitted manual overrides, bilateral swaps and repairs may break water-fill.
+6. SYSTEM remains the immutable publication/audit baseline.
+7. ACTUAL fairness is recalculated from real current assignments and shows the real spread after changes.
+8. Completed backup cover transfers the covered slot to the actual/effective backup for ACTUAL fairness only after completed_at is set. Planned/activated standby alone does not.
+9. Post debt and future fairness catch-up are disabled. The legacy Rule Profile field is compatibility-only and the engine forces the catch-up weight to zero.
+10. Cross-month safety/spacing state remains (actual consecutive-weekend tail, prior last-day Onko); this is safety, not fairness compensation.
+11. SYSTEM-vs-ACTUAL monthly history remains available for audit/research only and does not influence later generation.
+12. No new Supabase migration is required.
+
+BASE
+Built from Radiology_Scheduler_V2_5_95_OPERATOR_MANUAL_PREFERENCES_DEADLINE_LOCK_FINAL.zip.
+Profile/UI architecture from V2.5.95 is preserved except for fairness wording/metrics and the deprecated catch-up weight being visibly disabled.

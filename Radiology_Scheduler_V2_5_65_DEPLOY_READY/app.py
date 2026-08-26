@@ -34,6 +34,7 @@ from scheduler_engine import (
     resident_hard_unavailable_for_block, absolute_unavailable_for_block,
     serialize_people_request_snapshot, people_from_request_snapshot,
     ROTATION_CATEGORIES, rotation_category, backup_required_slot,
+    effective_actual_assignments, calculate_live_fairness_snapshot,
     is_emergency_critical_slot, is_emergency_lower_priority_donor_slot,
     emergency_donor_source_slots, apply_emergency_critical_transfer,
     DEFAULT_RULE_PROFILE, validate_rule_profile, set_runtime_rules, get_runtime_rules, rule_value,
@@ -43,7 +44,7 @@ from scheduler_engine import (
 import db
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.94 DEADLINE ZERO-PREFERENCE AUTO-SUBMIT"
+APP_VERSION = "2.5.96 MONTHLY BASELINE + LIVE ACTUAL FAIRNESS — NO CATCH-UP"
 EXPECTED_ENGINE_API_VERSION = "2.5.91"
 DISPLAY_VERSION = "3.0"
 BASE = Path(__file__).parent
@@ -263,6 +264,46 @@ TR["EN"].update({
 "research_observer_tab":"Research feedback","research_observer_intro":"Read-only scheduling rights remain unchanged. This tab only allows research feedback about the monitoring experience.","research_observer_checkpoint":"Administrator evaluation",
 "research_obs_actual":"It is easy to determine who is actually working each shift.","research_obs_changes":"It is easy to review changes made after publication.","research_obs_system_actual":"The SYSTEM baseline versus ACTUAL distinction is useful.","research_obs_privacy":"The platform provides enough visibility without exposing unnecessary private resident information.","research_obs_log":"The change log is understandable.","research_obs_fairness":"The fairness information is understandable.","research_obs_trust":"I trust the operational information shown in the portal.","research_obs_missing":"What information is missing when you need to understand the real departmental staffing situation?","research_observer_saved":"Administrator research feedback saved.",
 "research_data_quality":"Data completeness","research_missing_scheduler":"Missing senior R.S. record","research_complete":"Complete","research_researcher_only":"This detailed section is visible only to the R.Š. researcher account."
+})
+
+# V2.5.96 — monthly baseline fairness + live ACTUAL ledger; no future catch-up.
+TR["LT"].update({
+    "fairness_hierarchy_intro":"Kiekvienas mėnuo generuojamas nuo švaraus fairness baseline: ABSOLUTE HARD → struktūrinis raw water-fill (SPS RO, SPS UG, savaitgaliai, penktadieniai ir postai) → RESIDENT HARD → poilsis / workload → SOFT. Pageidavimai generatoriuje water-fill'o nepralaužia. Po publikavimo manual override'ai ir savanoriški swapai gali jį pakeisti; ACTUAL fairness tada perskaičiuojamas pagal realų grafiką. Ankstesnių mėnesių fairness skirtumai kitam mėnesiui NIEKADA nesukuria catch-up paskyrimų.",
+    "fairness_monthly_explain":"SYSTEM mėnesio fairness rodo algoritmo baseline publikavimo momentu. ACTUAL mėnesio fairness perskaičiuojamas iš realaus dabartinio darbo po manual override'ų, swapų, repair ir realiai įvykdytų dublių. Platesnis ACTUAL spread leidžiamas ir rodomas, bet nėra perkeliamas kaip skola į kitą mėnesį.",
+    "fairness_cumulative_explain":"Istorija yra tik auditas / stebėjimas. Ji NENAUDOJAMA kito mėnesio solverio kompensacijai ar catch-up paskyrimams.",
+    "fairness_100_note":"Fairness procentas yra diagnostinis mėnesio balanso rodiklis. SYSTEM baseline turi laikytis generatoriaus water-fill; ACTUAL gali nukrypti po leidžiamų žmogaus sprendimų ir tada rodomas toks, koks yra realybėje.",
+    "fairness_formula_cumulative":"Istoriniai mėnesių rodikliai rodomi palyginimui, tačiau nėra solverio įvestis ir nesukuria ateities post debt / catch-up.",
+    "fairness_swap_neutral":"SYSTEM baseline lieka užšaldytas auditui, tačiau swapas ar manual override pakeičia ACTUAL fairness statistiką pagal realų darbą. Tai nėra ateities fairness skola.",
+    "fairness_forced_change":"Post-publication repair ir realiai įvykdytas dublio cover keičia ACTUAL realaus darbo fairness statistiką. SYSTEM publikavimo baseline lieka nepakeistas auditui. Jokio future catch-up nėra.",
+    "fairness_frozen_note":"SYSTEM = publikavimo momento algoritmo water-fill baseline. ACTUAL = realus dabartinis pasiskirstymas po override'ų, swapų, repair ir completed cover. Abu rodomi atskirai; ACTUAL istorija yra tik stebėjimui ir niekada nevaldo kito mėnesio generatoriaus.",
+    "fairness_cumulative_goal":"Nėra fairness catch-up sluoksnio. Kiekvienas mėnuo vėl pradedamas nuo neutralaus water-fill baseline.",
+    "voluntary_unpopular_goal":"Generatorius pageidavimus vykdo tik water-fill koridoriaus viduje. Jei žmogus vėliau savanoriškai nori daugiau / mažiau konkretaus krūvio, tai sprendžiama ACTUAL swapu arba leistinu manual override.",
+    "voluntary_unpopular_explain":"Savanoriškas pageidavimas pats savaime generatoriuje neleidžia pralaužti structural water-fill. Po publikavimo abipusis swapas gali tai padaryti; ACTUAL statistika iškart parodys realų skirtumą.",
+    "other_preferences_explain":"SOFT optimizuojamas tik jau užrakintame mėnesio water-fill baseline. Jis negali sukurti pradinio nelygaus paskirstymo vien tam, kad žmonės vėliau būtų priversti swap'inti.",
+    "swap_note":"Savanoriškas swapas keičia ACTUAL grafiką ir ACTUAL fairness statistiką. SYSTEM baseline auditui neperrašomas. Water-fill nėra post-publication swapo blokatorius, todėl leidžiamas ACTUAL spread padidėjimas aiškiai atsispindi statistikoje. Jokio kito mėnesio catch-up dėl to nėra.",
+    "repair_help":"Liga, atostogos ar force majeure keičia ACTUAL grafiką. Realaus darbo fairness perskaičiuojamas pagal tai, kas iš tikrųjų dirba; SYSTEM publikavimo baseline lieka auditui. Šis skirtumas niekada nekuria fairness skolos ar kito mėnesio catch-up.",
+    "repair_applied":"Pakeitimas pritaikytas ACTUAL grafikui. ACTUAL fairness perskaičiuotas pagal realų darbą; SYSTEM baseline liko nepakeistas auditui. Future catch-up nėra.",
+    "repair_load_help":"Operacinis audito skaitiklis. Realiai pakeistas darbas įeina į ACTUAL mėnesio statistiką, tačiau nėra paverčiamas ateities fairness skola.",
+    "repair_fairness_neutral":"ACTUAL FAIRNESS PERSKAIČIUOTA",
+})
+TR["EN"].update({
+    "fairness_hierarchy_intro":"Every month is generated from a clean fairness baseline: ABSOLUTE HARD → raw structural water-fill (SPS RO, SPS UG, weekends, Fridays and workplaces) → RESIDENT HARD → rest/workload → SOFT. Preferences cannot break water-fill during generation. After publication, manual overrides and accepted swaps may change it; ACTUAL fairness is then recalculated from real work. Prior-month fairness differences NEVER create catch-up assignments in a later month.",
+    "fairness_monthly_explain":"SYSTEM monthly fairness is the algorithmic publication baseline. ACTUAL monthly fairness is recalculated from real current work after manual overrides, swaps, repairs and completed backup covers. A wider ACTUAL spread is allowed and shown, but never carried forward as a debt.",
+    "fairness_cumulative_explain":"History is audit/monitoring only. It is NOT used by the next month's solver for compensation or catch-up assignments.",
+    "fairness_100_note":"The fairness percentage is a diagnostic monthly balance indicator. SYSTEM must satisfy the generator water-fill baseline; ACTUAL may diverge after allowed human decisions and is shown exactly as reality stands.",
+    "fairness_formula_cumulative":"Historical monthly metrics are displayed for comparison only; they are not solver input and create no future post debt/catch-up.",
+    "fairness_swap_neutral":"SYSTEM remains frozen for audit, but a swap or manual override changes ACTUAL fairness statistics according to real work. This never becomes a future fairness debt.",
+    "fairness_forced_change":"Post-publication repair and a completed backup cover change ACTUAL real-work fairness statistics. The SYSTEM publication baseline remains unchanged for audit. There is no future catch-up.",
+    "fairness_frozen_note":"SYSTEM = the publication-time algorithmic water-fill baseline. ACTUAL = the real current distribution after overrides, swaps, repairs and completed covers. Both are shown separately; ACTUAL history is monitoring-only and never controls the next month's generator.",
+    "fairness_cumulative_goal":"There is no fairness catch-up layer. Every month starts again from a neutral water-fill baseline.",
+    "voluntary_unpopular_goal":"During generation, preferences are honored only inside the water-fill corridor. If a resident later voluntarily wants more/less of a burden, that is handled through an ACTUAL swap or permitted operator override.",
+    "voluntary_unpopular_explain":"A voluntary preference does not itself allow the generator to break structural water-fill. After publication, an accepted swap may do so; ACTUAL statistics immediately show the real difference.",
+    "other_preferences_explain":"SOFT is optimized only inside the locked monthly water-fill baseline. It cannot deliberately create a poor initial distribution that would force residents to swap later.",
+    "swap_note":"A voluntary swap changes the ACTUAL schedule and ACTUAL fairness statistics. The SYSTEM baseline remains frozen for audit. Water-fill is not a post-publication swap blocker, so an allowed ACTUAL spread increase is visible in the statistics. No later-month catch-up is created.",
+    "repair_help":"Sickness, leave or force majeure changes ACTUAL. Real-work fairness is recalculated from who actually works; SYSTEM remains the frozen publication baseline. The difference never creates a fairness debt or next-month catch-up.",
+    "repair_applied":"Repair applied to ACTUAL. ACTUAL fairness was recalculated from real work; SYSTEM baseline remains frozen for audit. No future catch-up is created.",
+    "repair_load_help":"Operational audit counter. Changed real work enters ACTUAL monthly statistics but is never converted into a future fairness debt.",
+    "repair_fairness_neutral":"ACTUAL FAIRNESS UPDATED",
 })
 
 RESEARCH_ITEMS = {
@@ -911,27 +952,33 @@ def historical_holiday_counts_before(y,m):
     return out
 
 
-def historical_weekend_tail_streak_before(y,m):
-    """Consecutive weekend-exposure streak at the end of the immediately prior published month."""
-    out={p["initials"]:0 for p in DEFAULT_PEOPLE}
+def _previous_month_effective_actual_assignments(y,m):
+    """Immediately prior month's real/effective work for cross-boundary safety only."""
     py,pm=(y-1,12) if m==1 else (y,m-1)
     try:
-        rows=db.published_baselines_before(y,m)
+        rows=db.list_published_schedules()
+        row=next((r for r in reversed(rows) if int(r.get("year",0))==py and int(r.get("month",0))==pm),None)
+        if not row or not row.get("current_json"):
+            return py,pm,{}
+        payload=row.get("current_json") or {}
+        ass={int(k):v for k,v in (payload.get("assignments") or {}).items()}
+        return py,pm,effective_actual_assignments(ass,db.list_backups(py,pm))
     except Exception:
-        return out
-    row=next((r for r in reversed(rows) if int(r.get("year",0))==py and int(r.get("month",0))==pm),None)
-    if not row:
+        return py,pm,{}
+
+
+def historical_weekend_tail_streak_before(y,m):
+    """Prior-month ACTUAL weekend tail streak; spacing only, never catch-up."""
+    out={p["initials"]:0 for p in DEFAULT_PEOPLE}
+    py,pm,ass=_previous_month_effective_actual_assignments(y,m)
+    if not ass:
         return out
     try:
-        payload=row.get("baseline_json") or {}
-        ass={int(k):v for k,v in (payload.get("assignments") or {}).items()}
         slot_map={s.idx:s for s in make_slots(py,pm)}
         anchors=sorted({(sl.day if sl.weekday==5 else sl.day-1) for sl in slot_map.values() if sl.weekday>=5})
         for ini in out:
-            worked={
-                (slot_map[sid].day if slot_map[sid].weekday==5 else slot_map[sid].day-1)
-                for sid,who in ass.items() if who==ini and sid in slot_map and slot_map[sid].weekday>=5
-            }
+            worked={(slot_map[sid].day if slot_map[sid].weekday==5 else slot_map[sid].day-1)
+                    for sid,who in ass.items() if who==ini and sid in slot_map and slot_map[sid].weekday>=5}
             streak=0
             for a in reversed(anchors):
                 if a in worked: streak+=1
@@ -943,31 +990,17 @@ def historical_weekend_tail_streak_before(y,m):
 
 
 def historical_previous_last_day_onko_before(y,m):
-    """Whether each resident worked Onko RO on the previous month's last calendar day.
-
-    V2.5.68 uses only the immediately preceding published SYSTEM baseline so the
-    no-consecutive-Onko HARD rule also works across a month boundary.
-    """
+    """Prior-month ACTUAL last-day Onko state for cross-boundary safety only."""
     out={p["initials"]:False for p in DEFAULT_PEOPLE}
-    py,pm=(y-1,12) if m==1 else (y,m-1)
-    try:
-        rows=db.published_baselines_before(y,m)
-    except Exception:
-        return out
-    row=next((r for r in reversed(rows) if int(r.get("year",0))==py and int(r.get("month",0))==pm),None)
-    if not row:
+    py,pm,ass=_previous_month_effective_actual_assignments(y,m)
+    if not ass:
         return out
     try:
-        payload=row.get("baseline_json") or {}
-        ass={int(k):v for k,v in (payload.get("assignments") or {}).items()}
         slot_map={s.idx:s for s in make_slots(py,pm)}
         last_day=calendar.monthrange(py,pm)[1]
         for sid,ini in ass.items():
             sl=slot_map.get(int(sid))
-            if (
-                sl is not None and ini in out and sl.day==last_day
-                and sl.department=="Onko RO centre"
-            ):
+            if sl is not None and ini in out and sl.day==last_day and sl.department=="Onko RO centre":
                 out[ini]=True
     except Exception:
         return {p["initials"]:False for p in DEFAULT_PEOPLE}
@@ -1063,10 +1096,12 @@ def _build_request_ledger(y,m,initials,p,s,rp,recurring_rows,claims,slot_lookup,
 
 def load_people(y,m):
     prefs=db.all_preferences(y,m); settings=db.all_account_settings(); recurring=db.all_recurring_preferences(); people=[]
-    fairness_prior=db.fairness_cumulative_before(y,m)
-    holiday_prior=historical_holiday_counts_before(y,m)
-    rotation_prior=historical_rotation_counts_before(y,m)
-    resident_hard_prior=historical_resident_hard_losses_before(y,m)
+    # V2.5.96: fairness history is audit-only; never solver input for a new month.
+    fairness_prior={}
+    holiday_prior={}
+    rotation_prior={}
+    resident_hard_prior={}
+    # Cross-month safety/spacing state remains because it is not fairness catch-up.
     weekend_tail=historical_weekend_tail_streak_before(y,m)
     previous_last_day_onko=historical_previous_last_day_onko_before(y,m)
     claim_rows=db.list_backup_claims(y,m)
@@ -1132,15 +1167,15 @@ def load_people(y,m):
             shift_length_preference=max(0,min(3,int(s.get("shift_length_preference",0) or 0))),
             avoid_doubles=(max(0,min(3,int(s.get("shift_length_preference",0) or 0)))==1 or bool(s.get("avoid_doubles",False))),note=p.get("note",""),
             request_items=request_items,rest_credit_am_to_use=credits_am,rest_credit_pm_to_use=credits_pm,
-            prior_weekend_count=int(prior.get("weekend",0)),
-            prior_holiday_count=int(holiday_prior.get(initials,0)),
-            prior_friday_count=int(prior.get("friday",0)),
-            prior_double_count=int(prior.get("double",0)),
-            prior_weekday_day_count=int(prior.get("weekday_day",0)),
-            prior_rotation_counts=dict(rotation_prior.get(initials,{})),
+            prior_weekend_count=0,
+            prior_holiday_count=0,
+            prior_friday_count=0,
+            prior_double_count=0,
+            prior_weekday_day_count=0,
+            prior_rotation_counts={},
             prior_consecutive_weekend_streak=int(weekend_tail.get(initials,0)),
             prior_last_day_onko=bool(previous_last_day_onko.get(initials,False)),
-            prior_resident_hard_loss_count=int(resident_hard_prior.get(initials,0))))
+            prior_resident_hard_loss_count=0))
     return people
 
 
@@ -3336,6 +3371,64 @@ def fairness_trend_df(rows):
     return pd.DataFrame(out)
 
 
+def live_fairness_snapshot(y,m,result,include_completed_covers=True):
+    """Live monthly real-work fairness; never used as future solver input."""
+    if result is None:
+        return {"people":{},"effective_assignments":{},"global":{}}
+    backups=[]
+    if include_completed_covers:
+        try:
+            backups=db.list_backups(y,m)
+        except Exception:
+            backups=[]
+    return calculate_live_fairness_snapshot(
+        y,m,result.assignments,
+        people_initials=[p["initials"] for p in DEFAULT_PEOPLE],
+        backup_assignments=backups,
+    )
+
+
+def system_actual_fairness_trend_df(up_to_year=None,up_to_month=None):
+    """Monthly SYSTEM vs ACTUAL fairness history; descriptive only."""
+    try:
+        rows=db.list_published_schedules()
+    except Exception:
+        return pd.DataFrame()
+    limit=(int(up_to_year)*12+int(up_to_month)) if up_to_year is not None and up_to_month is not None else None
+    out=[]
+    ids=[p["initials"] for p in DEFAULT_PEOPLE]
+    for r in rows:
+        y=int(r.get("year",0)); m=int(r.get("month",0))
+        if limit is not None and y*12+m>limit:
+            continue
+        try:
+            cp=r.get("current_json") or {}
+            bp=r.get("baseline_json") or cp
+            cr=deserialize_result(cp); br=deserialize_result(bp)
+            backups=db.list_backups(y,m)
+            sg=calculate_live_fairness_snapshot(y,m,br.assignments,people_initials=ids,backup_assignments=[])["global"]
+            ag=calculate_live_fairness_snapshot(y,m,cr.assignments,people_initials=ids,backup_assignments=backups)["global"]
+            out.append({
+                "Period":f"{y}-{m:02d}",
+                "SYSTEM monthly fairness":float(sg.get("monthly_fairness_score",0.0)),
+                "ACTUAL monthly fairness":float(ag.get("monthly_fairness_score",0.0)),
+                "Delta (ACTUAL-SYSTEM)":round(float(ag.get("monthly_fairness_score",0.0))-float(sg.get("monthly_fairness_score",0.0)),1),
+                "SYSTEM post imbalance":int(sg.get("rotation_monthly_imbalance",0)),
+                "ACTUAL post imbalance":int(ag.get("rotation_monthly_imbalance",0)),
+                "Completed covers":int(ag.get("completed_cover_transfers",0)),
+            })
+        except Exception:
+            continue
+    return pd.DataFrame(out)
+
+
+def actual_workplace_exposure_df(y,m,result):
+    snap=live_fairness_snapshot(y,m,result,include_completed_covers=True)
+    view=deepcopy(result)
+    view.assignments=dict(snap.get("effective_assignments") or result.assignments)
+    return workplace_exposure_df(y,m,view)
+
+
 def component_status(score):
     if score is None: return tr("not_applicable")
     if score>=80: return tr("matches")
@@ -3452,8 +3545,8 @@ def render_observer_portal(profile,auth_user):
 
     current_payload=db.load_schedule(y,m,"current")
     baseline_payload=db.load_schedule(y,m,"baseline")
-    current=refresh_result_payload(current_payload,year,month) if current_payload else None
-    baseline=refresh_result_payload(baseline_payload or current_payload,year,month,use_actual_backups=False) if current_payload else None
+    current=refresh_result_payload(current_payload,y,m) if current_payload else None
+    baseline=refresh_result_payload(baseline_payload or current_payload,y,m,use_actual_backups=False) if current_payload else None
     normal_swaps=db.list_swap_requests(y,m,None)
     backup_swaps=db.list_backup_swap_requests(y,m,None)
     changes=observer_assignment_changes_df(y,m,baseline,current) if current else pd.DataFrame()
@@ -3463,12 +3556,14 @@ def render_observer_portal(profile,auth_user):
             st.info(tr("observer_no_schedule"))
         else:
             g=baseline.stats.get("global",{})
+            sl=live_fairness_snapshot(y,m,baseline,include_completed_covers=False)["global"]
+            al=live_fairness_snapshot(y,m,current,include_completed_covers=True)["global"]
             approved=sum(1 for r in normal_swaps+backup_swaps if r.get("status")=="approved")
             pending=sum(1 for r in normal_swaps+backup_swaps if r.get("status")=="pending")
             c1,c2,c3,c4,c5=st.columns(5)
             c1.metric(tr("hard_errors"),g.get("hard_errors",0))
-            c2.metric(tr("cumulative_fairness"),f"{g.get('cumulative_fairness_score',g.get('fairness_score',0))}%")
-            c3.metric(tr("monthly_fairness"),f"{g.get('monthly_fairness_score',g.get('fairness_score',0))}%")
+            c2.metric("SYSTEM fairness",f"{sl.get('monthly_fairness_score',0)}%")
+            c3.metric("ACTUAL fairness",f"{al.get('monthly_fairness_score',0)}%",delta=f"{al.get('monthly_fairness_score',0)-sl.get('monthly_fairness_score',0):+.1f}")
             c4.metric(tr("observer_change_count"),len(changes))
             c5.metric(tr("observer_pending_swaps"),pending)
             st.caption(tr("observer_change_log_help"))
@@ -3482,7 +3577,7 @@ def render_observer_portal(profile,auth_user):
                 {tr("fairness_level"):"2. RESIDENT HARD",tr("fairness_goal"):("Minimalus būtinas praradimų skaičius + kuo lygesnis paskirstymas" if lang=="LT" else "Minimum unavoidable losses + equal burden spread")},
                 {tr("fairness_level"):"3. POSTAI / WORKLOAD",tr("fairness_goal"):tr("fairness_monthly_goal")},
                 {tr("fairness_level"):"4. MAX-MIN SOFT",tr("fairness_goal"):tr("other_preferences_goal")},
-                {tr("fairness_level"):"5. CUMULATIVE",tr("fairness_goal"):tr("fairness_cumulative_goal")},
+                {tr("fairness_level"):"5. ACTUAL AUDIT",tr("fairness_goal"):tr("fairness_cumulative_goal")},
             ]),use_container_width=True,hide_index=True)
 
     with tab_schedule:
@@ -3522,36 +3617,30 @@ def render_observer_portal(profile,auth_user):
             st.info(tr("observer_no_schedule"))
         else:
             g=baseline.stats.get("global",{})
+            sl=live_fairness_snapshot(y,m,baseline,include_completed_covers=False)["global"]
+            al=live_fairness_snapshot(y,m,current,include_completed_covers=True)["global"]
             c1,c2,c3=st.columns(3)
             c1.metric(tr("hard_validity"),tr("hard_validity_pass") if g.get("hard_errors",0)==0 else tr("hard_validity_fail"))
-            c2.metric(tr("cumulative_fairness"),f"{g.get('cumulative_fairness_score',g.get('fairness_score',0))}%")
-            c3.metric(tr("monthly_fairness"),f"{g.get('monthly_fairness_score',g.get('fairness_score',0))}%")
+            c2.metric("SYSTEM fairness",f"{sl.get('monthly_fairness_score',0)}%")
+            c3.metric("ACTUAL fairness",f"{al.get('monthly_fairness_score',0)}%",delta=f"{al.get('monthly_fairness_score',0)-sl.get('monthly_fairness_score',0):+.1f}")
             st.caption(tr("fairness_swap_neutral"))
             breakdown=[
-                (tr("cumulative_fairness"),tr("metric_weekend"),g.get("weekend_cumulative_spread",0),18),
-                (tr("cumulative_fairness"),tr("metric_friday"),g.get("friday_cumulative_spread",g.get("friday_spread",0)),7),
-                (tr("cumulative_fairness"),tr("metric_double"),g.get("double_cumulative_spread",g.get("double_spread",0)),4),
-                (tr("cumulative_fairness"),tr("metric_weekday"),g.get("weekday_day_cumulative_spread",g.get("weekday_day_spread",0)),2),
-                (tr("monthly_fairness"),tr("metric_weekend"),g.get("weekend_monthly_spread",0),18),
-                (tr("monthly_fairness"),tr("metric_friday"),g.get("friday_monthly_spread",0),7),
-                (tr("monthly_fairness"),tr("metric_double"),g.get("double_monthly_spread",0),4),
-                (tr("monthly_fairness"),tr("metric_weekday"),g.get("weekday_day_monthly_spread",0),2),
+                ("SYSTEM",tr("metric_weekend"),sl.get("weekend_monthly_spread",0)),
+                ("ACTUAL",tr("metric_weekend"),al.get("weekend_monthly_spread",0)),
+                ("SYSTEM",tr("metric_friday"),sl.get("friday_monthly_spread",0)),
+                ("ACTUAL",tr("metric_friday"),al.get("friday_monthly_spread",0)),
+                ("SYSTEM",tr("metric_double"),sl.get("double_monthly_spread",0)),
+                ("ACTUAL",tr("metric_double"),al.get("double_monthly_spread",0)),
+                ("SYSTEM",tr("metric_weekday"),sl.get("weekday_day_monthly_spread",0)),
+                ("ACTUAL",tr("metric_weekday"),al.get("weekday_day_monthly_spread",0)),
             ]
-            st.dataframe(pd.DataFrame([{
-                tr("fairness_scope"):scope,
-                tr("fairness_metric"):metric,
-                tr("fairness_spread"):spread,
-                tr("fairness_penalty"):spread*weight,
-            } for scope,metric,spread,weight in breakdown]),use_container_width=True,hide_index=True)
-            trend=fairness_trend_df(db.fairness_history_rows(y,m))
+            st.dataframe(pd.DataFrame([{tr("fairness_scope"):scope,tr("fairness_metric"):metric,tr("fairness_spread"):spread} for scope,metric,spread in breakdown]),use_container_width=True,hide_index=True)
+            trend=system_actual_fairness_trend_df(y,m)
             if not trend.empty:
-                shown=trend.rename(columns={
-                    "Cumulative fairness":tr("cumulative_fairness"),
-                    "Monthly fairness":tr("monthly_fairness")
-                })
-                chart=shown.set_index("Period")
-                st.line_chart(chart[[tr("cumulative_fairness"),tr("monthly_fairness")]],height=300)
-                st.dataframe(shown,use_container_width=True,hide_index=True)
+                chart=trend.set_index("Period")
+                st.line_chart(chart[["SYSTEM monthly fairness","ACTUAL monthly fairness"]],height=300)
+                st.dataframe(trend,use_container_width=True,hide_index=True)
+                st.caption("Tik auditas — jokio future catch-up." if lang=="LT" else "Audit only — no future catch-up.")
             else:
                 st.caption(tr("fairness_no_history"))
 
@@ -3830,14 +3919,96 @@ if senior_mode:
 
 # --- Preferences ---
 with tabs[pos]:
-    st.subheader(f"{tr('my_preferences')} — {month_label(year,month)}"); st.markdown(badge(active_user),unsafe_allow_html=True)
-    if not resident_ok: st.error(tr("bad_pin"))
+    st.subheader(f"{tr('my_preferences')} — {month_label(year,month)}")
+    if not resident_ok:
+        st.error(tr("bad_pin"))
     else:
-        cur=db.get_preference(year,month,active_user) or {}; days=list(range(1,calendar.monthrange(year,month)[1]+1))
-        avail_am=db.rest_credit_available_for_month(active_user,year,month,"AM")
-        avail_pm=db.rest_credit_available_for_month(active_user,year,month,"PM")
+        cutoff_pref=preference_cutoff_for(year,month)
+        now_lt=datetime.now(ZoneInfo("Europe/Vilnius"))
+        own_deadline_open=now_lt < cutoff_pref
+        pref_state=db.get_schedule_state(year,month)
+        pref_system_frozen=bool(pref_state.get("has_published"))
+
+        preference_target=active_user
+        operator_manual_mode=False
+        operator_reason_kind=""
+        operator_reason_detail=""
+
+        if lifecycle_operator_ui:
+            st.markdown(
+                """<div style="border:2px solid #7C9BFF;background:rgba(79,112,255,.08);
+                border-radius:16px;padding:14px 16px;margin:4px 0 12px 0;">
+                <b>Operatoriaus pageidavimų įvedimas</b><br>
+                <span style="opacity:.82">Default — jūsų pačių anketa. Jei rezidentas negalėjo pateikti pats,
+                pasirinkite jo inicialus ir suveskite informaciją jo vardu. Paskyros identitetas nekeičiamas,
+                veiksmas audituojamas.</span></div>""",
+                unsafe_allow_html=True,
+            )
+            target_order=[active_user]+[p["initials"] for p in DEFAULT_PEOPLE if p["initials"]!=active_user]
+            name_map={p["initials"]:p["name"] for p in DEFAULT_PEOPLE}
+            preference_target=st.selectbox(
+                "Pildyti už:",
+                target_order,
+                index=0,
+                format_func=lambda i:f"{i} — {name_map.get(i,i)}",
+                key=f"pref_target_{year}_{month}_{active_user}",
+            )
+            st.markdown(
+                f'<div style="border:1px solid rgba(124,155,255,.55);border-radius:12px;padding:10px 12px;">'
+                f'<b>Pasirinktas rezidentas:</b> {badge(preference_target,include_name=True)}</div>',
+                unsafe_allow_html=True,
+            )
+            operator_manual_mode=(preference_target!=active_user) or (not own_deadline_open)
+            if pref_system_frozen:
+                st.error(
+                    "SYSTEM jau užšaldytas. Pageidavimų keisti nebegalima; operacinius pakeitimus darykite per Grafikas → rankinis koregavimas."
+                    if lang=="LT" else
+                    "SYSTEM is already frozen. Preferences can no longer be changed; use Schedule → manual correction for operational changes."
+                )
+        else:
+            st.markdown(badge(active_user),unsafe_allow_html=True)
+            if not own_deadline_open:
+                st.warning(
+                    f"Pageidavimų terminas baigėsi {cutoff_pref.strftime('%Y-%m-%d %H:%M')} Lietuvos laiku. "
+                    "Anketos po termino rezidentas pats keisti nebegali. Jei būtina pataisa, kreipkitės į Seniūnę."
+                    if lang=="LT" else
+                    f"The preference deadline closed at {cutoff_pref.strftime('%Y-%m-%d %H:%M')} Lithuania time. "
+                    "Residents can no longer edit the form themselves; contact the senior scheduler if a correction is required."
+                )
+
+        cur=db.get_preference(year,month,preference_target) or {}
+        source=cur.get("submission_source","")
+        submitter=cur.get("submitted_by_initials","")
+        if cur:
+            if source=="deadline_zero":
+                st.info("Pateikta: TAIP — automatiškai užfiksuota 0 pageidavimų anketa po termino." if lang=="LT" else "Submitted: YES — automatic zero-request form after the deadline.")
+            elif source=="operator_manual":
+                st.info((f"Pateikta: TAIP — manualiai įvedė {submitter or 'operatorius'}." if lang=="LT" else f"Submitted: YES — manually entered by {submitter or 'operator'}."))
+            else:
+                st.success("Pateikta: TAIP — rezidento anketa." if lang=="LT" else "Submitted: YES — resident submission.")
+
+        days=list(range(1,calendar.monthrange(year,month)[1]+1))
+        avail_am=db.rest_credit_available_for_month(preference_target,year,month,"AM")
+        avail_pm=db.rest_credit_available_for_month(preference_target,year,month,"PM")
         st.markdown(f"### {tr('short_term')}")
-        with st.form(f"prefs_{year}_{month}_{active_user}"):
+        with st.form(f"prefs_{year}_{month}_{active_user}_{preference_target}"):
+            if lifecycle_operator_ui and operator_manual_mode:
+                st.markdown("#### Manualaus įvedimo auditas" if lang=="LT" else "#### Manual-entry audit")
+                operator_reason_kind=st.selectbox(
+                    "Priežastis" if lang=="LT" else "Reason",
+                    [
+                        "Pateikta telefonu" if lang=="LT" else "Submitted by phone",
+                        "Techninė / ryšio problema" if lang=="LT" else "Technical / connectivity issue",
+                        "Sveikatos / neatvykimo situacija" if lang=="LT" else "Health / absence situation",
+                        "Pavėluotas operatoriaus įvedimas" if lang=="LT" else "Late operator entry",
+                        "Kita" if lang=="LT" else "Other",
+                    ],
+                    key=f"pref_operator_reason_{year}_{month}_{active_user}_{preference_target}",
+                )
+                operator_reason_detail=st.text_input(
+                    "Trumpa pastaba (nebūtina)" if lang=="LT" else "Short note (optional)",
+                    key=f"pref_operator_reason_detail_{year}_{month}_{active_user}_{preference_target}",
+                )
             st.markdown(f"### {tr('hard_unavailable')}")
             st.caption(tr("hard_help"))
             h1,h2,h3=st.columns(3)
@@ -3861,27 +4032,27 @@ with tabs[pos]:
             st.caption(tr("soft_help"))
             sf1,sf2,sf3=st.columns(3)
             with sf1:
-                soft=st.multiselect(tr("hard_all_day"),days,default=sorted(cur.get("soft_free",set())),format_func=lambda d:pretty_day(year,month,d),key=f"soft_full_{year}_{month}_{active_user}")
+                soft=st.multiselect(tr("hard_all_day"),days,default=sorted(cur.get("soft_free",set())),format_func=lambda d:pretty_day(year,month,d),key=f"soft_full_{year}_{month}_{active_user}_{preference_target}")
             with sf2:
-                soft_am=st.multiselect(tr("hard_morning"),days,default=sorted(cur.get("soft_free_am",set())),format_func=lambda d:pretty_day(year,month,d),key=f"soft_am_{year}_{month}_{active_user}")
+                soft_am=st.multiselect(tr("hard_morning"),days,default=sorted(cur.get("soft_free_am",set())),format_func=lambda d:pretty_day(year,month,d),key=f"soft_am_{year}_{month}_{active_user}_{preference_target}")
             with sf3:
-                soft_pm=st.multiselect(tr("hard_afternoon"),days,default=sorted(cur.get("soft_free_pm",set())),format_func=lambda d:pretty_day(year,month,d),key=f"soft_pm_{year}_{month}_{active_user}")
+                soft_pm=st.multiselect(tr("hard_afternoon"),days,default=sorted(cur.get("soft_free_pm",set())),format_func=lambda d:pretty_day(year,month,d),key=f"soft_pm_{year}_{month}_{active_user}_{preference_target}")
 
             st.markdown(f"### {tr('preferred')}")
             st.caption(tr("preferred_help"))
             pf1,pf2,pf3=st.columns(3)
             with pf1:
-                pref=st.multiselect(tr("hard_all_day"),days,default=sorted(cur.get("preferred",set())),format_func=lambda d:pretty_day(year,month,d),key=f"pref_full_{year}_{month}_{active_user}")
+                pref=st.multiselect(tr("hard_all_day"),days,default=sorted(cur.get("preferred",set())),format_func=lambda d:pretty_day(year,month,d),key=f"pref_full_{year}_{month}_{active_user}_{preference_target}")
             with pf2:
-                pref_am=st.multiselect(tr("hard_morning"),days,default=sorted(cur.get("preferred_am",set())),format_func=lambda d:pretty_day(year,month,d),key=f"pref_am_{year}_{month}_{active_user}")
+                pref_am=st.multiselect(tr("hard_morning"),days,default=sorted(cur.get("preferred_am",set())),format_func=lambda d:pretty_day(year,month,d),key=f"pref_am_{year}_{month}_{active_user}_{preference_target}")
             with pf3:
-                pref_pm=st.multiselect(tr("hard_afternoon"),days,default=sorted(cur.get("preferred_pm",set())),format_func=lambda d:pretty_day(year,month,d),key=f"pref_pm_{year}_{month}_{active_user}")
+                pref_pm=st.multiselect(tr("hard_afternoon"),days,default=sorted(cur.get("preferred_pm",set())),format_func=lambda d:pretty_day(year,month,d),key=f"pref_pm_{year}_{month}_{active_user}_{preference_target}")
 
             st.markdown(f"### {tr('vacation')}")
             st.caption(tr("vacation_help"))
             vacation=st.multiselect(
                 tr("vacation"),days,default=sorted(cur.get("vacation",set())),
-                format_func=lambda d:pretty_day(year,month,d),key=f"vacation_{year}_{month}_{active_user}"
+                format_func=lambda d:pretty_day(year,month,d),key=f"vacation_{year}_{month}_{active_user}_{preference_target}"
             )
 
             note=st.text_area(tr("note"),value=cur.get("note",""),placeholder=tr("note_ph"))
@@ -3905,7 +4076,15 @@ with tabs[pos]:
                     format_func=lambda d:pretty_day(year,month,d),help=tr("long_duty_help")
                 )
             st.caption(tr("labour_scope_note"))
-            submitted=st.form_submit_button(tr("save"),type="primary")
+            resident_edit_blocked=(not lifecycle_operator_ui and not own_deadline_open)
+            operator_edit_blocked=(lifecycle_operator_ui and pref_system_frozen)
+            submitted=st.form_submit_button(
+                ("IŠSAUGOTI UŽ " + preference_target if lifecycle_operator_ui and operator_manual_mode and lang=="LT"
+                 else "SAVE FOR " + preference_target if lifecycle_operator_ui and operator_manual_mode
+                 else tr("save")),
+                type="primary",
+                disabled=resident_edit_blocked or operator_edit_blocked,
+            )
             if submitted:
                 whole=set(unavailable); am=set(unavailable_am); pm=set(unavailable_pm)
                 sf=set(soft); sf_am=set(soft_am); sf_pm=set(soft_pm)
@@ -3937,7 +4116,7 @@ with tabs[pos]:
                 elif int(bonus_am_use)+int(bonus_pm_use)>2:
                     st.error(tr("max_credit_error"))
                 else:
-                    db.save_preference(year,month,active_user,{
+                    pref_payload={
                         "unavailable":unavailable,
                         "unavailable_am":unavailable_am,
                         "unavailable_pm":unavailable_pm,
@@ -3954,8 +4133,36 @@ with tabs[pos]:
                         "backup_credits_am_to_use":int(bonus_am_use),
                         "backup_credits_pm_to_use":int(bonus_pm_use),
                         "backup_credits_night_to_use":0,
-                    })
-                    flash_saved(tr("saved"))
+                    }
+                    try:
+                        if lifecycle_operator_ui and operator_manual_mode:
+                            audit_reason=operator_reason_kind.strip()
+                            if operator_reason_detail.strip():
+                                audit_reason += " — " + operator_reason_detail.strip()
+                            db.save_preference_for_resident_v2595(
+                                year,month,preference_target,pref_payload,audit_reason
+                            )
+                            draft_note=(
+                                " Jei šiam mėnesiui jau buvo sugeneruotas DRAFT, jį reikia regeneruoti."
+                                if db.get_schedule_state(year,month).get("has_draft") else ""
+                            )
+                            flash_saved(
+                                (f"{preference_target} pageidavimai įvesti operatoriaus vardu ir audituoti.{draft_note}"
+                                 if lang=="LT" else
+                                 f"{preference_target} preferences were entered by the operator and audited."
+                                 + (" Regenerate the existing DRAFT." if draft_note else ""))
+                            )
+                        else:
+                            db.save_preference(year,month,active_user,pref_payload)
+                            flash_saved(tr("saved"))
+                    except Exception as e:
+                        msg=str(e)
+                        if "PREFERENCE_DEADLINE_CLOSED" in msg:
+                            st.error("Pageidavimų terminas jau uždarytas. Susisiekite su Seniūne." if lang=="LT" else "The preference deadline is closed. Contact the senior scheduler.")
+                        elif "PREFERENCE_INPUT_FROZEN_AFTER_SYSTEM" in msg:
+                            st.error("SYSTEM jau užšaldytas — pageidavimų keisti nebegalima." if lang=="LT" else "SYSTEM is frozen — preferences can no longer be changed.")
+                        else:
+                            st.error(msg)
     if senior_mode:
         st.divider(); st.markdown(f"### {tr('all_preferences')}"); prefs=db.all_preferences(year,month); sets=db.all_account_settings(); recurring_all=db.all_recurring_preferences(); nd=calendar.monthrange(year,month)[1]; rows=[]
         for p in DEFAULT_PEOPLE:
@@ -3972,8 +4179,11 @@ with tabs[pos]:
                 ("Pateikimo būdas" if lang=="LT" else "Submission source"):(
                     ("Automatiškai — 0 pageidavimų" if lang=="LT" else "Automatic — 0 requests")
                     if x and x.get("submission_source")=="deadline_zero"
-                    else ("Rezidentas" if lang=="LT" else "Resident")
-                    if x else "—"
+                    else ((f"Manualiai — {x.get('submitted_by_initials') or 'operatorius'}" if lang=="LT"
+                           else f"Manual — {x.get('submitted_by_initials') or 'operator'}")
+                          if x and x.get("submission_source")=="operator_manual"
+                          else ("Rezidentas" if lang=="LT" else "Resident")
+                          if x else "—")
                 ),
                 tr("preference_load"):f"{vol} — {flag}",
                 tr("hard_dates"):", ".join(map(str,sorted(x.get("unavailable",set())))),
@@ -4619,6 +4829,8 @@ if advanced_mode:
             base=refresh_result_payload(draftp,year,month,use_actual_backups=False)
             current=base
             g=base.stats["global"]
+            system_live=live_fairness_snapshot(year,month,base,include_completed_covers=False)
+            actual_live=None
             st.warning(
                 "JUODRAŠČIO SUVESTINĖ — DAR NEPASKELBTA. Visi žemiau esantys rodikliai priklauso naujausiam sugeneruotam kandidatui; PASKELBTAS GRAFIKAS dar nepakeistas."
                 if lang=="LT" else
@@ -4628,23 +4840,34 @@ if advanced_mode:
             current=refresh_result_payload(currentp,year,month)
             base=refresh_result_payload(basep or currentp,year,month,use_actual_backups=False)
             g=base.stats["global"]
-            st.success("SYSTEM SUVESTINĖ — PASKELBTA" if lang=="LT" else "SYSTEM SUMMARY — PUBLISHED")
+            system_live=live_fairness_snapshot(year,month,base,include_completed_covers=False)
+            actual_live=live_fairness_snapshot(year,month,current,include_completed_covers=True)
+            st.success("SYSTEM + ACTUAL SUVESTINĖ — PASKELBTA" if lang=="LT" else "SYSTEM + ACTUAL SUMMARY — PUBLISHED")
         else:
             st.info(
                 "Dar nėra nei sugeneruoto juodraščio, nei paskelbto grafiko. Pirmiausia Sudarymas lange paspausk GENERUOTI."
                 if lang=="LT" else
                 "There is no generated draft or published schedule yet. First press GENERATE in the Generation tab."
             )
-            base=None; current=None; g=None
+            base=None; current=None; g=None; system_live=None; actual_live=None
 
         if base is not None:
             if advanced_mode:
-                c1,c2,c3,c4,c5=st.columns(5)
-                c1.metric(tr("hard_errors")+" *",g["hard_errors"])
-                c2.metric(tr("monthly_fairness"),f"{g.get('monthly_fairness_score',g['fairness_score'])}%")
-                c3.metric(("Mėnesio postų disbalansas" if lang=="LT" else "Monthly post imbalance"),g.get("rotation_monthly_imbalance",0))
-                c4.metric(("Kaupiamasis postų disbalansas" if lang=="LT" else "Cumulative post imbalance"),g.get("rotation_cumulative_imbalance",0))
-                c5.metric(tr("preference_avg"),tr("not_applicable") if g["mean_preference_score"] is None else f"{g['mean_preference_score']}%")
+                if draft_mode:
+                    c1,c2,c3,c4=st.columns(4)
+                    c1.metric(tr("hard_errors")+" *",g["hard_errors"])
+                    c2.metric(("JUODRAŠČIO fairness" if lang=="LT" else "DRAFT fairness"),f"{system_live['global'].get('monthly_fairness_score',0)}%")
+                    c3.metric(("Postų disbalansas" if lang=="LT" else "Post imbalance"),system_live["global"].get("rotation_monthly_imbalance",0))
+                    c4.metric(tr("preference_avg"),tr("not_applicable") if g["mean_preference_score"] is None else f"{g['mean_preference_score']}%")
+                else:
+                    sg=system_live["global"]; ag=actual_live["global"]
+                    c1,c2,c3,c4,c5,c6=st.columns(6)
+                    c1.metric(tr("hard_errors")+" *",g["hard_errors"])
+                    c2.metric("SYSTEM fairness",f"{sg.get('monthly_fairness_score',0)}%")
+                    c3.metric("ACTUAL fairness",f"{ag.get('monthly_fairness_score',0)}%",delta=f"{ag.get('monthly_fairness_score',0)-sg.get('monthly_fairness_score',0):+.1f}")
+                    c4.metric(("SYSTEM postų disbalansas" if lang=="LT" else "SYSTEM post imbalance"),sg.get("rotation_monthly_imbalance",0))
+                    c5.metric(("ACTUAL postų disbalansas" if lang=="LT" else "ACTUAL post imbalance"),ag.get("rotation_monthly_imbalance",0))
+                    c6.metric(("Realiai pavadavo" if lang=="LT" else "Completed covers"),ag.get("completed_cover_transfers",0))
                 if draft_mode:
                     st.caption(
                         "JUODRAŠTIS: fairness, postų spread ir pageidavimų score yra pre-publication auditui. Jie taps SYSTEM baseline tik paspaudus PASKELBTI / PATVIRTINTI."
@@ -4681,13 +4904,13 @@ if advanced_mode:
                 (
                     "Tai naujausio JUODRAŠČIO postų matrica. Ji leidžia prieš publikavimą patikrinti structural water-fill, SPS/Onko ir diversity. Regeneravus ji gali pasikeisti; fairness_history dar neįrašoma."
                     if draft_mode else
-                    "FAIRNESS / SPREAD matrica skaičiuojama tik iš publikavimo momento SYSTEM grafiko. Savanoriški swapai ir liga / atostogos / force majeure repair, įskaitant SPS pull-down, čia NEPRIDEDAMI ir nesukuria post debt."
+                    "SYSTEM matrica yra publikavimo momento algoritmo water-fill baseline. Ji lieka užšaldyta auditui; realus pasiskirstymas rodomas ACTUAL matricoje žemiau."
                 )
                 if lang=="LT" else
                 (
                     "This is the newest DRAFT workplace matrix. It can be audited for structural water-fill, SPS/Onko and diversity before publication. Regeneration may change it; fairness_history is not written yet."
                     if draft_mode else
-                    "The FAIRNESS / SPREAD matrix is calculated only from the publication-time SYSTEM schedule. Voluntary swaps and sickness/leave/force-majeure repairs, including SPS pull-downs, are excluded and create no post debt."
+                    "The SYSTEM matrix is the publication-time algorithmic water-fill baseline. It stays frozen for audit; the real distribution is shown in the ACTUAL matrix below."
                 )
             )
             st.dataframe(
@@ -4697,40 +4920,31 @@ if advanced_mode:
                 height=650,
             )
 
-            # ACTUAL exposure is still useful operationally, but it must never be
-            # confused with the SYSTEM fairness/post-debt ledger.
-            if (not draft_mode) and current.assignments != base.assignments:
-                with st.expander(
-                    "FAKTINĖ operacinė postų ekspozicija — tik informacinė (NE fairness)"
+            if not draft_mode:
+                st.markdown("### ACTUAL realus postų pasiskirstymas" if lang=="LT" else "### ACTUAL real-work workplace distribution")
+                st.caption(
+                    "Tai gyva fairness statistika: manual override'ai, swapai ir repair keičia ACTUAL iškart; backup cover perskiriamas dubliui tik pažymėjus COMPLETED. Šie skirtumai niekada nekuria kito mėnesio catch-up."
                     if lang=="LT" else
-                    "ACTUAL operational workplace exposure — informational only (NOT fairness)",
-                    expanded=False,
-                ):
-                    st.caption(
-                        "Čia matoma, kur žmonės realiai dirbo po swapų / repair. Ši lentelė nekeičia spread, fairness_history ar post debt."
-                        if lang=="LT" else
-                        "This shows where residents actually worked after swaps/repairs. It does not change spread, fairness_history, or post debt."
-                    )
-                    st.dataframe(
-                        style_rows(workplace_exposure_df(year,month,current)),
-                        use_container_width=True,hide_index=True,height=650,
-                    )
+                    "This is the live fairness ledger: manual overrides, swaps and repairs change ACTUAL immediately; backup exposure transfers only when cover is marked COMPLETED. These differences never create next-month catch-up."
+                )
+                st.dataframe(style_rows(actual_workplace_exposure_df(year,month,current)),use_container_width=True,hide_index=True,height=650)
 
             if advanced_mode:
                 spread_rows=[]
-                month_spreads=(g.get("rotation_monthly_spreads") or {})
-                cumulative_spreads=(g.get("rotation_cumulative_spreads") or {})
+                sys_spreads=(system_live.get("global",{}).get("rotation_monthly_spreads") or {})
+                act_spreads=((actual_live or system_live).get("global",{}).get("rotation_monthly_spreads") or {})
                 for cat in ROTATION_CATEGORIES:
                     spread_rows.append({
                         ("Postas" if lang=="LT" else "Workplace"):cat,
-                        ("Šio mėnesio spread" if lang=="LT" else "Monthly spread"):month_spreads.get(cat,0),
-                        ("Kaupiamasis spread" if lang=="LT" else "Cumulative spread"):cumulative_spreads.get(cat,0),
+                        "SYSTEM spread":sys_spreads.get(cat,0),
+                        "ACTUAL spread":act_spreads.get(cat,0),
+                        ("Pokytis" if lang=="LT" else "Delta"):int(act_spreads.get(cat,0))-int(sys_spreads.get(cat,0)),
                     })
-                st.markdown("#### Postų spread kontrolė" if lang=="LT" else "#### Workplace spread control")
+                st.markdown("#### SYSTEM → ACTUAL postų spread" if lang=="LT" else "#### SYSTEM → ACTUAL workplace spread")
                 st.caption(
-                    "Pagrindinis tikslas: kiekvieno posto šio mėnesio spread mažinamas iki mažiausio įmanomo. Tik likęs neišvengiamas skirtumas taisomas kitais mėnesiais."
+                    "SYSTEM yra mėnesio water-fill baseline. ACTUAL gali nukrypti po leidžiamų pakeitimų; nukrypimas rodomas, bet kitą mėnesį nekompensuojamas."
                     if lang=="LT" else
-                    "Primary goal: minimize each workplace's current-month spread to the lowest feasible value. Only unavoidable residual imbalance is corrected in later months."
+                    "SYSTEM is the monthly water-fill baseline. ACTUAL may diverge after allowed changes; the divergence is shown but never compensated next month."
                 )
                 st.dataframe(pd.DataFrame(spread_rows),use_container_width=True,hide_index=True)
 
@@ -4759,9 +4973,9 @@ if advanced_mode:
                     expanded=False,
                 ):
                     st.caption(
-                        ("Šie skaičiai priklauso dabartiniam juodraščiui ir skirti auditui prieš publikavimą." if draft_mode else "Šie skaičiai priklauso publikavimo SYSTEM bazei; post-publication swapai ir fairness-neutral repair jų nekeičia.")
+                        ("Šie skaičiai priklauso dabartiniam juodraščiui ir skirti auditui prieš publikavimą." if draft_mode else "Šie skaičiai priklauso publikavimo SYSTEM bazei; post-publication ACTUAL pakeitimai jų nekeičia, nes tai yra būtent SYSTEM publikavimo baseline.")
                         if lang=="LT" else
-                        ("These figures belong to the current draft and are for pre-publication audit." if draft_mode else "These figures belong to the publication SYSTEM baseline; post-publication swaps and fairness-neutral repairs do not change them.")
+                        ("These figures belong to the current draft and are for pre-publication audit." if draft_mode else "These figures belong to the publication SYSTEM baseline; post-publication ACTUAL changes do not change them because these figures are the publication-time SYSTEM baseline.")
                     )
                     _summary_stats=summary_df(base,year,month)
                     if draft_mode:
@@ -4794,17 +5008,18 @@ if advanced_mode:
         if not currentp: st.info(tr("not_published"))
         else:
             current=refresh_result_payload(currentp,year,month); base=refresh_result_payload(basep or currentp,year,month,use_actual_backups=False)
-            # SYSTEM FAIRNESS is frozen from the publication baseline.
-            # Current stats describe ACTUAL work after voluntary swaps and must not
-            # rewrite or visually replace the fairness ledger.
             g=base.stats["global"]; gb=base.stats["global"]
+            system_live=live_fairness_snapshot(year,month,base,include_completed_covers=False)
+            actual_live=live_fairness_snapshot(year,month,current,include_completed_covers=True)
+            sg=system_live["global"]; ag=actual_live["global"]
 
             st.markdown(f"### {tr('fairness_hierarchy')}")
             st.caption(tr("fairness_hierarchy_intro"))
-            h1,h2,h3=st.columns(3)
+            h1,h2,h3,h4=st.columns(4)
             h1.metric(tr("hard_validity"),tr("hard_validity_pass") if g["hard_errors"]==0 else tr("hard_validity_fail"))
-            h2.metric(tr("cumulative_fairness"),f"{g.get('cumulative_fairness_score',g['fairness_score'])}%")
-            h3.metric(tr("monthly_fairness"),f"{g.get('monthly_fairness_score',g['fairness_score'])}%")
+            h2.metric("SYSTEM fairness",f"{sg.get('monthly_fairness_score',0)}%")
+            h3.metric("ACTUAL fairness",f"{ag.get('monthly_fairness_score',0)}%",delta=f"{ag.get('monthly_fairness_score',0)-sg.get('monthly_fairness_score',0):+.1f}")
+            h4.metric(("ACTUAL postų disbalansas" if lang=="LT" else "ACTUAL post imbalance"),ag.get("rotation_monthly_imbalance",0))
 
             if advanced_mode:
                 hierarchy_df=pd.DataFrame([
@@ -4812,7 +5027,7 @@ if advanced_mode:
                     {tr("fairness_level"):"2. RESIDENT HARD",tr("fairness_goal"):("Minimumas bendrų „Negaliu dirbti“ praradimų; tada minimumas didžiausio vieno žmogaus praradimo" if lang=="LT" else "Minimize total Unavailable losses; then minimize the worst resident loss"),tr("fairness_interpretation"):(f"Šį mėnesį praradimų: {g.get('resident_hard_total_losses',0)}; paveikta rezidentų: {g.get('resident_hard_residents_affected',0)}; max vienam: {g.get('resident_hard_max_loss_per_resident',0)}; cumulative spread: {g.get('resident_hard_cumulative_spread',0)}" if lang=="LT" else f"Losses this month: {g.get('resident_hard_total_losses',0)}; residents affected: {g.get('resident_hard_residents_affected',0)}; max per resident: {g.get('resident_hard_max_loss_per_resident',0)}; cumulative spread: {g.get('resident_hard_cumulative_spread',0)}")},
                     {tr("fairness_level"):"3. POSTAI / WORKLOAD / FATIGUE",tr("fairness_goal"):tr("fairness_monthly_goal"),tr("fairness_interpretation"):tr("fairness_monthly_explain")},
                     {tr("fairness_level"):"4. MAX-MIN SOFT",tr("fairness_goal"):tr("other_preferences_goal"),tr("fairness_interpretation"):tr("other_preferences_explain")},
-                    {tr("fairness_level"):"5. KAUPIAMASIS REFINEMENT",tr("fairness_goal"):tr("fairness_cumulative_goal"),tr("fairness_interpretation"):tr("fairness_cumulative_explain")},
+                    {tr("fairness_level"):"5. ACTUAL PO PUBLIKAVIMO",tr("fairness_goal"):("Swapai / override'ai gali pralaužti water-fill; realus spread tiksliai rodomas" if lang=="LT" else "Swaps/overrides may break water-fill; the real spread is reported exactly"),tr("fairness_interpretation"):tr("fairness_cumulative_explain")},
                 ])
                 st.dataframe(hierarchy_df,use_container_width=True,hide_index=True)
                 st.caption(tr("fairness_100_note"))
@@ -4824,38 +5039,33 @@ if advanced_mode:
 
                 st.divider(); st.markdown(f"### {tr('fairness_breakdown')}")
                 breakdown=[
-                    (tr("cumulative_fairness"),tr("metric_weekend"),g.get("weekend_cumulative_spread",0),18),
-                    (tr("cumulative_fairness"),tr("metric_friday"),g.get("friday_cumulative_spread",g.get("friday_spread",0)),7),
-                    (tr("cumulative_fairness"),tr("metric_double"),g.get("double_cumulative_spread",g.get("double_spread",0)),4),
-                    (tr("cumulative_fairness"),tr("metric_weekday"),g.get("weekday_day_cumulative_spread",g.get("weekday_day_spread",0)),2),
-                    (tr("monthly_fairness"),tr("metric_weekend"),g.get("weekend_monthly_spread",0),18),
-                    (tr("monthly_fairness"),tr("metric_friday"),g.get("friday_monthly_spread",0),7),
-                    (tr("monthly_fairness"),tr("metric_double"),g.get("double_monthly_spread",0),4),
-                    (tr("monthly_fairness"),tr("metric_weekday"),g.get("weekday_day_monthly_spread",0),2),
+                    ("SYSTEM",tr("metric_weekend"),sg.get("weekend_monthly_spread",0)),
+                    ("ACTUAL",tr("metric_weekend"),ag.get("weekend_monthly_spread",0)),
+                    ("SYSTEM",tr("metric_friday"),sg.get("friday_monthly_spread",0)),
+                    ("ACTUAL",tr("metric_friday"),ag.get("friday_monthly_spread",0)),
+                    ("SYSTEM",tr("metric_double"),sg.get("double_monthly_spread",0)),
+                    ("ACTUAL",tr("metric_double"),ag.get("double_monthly_spread",0)),
+                    ("SYSTEM",tr("metric_weekday"),sg.get("weekday_day_monthly_spread",0)),
+                    ("ACTUAL",tr("metric_weekday"),ag.get("weekday_day_monthly_spread",0)),
                 ]
-                st.dataframe(pd.DataFrame([{
-                    tr("fairness_scope"):scope,
-                    tr("fairness_metric"):metric,
-                    tr("fairness_spread"):spread,
-                    tr("fairness_penalty"):spread*weight,
-                } for scope,metric,spread,weight in breakdown]),use_container_width=True,hide_index=True)
-                st.caption(tr("fairness_formula_month"))
-                st.caption(tr("fairness_formula_cumulative"))
+                st.dataframe(pd.DataFrame([{tr("fairness_scope"):scope,tr("fairness_metric"):metric,tr("fairness_spread"):spread} for scope,metric,spread in breakdown]),use_container_width=True,hide_index=True)
+                st.caption(tr("fairness_monthly_explain"))
+                st.caption(tr("fairness_cumulative_explain"))
 
                 st.divider(); st.markdown(f"### {tr('fairness_history')}")
                 st.caption(tr("fairness_history_help"))
-                trend=fairness_trend_df(db.fairness_history_rows(year,month))
+                trend=system_actual_fairness_trend_df(year,month)
                 if trend.empty:
                     st.caption(tr("fairness_no_history"))
                 else:
-                    chart=trend.rename(columns={"Cumulative fairness":tr("cumulative_fairness"),"Monthly fairness":tr("monthly_fairness")}).set_index("Period")
-                    st.line_chart(chart[[tr("cumulative_fairness"),tr("monthly_fairness")]],height=280)
-                    shown=trend.rename(columns={"Cumulative fairness":tr("cumulative_fairness"),"Monthly fairness":tr("monthly_fairness")})
-                    st.dataframe(shown,use_container_width=True,hide_index=True)
+                    chart=trend.set_index("Period")
+                    st.line_chart(chart[["SYSTEM monthly fairness","ACTUAL monthly fairness"]],height=280)
+                    st.dataframe(trend,use_container_width=True,hide_index=True)
+                    st.caption("Istorija tik stebėjimui — solveris jos nenaudoja kitam mėnesiui." if lang=="LT" else "History is monitoring-only — the solver never uses it for the next month.")
 
                 st.divider(); st.markdown(f"### {tr('personal_vs_group')}")
                 bp=base.stats["people"].get(active_user,{}).get("preference_score"); cp=current.stats["people"].get(active_user,{}).get("preference_score")
-                ratio=balance_ratio(cp,g.get("cumulative_fairness_score",g["fairness_score"]))
+                ratio=balance_ratio(cp,ag.get("monthly_fairness_score"))
                 a,b,c=st.columns(3); a.metric(tr("baseline_personal"),tr("not_applicable") if bp is None else f"{bp}%"); b.metric(tr("current_personal"),tr("not_applicable") if cp is None else f"{cp}%"); c.metric(tr("balance_ratio"),tr("not_applicable") if ratio is None else f"{ratio:.2f}")
                 st.caption(tr("ratio_help")); st.markdown(f"### {tr('all_resident_scores')}"); st.dataframe(style_rows(preference_scores_df(current)),use_container_width=True,hide_index=True)
 
@@ -5854,11 +6064,11 @@ with tabs[pos]:
             st.info(
                 "Naudok, kai realiai dirbdamas savo poste esi skubiai perkeltas į svarbesnį SPS RO / SPS UG postą. "
                 "CURRENT LOCATION lieka tuščias; RESCUED PERSON atleidžiamas nuo kritinio posto. "
-                "Keičiamas tik ACTUAL grafikas; SYSTEM fairness ir post debt lieka užšaldyti."
+                "Keičiamas ACTUAL grafikas ir iškart perskaičiuojama ACTUAL fairness statistika; SYSTEM publikavimo baseline lieka užšaldytas auditui. Jokio post debt / future catch-up nėra."
                 if lang=="LT" else
                 "Use this when, while working your assigned post, you are urgently moved into a more important SPS RO / SPS UG post. "
                 "CURRENT LOCATION becomes vacant; the RESCUED PERSON is released from the critical post. "
-                "Only ACTUAL changes; SYSTEM fairness and post debt remain frozen."
+                "ACTUAL changes and ACTUAL fairness statistics are recalculated immediately; the publication-time SYSTEM baseline stays frozen for audit. There is no post debt or future catch-up."
             )
 
             rescue_current=refresh_result_payload(
@@ -9804,10 +10014,15 @@ with tabs[pos]:
                 published_sat=gg.get("mean_preference_score")
                 actual_sat=ag.get("mean_preference_score")
                 sat_delta=(round(float(actual_sat)-float(published_sat),1) if published_sat is not None and actual_sat is not None else None)
+                sys_live=calculate_live_fairness_snapshot(yy,mm,br.assignments,people_initials=[p["initials"] for p in DEFAULT_PEOPLE],backup_assignments=[])["global"]
+                act_live=calculate_live_fairness_snapshot(yy,mm,cr.assignments,people_initials=[p["initials"] for p in DEFAULT_PEOPLE],backup_assignments=db.list_backups(yy,mm))["global"]
                 row.update({
                     ("Privalomų taisyklių klaidos" if lang=="LT" else "HARD"):gg.get("hard_errors"),
-                    ("Mėnesio teisingumas" if lang=="LT" else "Monthly fairness"):gg.get("monthly_fairness_score",gg.get("fairness_score")),
-                    ("Kaupiamasis teisingumas" if lang=="LT" else "Cumulative fairness"):gg.get("cumulative_fairness_score",gg.get("fairness_score")),
+                    ("SYSTEM mėnesio fairness" if lang=="LT" else "SYSTEM monthly fairness"):sys_live.get("monthly_fairness_score"),
+                    ("ACTUAL mėnesio fairness" if lang=="LT" else "ACTUAL monthly fairness"):act_live.get("monthly_fairness_score"),
+                    ("ACTUAL−SYSTEM fairness, p.p." if lang=="LT" else "ACTUAL−SYSTEM fairness, pp"):round(float(act_live.get("monthly_fairness_score",0))-float(sys_live.get("monthly_fairness_score",0)),1),
+                    ("SYSTEM postų imbalance" if lang=="LT" else "SYSTEM post imbalance"):sys_live.get("rotation_monthly_imbalance"),
+                    ("ACTUAL postų imbalance" if lang=="LT" else "ACTUAL post imbalance"):act_live.get("rotation_monthly_imbalance"),
                     ("SYSTEM pageidavimų išpildymas %" if lang=="LT" else "SYSTEM request satisfaction %"):published_sat,
                     ("ACTUAL pageidavimų išpildymas %" if lang=="LT" else "ACTUAL request satisfaction %"):actual_sat,
                     ("Pokytis po apsikeitimų, proc. p." if lang=="LT" else "Change after swaps, pp"):sat_delta,
@@ -9968,7 +10183,7 @@ if senior_mode:
             st.markdown("### 5 minučių audito protokolas")
             audit_rows=[
                 {"Žingsnis":"1","Kur žiūrėti":"HARD / diagnostics","Ką patikrinti":"0 TRUE ABSOLUTE HARD klaidų; jei RESIDENT HARD prarastas — turi būti aiškiai nurodyta kas, kada ir kodėl.","Jei blogai":"Nepublikuoti."},
-                {"Žingsnis":"2","Kur žiūrėti":"Post matrix","Ką patikrinti":"SPS RO, SPS UG ir savaitgalių spread 0–1; kiti postai pagal guardrail / post debt.","Jei blogai":"Nepublikuoti arba aiškiai patikrinti, ar nukrypimas matematiškai neišvengiamas."},
+                {"Žingsnis":"2","Kur žiūrėti":"Post matrix","Ką patikrinti":"SPS RO, SPS UG ir savaitgalių spread 0–1; kiti postai pagal einamojo mėnesio struktūrinį water-fill guardrail.","Jei blogai":"Nepublikuoti arba aiškiai patikrinti, ar nukrypimas matematiškai neišvengiamas."},
                 {"Žingsnis":"3","Kur žiūrėti":"Resident stats","Ką patikrinti":"Nėra vieno žmogaus su neproporcingu savaitiniu krūviu; generatoriaus max rolling-7 ir doubles/recovery rodikliai logiški.","Jei blogai":"Regeneruoti / taisyti prieš publikavimą."},
                 {"Žingsnis":"4","Kur žiūrėti":"Išplėstinis / Patikra","Ką patikrinti":"Pasirinkti 3–5 rezidentus, ypač mažiausio ir didžiausio pageidavimų išpildymo, ir ranka patikrinti 1–2 konkrečius įrankio teiginius kiekvienam.","Jei blogai":"Jei teiginys nesutampa su SYSTEM grafiku, laikyti tai metrikos / programos klaida ir nepublikuoti, kol ištaisyta."},
                 {"Žingsnis":"5","Kur žiūrėti":"Grafikas + Proof","Ką patikrinti":"Coverage, nepaaiškintos skylės, akivaizdūs overlap'ai ir ar galutinis grafikas atitinka tai, ką rodo suvestinės.","Jei blogai":"Nepublikuoti."},
@@ -10032,7 +10247,7 @@ if senior_mode:
             st.markdown("### Kas po publikavimo yra normalu")
             st.markdown(
                 "- **Swapai** keičia ACTUAL grafiką; SYSTEM fairness baseline lieka užšaldytas.\n"
-                "- **Liga / neatvykimas** gali perkelti jau dirbantį žmogų iš optional posto į SPS; tai fairness-neutral operacinis repair.\n"
+                "- **Liga / neatvykimas** gali perkelti jau dirbantį žmogų iš optional posto į SPS; SYSTEM baseline dėl to nesikeičia, tačiau ACTUAL postų/fairness statistika perskaičiuojama pagal realų darbą.\n"
                 "- **SOFT neįvykdymas** savaime nėra klaida, jei aukštesnio rango taisyklės ir horizontalus water-filling paaiškina rezultatą.\n"
                 "- **Ordinary posto spread iki guardrail** gali būti sąmoningas kompromisas su POST DEBT kompensacija kitais mėnesiais."
             )
@@ -10058,7 +10273,7 @@ if senior_mode:
             st.markdown("### Five-minute audit protocol")
             audit_rows=[
                 {"Step":"1","Where":"HARD / diagnostics","Verify":"Zero TRUE ABSOLUTE HARD errors; every Resident-HARD loss is explicitly identified and explained.","If failed":"Do not publish."},
-                {"Step":"2","Where":"Post matrix","Verify":"SPS RO, SPS UG and weekend spread 0–1; other posts remain within guardrails / post debt.","If failed":"Do not publish unless the deviation is explicitly proven unavoidable."},
+                {"Step":"2","Where":"Post matrix","Verify":"SPS RO, SPS UG and weekend spread 0–1; other posts remain within the current-month structural water-fill guardrails.","If failed":"Do not publish unless the deviation is explicitly proven unavoidable."},
                 {"Step":"3","Where":"Resident stats","Verify":"No disproportionate weekly load; rolling-7 and double/recovery metrics are plausible.","If failed":"Regenerate / correct before publication."},
                 {"Step":"4","Where":"Advanced / Proof","Verify":"Spot-check 3–5 residents, including the lowest and highest satisfaction, against the actual grid.","If failed":"Treat the tool statement as a metric defect until corrected."},
                 {"Step":"5","Where":"Schedule + Proof","Verify":"Coverage, gaps, overlaps and that summary claims match the schedule.","If failed":"Do not publish."},
@@ -10141,7 +10356,7 @@ with tabs[pos]:
             {"Rangas":"8. SOFT-1","Kas įeina":"Noriu laisvos; struktūruotas recovery / vengti dublių","Kaip sprendžiama":"Horizontalus water-filling: bendras sluoksnis visiems prieš papildomus vieno žmogaus prašymus"},
             {"Rangas":"9. SOFT-2","Kas įeina":"Pageidauju dirbti konkrečią datą / AM / PM","Kaip sprendžiama":"Horizontalus water-filling"},
             {"Rangas":"10. SOFT-3","Kas įeina":"Išsklaidymas / koncentracija","Kaip sprendžiama":"Tik po aukštesnių rangų"},
-            {"Rangas":"11. POST OPTIMAL + DEBT","Kas įeina":"Likęs ordinary-post spread ir ankstesnių mėnesių post debt","Kaip sprendžiama":"SOFT rezultato neblogina; kuo labiau grąžina spread į 0–1 ir taiso exposure skolą"},
+            {"Rangas":"11. CURRENT-MONTH POST OPTIMAL","Kas įeina":"Likęs einamojo mėnesio ordinary-post spread","Kaip sprendžiama":"SOFT rezultato neblogina; kuo labiau grąžina šio mėnesio spread į 0–1. Jokio future catch-up nėra."},
         ]),use_container_width=True,hide_index=True)
 
         st.markdown("### Švenčių dienų paskirstymo protokolas")
@@ -10150,18 +10365,18 @@ with tabs[pos]:
             {"Žingsnis":"2. Noriu dirbti","Veikimas":"Jei keli rezidentai nustatymuose pažymėjo, kad linkę dirbti per šventes, šventinės pamainos pirmiausia skiriamos jiems, bet water-fill'inamos: 1 kiekvienam prieš 2 tam pačiam."},
             {"Žingsnis":"3. Neutralu","Veikimas":"Kai norinčių neužtenka arba nėra, naudojami neutralūs. Tarp lygiaverčių kandidatų prioritetą gauna turintis mažesnę ankstesnę SYSTEM švenčių naštą ir mažesnį einamojo mėnesio krūvį."},
             {"Žingsnis":"4. Noriu ilsėtis","Veikimas":"Rezidentai, pasirinkę poilsį per šventes, naudojami tik kai aukštesnių grupių nepakanka dėl coverage / HARD. Ir jų neišvengiama našta water-fill'inama kuo lygiau."},
-            {"Žingsnis":"5. Istorija","Veikimas":"Švenčių burden kaupiamas tik iš paskelbto SYSTEM grafiko. Swapai ir fairness-neutral repair jo neperrašo; kitą mėnesį / kitą šventę prioritetas koreguojamas pagal sukauptą naštą."},
+            {"Žingsnis":"5. Istorija","Veikimas":"SYSTEM ir ACTUAL švenčių darbo istorija saugoma auditui. Kito mėnesio generatorius jos nenaudoja kompensaciniam catch-up; kiekvienas mėnuo pradeda nuo naujo water-fill baseline."},
         ]),use_container_width=True,hide_index=True)
         st.caption("Švenčių pasirinkimas yra normalizuotas SOFT signalas, o ne teisė visada gauti arba visada išvengti šventės. Jis veikia tik aukštesnių ABSOLUTE / critical SPS / RESIDENT HARD / recovery užraktų viduje. Taip išlaikomas ir norų tenkinimas, ir grupės fairness.")
 
         st.markdown("### Neplanuotas neatvykimas: kritinių SPS postų gelbėjimo hierarchija")
         st.dataframe(pd.DataFrame([
             {"Situacija":"Suserga / neatvyksta žmogus iš SPS RO arba SPS UG","Veiksmas":"Kritinis postas PALIEKAMAS padengtas. Pirmiausia ieškomas tos pačios dienos ir persidengiančio bloko rezidentas, jau dirbantis žemesnės hierarchijos NEPRIVALOMAME poste.","Kas nutinka donoriniam postui":"Rezidentas perkeliamas į SPS; optional donorinis postas gali likti tuščias."},
-            {"Situacija":"Yra keli tinkami donorai","Veiksmas":"Pirmiausia 0 naujų RESIDENT HARD praradimų. Postų spread / post debt donorų pasirinkimui NENAUDOJAMI: tas žmogus jau buvo suplanuotas dirbti tą patį laiką, todėl posto pakeitimas yra fairness-neutral.","Kas nutinka donoriniam postui":"Aukštesnio prioriteto mandatory coverage laimi prieš optional coverage."},
+            {"Situacija":"Yra keli tinkami donorai","Veiksmas":"Pirmiausia 0 naujų RESIDENT HARD praradimų. Donoro parinkimas neturi bandyti atkurti water-fill; po operacinio pakeitimo ACTUAL spread tiesiog perskaičiuojamas ir parodomas.","Kas nutinka donoriniam postui":"Aukštesnio prioriteto mandatory coverage laimi prieš optional coverage."},
             {"Situacija":"Nėra saugaus donorinio rezidento iš optional posto","Veiksmas":"Tik tada rodomas tame bloke laisvo rezidento fallback, jei jis ABSOLUTE-safe ir nekuria overlap / mandatory coverage problemos.","Kas nutinka donoriniam postui":"Nėra priverstinio critical posto aukojimo."},
             {"Situacija":"Neatvykstama iš paprasto optional posto","Veiksmas":"Šis postas nėra aukščiau SPS RO / SPS UG; kritinio SPS rezidento iš jo traukti negalima.","Kas nutinka donoriniam postui":"Post-publication ACTUAL grafike optional gap gali būti toleruojamas; SYSTEM fairness lieka frozen."},
         ]),use_container_width=True,hide_index=True)
-        st.caption("Principas: liga / force majeure pirmiausia perstato jau suplanuotą tos pačios pamainos pajėgumą į privalomą SPS, o ne automatiškai užkrauna papildomą pamainą laisvam žmogui. V2.5.57: toks repair nekeičia ne tik fairness_history, bet ir SYSTEM postų spread, post debt, savaitgalių/dublių burden ar ateities catch-up. ACTUAL operacinė ekspozicija rodoma atskirai tik informacijai.")
+        st.caption("Principas: liga / force majeure pirmiausia perstato jau suplanuotą tos pačios pamainos pajėgumą į privalomą SPS. SYSTEM publikavimo baseline nekinta, bet ACTUAL postų ekspozicija ir fairness perskaičiuojami pagal realią situaciją. Istorija auditinė — jokio ateities catch-up.")
 
         st.markdown("### Savaitinio krūvio ir savanoriško swapo protokolas")
         st.dataframe(pd.DataFrame([
@@ -10238,7 +10453,7 @@ with tabs[pos]:
         st.markdown("### Unplanned absence: critical SPS rescue hierarchy")
         st.dataframe(pd.DataFrame([
             {"Situation":"Resident absent from SPS RO or SPS UG","Action":"Keep the critical post covered. First pull a resident already working the same day / overlapping block in a lower-priority NON-MANDATORY post.","Donor post":"Move the resident to SPS; the optional source post may remain empty."},
-            {"Situation":"Several safe donors exist","Action":"Prefer zero new Resident-HARD losses. Do NOT use workplace spread, post debt, or prior pull-down count as fairness ranking: the resident was already scheduled to work that block, so the station change is fairness-neutral.","Donor post":"Mandatory critical coverage outranks optional coverage."},
+            {"Situation":"Several safe donors exist","Action":"Prefer zero new Resident-HARD losses. Do not force a donor choice to restore water-fill; after the operational move, ACTUAL exposure/fairness is simply recalculated and reported.","Donor post":"Mandatory critical coverage outranks optional coverage."},
             {"Situation":"No safe optional-post donor exists","Action":"Only then use a resident free in that block as fallback if ABSOLUTE-safe and overlap/coverage-valid.","Donor post":"Never sacrifice another critical SPS post."},
         ]),use_container_width=True,hide_index=True)
 
@@ -10246,12 +10461,12 @@ with tabs[pos]:
         st.dataframe(pd.DataFrame([
             {"Rank":"1. TRUE ABSOLUTE HARD","Includes":"Safety/rest, approved absence, physical impossibility, coverage; generation <=48h/rolling7 and >=1 free day/7d","Method":"100% during generation. Post-publication voluntary swaps use consequence + ACK warnings, but ABSOLUTE/operational and labour-time blockers remain hard"},
             {"Rank":"2. CRITICAL STRUCTURAL","Includes":"SPS RO + SPS UG + weekends","Method":"Co-equal layered water-fill; raw spread 0–1; reduce temporal clustering"},
-            {"Rank":"3. RESIDENT HARD","Includes":"Unavailable date / AM / PM / recurring","Method":"Zero losses if possible; otherwise minimum + resident water-fill + historical burden"},
+            {"Rank":"3. RESIDENT HARD","Includes":"Unavailable date / AM / PM / recurring","Method":"Zero losses if possible; otherwise current-month minimum + resident water-fill; no historical catch-up"},
             {"Rank":"4. WEEKLY LOAD + RECOVERY","Includes":"Rolling-7 hours, calendar-week load, double-shift sequences","Method":"Aim ~40h/7d; equalize weekly load; after 2 consecutive doubles next day PM-only or off, preferring off"},
             {"Rank":"5. OTHER STRUCTURAL","Includes":"Total doubles and other consecutive/fatigue","Method":"Balance without worsening higher locks; Fridays are already structurally locked at raw 0–1"},
             {"Rank":"6. OTHER POST CORE","Includes":"CENTRO RO, Centro UG, ADC 144/145, Paediatric UG, Mammography; Onko has its own special HARD structure","Method":"Ordinary non-Onko posts: structural floor/ceil water-fill with target raw spread <=1 before SOFT; <=2/<=3 only after the tighter corridor is proven infeasible. Onko: exact-workload even pairs, monthly spread <=2, never consecutive calendar days."},
             {"Rank":"7–9. SOFT","Includes":"SOFT-1 time/recovery; SOFT-2 exact desired work; SOFT-3 month shape","Method":"Vertical rank + horizontal resident water-fill"},
-            {"Rank":"10. POST OPTIMAL + DEBT","Includes":"Residual ordinary-post spread + cumulative debt","Method":"Improve toward 0–1 without worsening locked SOFT; longitudinal catch-up"},
+            {"Rank":"10. CURRENT-MONTH POST OPTIMAL","Includes":"Residual ordinary-post spread in this month","Method":"Improve toward 0–1 without worsening locked SOFT; no longitudinal catch-up"},
         ]),use_container_width=True,hide_index=True)
     # RULES = ENGINE: this summary is rendered from the active engine profile,
     # never from a separate hard-coded policy copy.
@@ -10270,9 +10485,9 @@ with tabs[pos]:
             f"GENERATION HARD max. valandų per 7 d.: {min(float(rule_value('max_hours_rolling7')), float(FATIGUE_ROLLING7_HARD_CEILING_HOURS)):g}; voluntary swap >48 = ACK, absoliutus guardrail ≤{float(SWAP_ABSOLUTE_MAX_HOURS_ROLLING7):g}; "
             f"planavimo tikslas ~{float(WEEKLY_LOAD_SOFT_TARGET_HOURS):g} val./7 d. "
             f"Mėnesio krūvio targetas: TIKSLUS HARD (leidžiamas nuokrypis 0.0). "
-            f"Onko: 1.5 pamainos, tik lyginės poros (0/2/4...), mėnesio skirtumas ≤2 + istorinis catch-up, niekada dvi kalendorines dienas iš eilės tam pačiam rezidentui; "
+            f"Onko: 1.5 pamainos, tik lyginės poros (0/2/4...), mėnesio skirtumas ≤2; jokio istorinio catch-up, niekada dvi kalendorines dienas iš eilės tam pačiam rezidentui; "
             f"savaitgalio unikalumo taisyklė: {'TAIP' if rule_value('weekend_unique_required') else 'NE'}. "
-            f"Struktūrinis guardrail: SPS RO / SPS UG / savaitgaliai / PENKTADIENIAI raw 0–1; Onko ≤2 poromis; VISI kiti postai pirmiausia raw 0–1. 0–2/0–3 leidžiama tik įrodžius, kad siauresnis variantas neįmanomas + post debt. "
+            f"Struktūrinis guardrail: SPS RO / SPS UG / savaitgaliai / PENKTADIENIAI raw 0–1; Onko ≤2 poromis; VISI kiti postai pirmiausia raw 0–1. 0–2/0–3 leidžiama tik įrodžius, kad siauresnis variantas neįmanomas. Jokio future post debt nėra. "
             f"Kiti pagrindiniai burden spread baseline +{int(rule_value('general_guardrail_tolerance'))}. "
             f"Pageidavimų pateikimo terminas: ankstesnio mėnesio {int(rule_value('deadline_day'))} d."
         )
@@ -10286,9 +10501,9 @@ with tabs[pos]:
             f"GENERATION HARD max hours/7d: {min(float(rule_value('max_hours_rolling7')), float(FATIGUE_ROLLING7_HARD_CEILING_HOURS)):g}; voluntary swap >48 = ACK, absolute guardrail ≤{float(SWAP_ABSOLUTE_MAX_HOURS_ROLLING7):g}; "
             f"planning target ~{float(WEEKLY_LOAD_SOFT_TARGET_HOURS):g}h/7d. "
             f"Monthly workload target: EXACT HARD (allowed deviation 0.0). "
-            f"Onko: 1.5 shift units, even pairs only (0/2/4...), monthly spread ≤2 + historical catch-up, never on consecutive calendar days for the same resident; "
+            f"Onko: 1.5 shift units, even pairs only (0/2/4...), monthly spread ≤2 with no historical catch-up, never on consecutive calendar days for the same resident; "
             f"weekend uniqueness: {'YES' if rule_value('weekend_unique_required') else 'NO'}. "
-            f"Structural guardrail: SPS RO / SPS UG / weekends / FRIDAYS raw 0–1; Onko ≤2 in even pairs; ALL other posts first target raw 0–1. 0–2/0–3 is allowed only after the tighter corridor is proven infeasible + post debt. "
+            f"Structural guardrail: SPS RO / SPS UG / weekends / FRIDAYS raw 0–1; Onko ≤2 in even pairs; ALL other posts first target raw 0–1. 0–2/0–3 is allowed only after the tighter corridor is proven infeasible. No future post debt exists. "
             f"Other main burden spreads baseline +{int(rule_value('general_guardrail_tolerance'))}. "
             f"Preference deadline: day {int(rule_value('deadline_day'))} of the preceding month."
         )
@@ -10298,15 +10513,15 @@ with tabs[pos]:
             {"Etapas":"0. Request pre-check","Sistema":"Užšaldo ORIGINAL request ledger ir pašalina nepriimamus/gaming SOFT signalus.","Vertina":"RESIDENT HARD, tikslias SOFT datas, recovery ir month-shape; generic weekday/weekend pattern ir postų vengimas neįeina.","Principas":"Pageidavimų skaičius nesuteikia daugiau balsų."},
             {"Etapas":"1. TRUE ABSOLUTE HARD","Sistema":"Randa tik saugų/fiziškai įmanomą grafiką; generuojant taiko ≤48h/7d ir Onko recovery guard.","Vertina":"Poilsį, valandas, patvirtintą neatvykimą, coverage/overlap, tikslų mėnesio krūvį ir lygines Onko poras.","Principas":"Tikslus mėnesio targetas ir Onko 0/2/4/... yra HARD SYSTEM ir ACTUAL. Consecutive Onko gali būti tik savanoriško swapo ACK pasekmė; parity niekada neapeinama."},
             {"Etapas":"2. Kritinių darbų lygybė","Sistema":"Kartu lygina SPS RO, SPS UG ir savaitgalių skaičių tarp rezidentų.","Vertina":"Kiek daugiausiai ir mažiausiai kartų šį darbą gauna skirtingi rezidentai.","Principas":"Įprastai skirtumas ≤1. Konkrečios datos lieka lanksčios, todėl pageidavimai tenkinami, jei bendras paskirstymas išlieka toks pat lygus."},
-            {"Etapas":"3. RESIDENT HARD","Sistema":"Minimizuoja bendrą `Negaliu dirbti` praradimą, tada water-fill'ina naštą ir istoriją.","Vertina":"Whole-day, AM/PM ir recurring RESIDENT HARD.","Principas":"0 jei įmanoma; kitaip mažiausias būtinas ir kuo lygiau."},
+            {"Etapas":"3. RESIDENT HARD","Sistema":"Minimizuoja bendrą `Negaliu dirbti` praradimą, tada water-fill'ina tik einamojo mėnesio neišvengiamą naštą.","Vertina":"Whole-day, AM/PM ir recurring RESIDENT HARD.","Principas":"0 jei įmanoma; kitaip mažiausias būtinas ir kuo lygiau šiame mėnesyje; jokio istorinio catch-up."},
             {"Etapas":"4. Critical spacing","Sistema":"Nejudindama kritinių count spreadų, išdėsto juos laike.","Vertina":"Consecutive weekends ir SPS dienų clustering, įskaitant ankstesnio mėnesio weekend tail.","Principas":"Vengti 2–3 savaitgalių iš eilės ir bereikalingo streso suspaudimo."},
             {"Etapas":"5. WEEKLY LOAD + RECOVERY","Sistema":"Water-fill'ina savaitinį valandų krūvį ir užrakina recovery frontier.","Vertina":"Rolling-7 valandas, kalendorinių savaičių spreadą, consecutive 12h doubles.","Principas":"~40 val./7 d. tikslas; ≤48 HARD; po 2 doubles kita diena tik PM arba laisva, laisva preferinama."},
-            {"Etapas":"6. ŠVENČIŲ WATER-FILL","Sistema":"Šventines pamainas pirmiausia skiria norintiems dirbti, po to neutraliems; poilsį pasirinkusius naudoja tik kai reikia.","Vertina":"Current + cumulative SYSTEM holiday burden ir mėnesio krūvį.","Principas":"Preference group first, tada horizontalus 1 visiems → 2 visiems; šis sluoksnis negali bloginti critical SPS/weekend, RESIDENT HARD ar recovery."},
+            {"Etapas":"6. ŠVENČIŲ WATER-FILL","Sistema":"Šventines pamainas skirsto einamajame mėnesyje, atsižvelgdamas į aktyvų švenčių pageidavimą ir aukštesnius užraktus.","Vertina":"Tik einamojo mėnesio holiday burden ir mėnesio krūvį.","Principas":"Kur įmanoma 1 visiems prieš 2; ankstesni mėnesiai catch-up nesukuria."},
             {"Etapas":"7. Kitas burden fairness","Sistema":"Balansuoja bendrą dublių skaičių ir kitą consecutive/fatigue.","Vertina":"Likusią struktūrinę naštą.","Principas":"Penktadieniai jau HARD water-fillinti raw 0–1 ir čia nebeatlaisvinami."},
             {"Etapas":"8. Kitų darbo vietų lygybė","Sistema":"Patikrina likusių darbo vietų paskirstymą tarp rezidentų.","Vertina":"Kiek skiriasi daugiausiai ir mažiausiai konkrečią darbo vietą gavę rezidentai.","Principas":"Siekiama 0–1; įprastai leidžiama iki 2; 3 tik jei 2 tikrai neįmanoma dėl svarbesnių taisyklių."},
             {"Etapas":"9. SOFT-1 → SOFT-2 → SOFT-3","Sistema":"Kiekvieną rangą water-fill'ina horizontaliai ir užrakina.","Vertina":"Asmeninį laiką/recovery → tikslias darbo datas → month shape.","Principas":"2,2,3,4 pirmiausia 2,2,2,2; tik tada extras."},
-            {"Etapas":"10. POST OPTIMAL + DEBT","Sistema":"SOFT neblogindama grąžina ordinary post spread kuo arčiau 0–1 ir taiso istorines skolas.","Vertina":"Current + cumulative resident × post exposure.","Principas":"-1 exposure dabar = catch-up prioritetas ateityje; +1 = vėlesnis papildomas vienetas."},
-            {"Etapas":"11. ACTUAL + swaps/repairs","Sistema":"Po swap/repair perskaičiuoja ACTUAL satisfaction prieš ORIGINAL requests. Kritinio SPS neatvykimo atveju pirmiausia perkelia žmogų iš tos pačios pamainos optional posto.","Vertina":"Mandatory SPS coverage, donorinio posto statusą, konkrečius misses ir saugą.","Principas":"SYSTEM fairness baseline lieka užšaldytas. Emergency pull-down gali palikti optional gap; ACTUAL swapas turi consequence + ACK sluoksnį."},
+            {"Etapas":"10. CURRENT-MONTH POST OPTIMAL","Sistema":"SOFT neblogindama grąžina šio mėnesio ordinary post spread kuo arčiau 0–1.","Vertina":"Tik einamojo mėnesio resident × post exposure.","Principas":"Istorija stebima, bet nekuria skolos ir nekeičia kito mėnesio paskyrimų."},
+            {"Etapas":"11. ACTUAL + swaps/repairs","Sistema":"Po swap/repair perskaičiuoja ACTUAL grafiką, satisfaction ir live fairness. Kritinio SPS neatvykimo atveju pirmiausia perkelia žmogų iš tos pačios pamainos optional posto.","Vertina":"Mandatory SPS coverage, realią postų ekspoziciją, ACTUAL spread, konkrečius misses ir saugą.","Principas":"SYSTEM baseline lieka užšaldytas auditui; ACTUAL fairness seka realybę. Post-publication water-fill gali būti pralaužtas, bet jokio future catch-up nesukuria."},
         ]
         if advanced_mode:
             st.markdown("### Generatorius: workflow")
@@ -10328,15 +10543,15 @@ with tabs[pos]:
             {"Stage":"0. Request pre-check","System":"Freezes ORIGINAL request ledger and removes non-whitelisted/gaming SOFT signals.","Evaluates":"Resident-HARD, exact SOFT dates, recovery/month-shape; generic weekday/weekend patterns and station avoidance are excluded.","Principle":"More raw requests do not buy more priority."},
             {"Stage":"1. TRUE ABSOLUTE HARD","System":"Finds only safe/physically feasible schedules; generation applies <=48h/7d and the Onko recovery guard.","Evaluates":"Rest, hours, approved absence, coverage/overlap, exact monthly workload and even Onko pairing.","Principle":"Exact monthly workload and Onko 0/2/4/... are HARD in SYSTEM and ACTUAL. Consecutive Onko may be accepted only as a voluntary-swap ACK consequence; parity can never be overridden."},
             {"Stage":"2. CRITICAL WATER-FILL","System":"Co-optimizes SPS RO, SPS UG and all weekend exposure.","Evaluates":"Raw max-min in the three critical categories.","Principle":"0–1; first unit for everyone before second; ordinary SOFT cannot widen to 2."},
-            {"Stage":"3. RESIDENT HARD","System":"Minimizes total Unavailable losses, then resident water-fill and historical burden.","Evaluates":"Whole-day, AM/PM and recurring Resident-HARD.","Principle":"Zero if possible; otherwise unavoidable minimum distributed fairly."},
+            {"Stage":"3. RESIDENT HARD","System":"Minimizes total Unavailable losses, then distributes any unavoidable current-month losses by resident water-fill.","Evaluates":"Whole-day, AM/PM and recurring Resident-HARD.","Principle":"Zero if possible; otherwise the unavoidable minimum is distributed fairly within this month; no historical catch-up."},
             {"Stage":"4. Critical spacing","System":"Places equivalent critical counts more evenly in time.","Evaluates":"Consecutive weekends and SPS clustering, including prior-month weekend tail.","Principle":"Avoid concentrated fatigue."},
             {"Stage":"5. WEEKLY LOAD + RECOVERY","System":"Water-fills weekly hours and locks the recovery frontier.","Evaluates":"Rolling-7 hours, calendar-week spread, consecutive 12h doubles.","Principle":"Aim ~40h/7d; <=48h HARD; after 2 doubles next day PM-only or off, preferring off."},
-            {"Stage":"6. HOLIDAY WATER-FILL","System":"Allocates public-holiday duty to holiday-work volunteers first, neutral residents next, and holiday-rest residents only when needed.","Evaluates":"Current + cumulative SYSTEM holiday burden and monthly load.","Principle":"Preference cohort first, then one unit for everyone before seconds; higher safety/critical/RH/recovery locks cannot be worsened."},
+            {"Stage":"6. HOLIDAY WATER-FILL","System":"Allocates public-holiday duty within the current month while respecting active holiday preferences and higher locks.","Evaluates":"Current-month holiday burden and monthly load only.","Principle":"One unit for everyone before seconds where feasible; prior months do not create catch-up."},
             {"Stage":"7. Other burden","System":"Balances total doubles and other consecutive/fatigue burden.","Evaluates":"Remaining structural burden.","Principle":"Fridays are already HARD water-filled at raw 0–1 and are not relaxed here."},
             {"Stage":"8. OTHER POST CORE","System":"Tests the all-post structural floor/ceil water-fill corridor.","Evaluates":"Seven noncritical post spreads.","Principle":"Target raw 0–1. <=2 and then <=3 are tried only after the tighter corridor is proven infeasible inside higher locks."},
             {"Stage":"9. SOFT-1 → SOFT-2 → SOFT-3","System":"Water-fills residents horizontally and locks each vertical rank.","Evaluates":"Time/recovery → exact desired work → month shape.","Principle":"Common entitlement layers before extras."},
-            {"Stage":"10. POST OPTIMAL + DEBT","System":"Without worsening SOFT, returns ordinary posts toward 0–1 and repairs cumulative debt.","Evaluates":"Current + cumulative resident × post exposure.","Principle":"Underexposed residents receive future catch-up priority."},
-            {"Stage":"11. ACTUAL + swaps/repairs","System":"Recomputes ACTUAL satisfaction. For critical SPS absence, first transfers a resident from a same-block optional post.","Evaluates":"Mandatory SPS coverage, donor-post status, misses and safety.","Principle":"SYSTEM fairness / spread / post debt stay frozen. Repair exposure is excluded from fairness and shown only as ACTUAL operational information; voluntary swaps use consequence + ACK."},
+            {"Stage":"10. CURRENT-MONTH POST OPTIMAL","System":"Without worsening SOFT, returns this month’s ordinary posts toward 0–1.","Evaluates":"Current-month resident × post exposure only.","Principle":"History is monitored but creates no debt and never steers a future month."},
+            {"Stage":"11. ACTUAL + swaps/repairs","System":"Recomputes ACTUAL schedule, satisfaction and live fairness. For critical SPS absence, first transfers a resident from a same-block optional post.","Evaluates":"Mandatory SPS coverage, real post exposure, ACTUAL spreads, misses and safety.","Principle":"SYSTEM publication baseline stays frozen for audit; ACTUAL fairness follows reality. Water-fill may be broken post-publication and no future catch-up is created."},
         ]
         if advanced_mode:
             st.markdown("### Generator workflow")
@@ -10407,7 +10622,7 @@ with tabs[pos]:
                 with st.expander("Optimizerio svoriai — keisti tik sąmoningai" if lang=="LT" else "Optimizer weights — change deliberately"):
                     w1,w2,w3=st.columns(3)
                     post_weight_v=w1.number_input("Monthly post weight",0.0,100000.0,float(active_cfg["monthly_post_spread_weight"]),50.0)
-                    catchup_weight_v=w2.number_input("Cumulative catch-up weight",0.0,100000.0,float(active_cfg["cumulative_post_catchup_weight"]),1.0)
+                    catchup_weight_v=w2.number_input("Legacy catch-up weight — DISABLED in V2.5.96",0.0,100000.0,0.0,1.0,disabled=True,help="Kept only for Rule Profile schema compatibility. Historical fairness is audit-only and never steers future generation.")
                     active_reward_v=w3.number_input("Active SOFT reward",0.0,100000.0,float(active_cfg["active_date_reward"]),10.0)
 
                 candidate_cfg={

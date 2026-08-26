@@ -1,3 +1,16 @@
+# V2.5.96 — CURRENT FAIRNESS CONSTITUTION: MONTHLY BASELINE + LIVE ACTUAL, NO CATCH-UP
+
+> **This section supersedes every older manual / README statement about fairness-neutral swaps, post debt, cumulative catch-up, or compensating prior-month imbalance.**
+
+- **Every new month starts from a clean SYSTEM water-fill baseline.** Prior-month weekends, Fridays, doubles, workdays, workplace exposure, holiday burden and Resident-HARD loss history are **not solver inputs** and create no compensatory debt.
+- **If nobody changes anything after generation, the schedule remains the neutral water-fill result.** Individual SOFT wishes are optimized inside the baseline fairness corridor and cannot buy a wider SYSTEM water-fill spread.
+- **After publication, allowed manual overrides, bilateral swaps, emergency repairs and other ACTUAL changes may break water-fill.** They remain subject to the non-overridable ABSOLUTE / physical-feasibility / work-time blockers and other true hard rules.
+- **The SYSTEM baseline remains immutable for audit/research. ACTUAL fairness is the live reality ledger.** After each change, ACTUAL workplace exposure and monthly spreads are recalculated from the schedule people really hold now.
+- **Completed backup cover** transfers the covered slot's ACTUAL exposure to the resident who actually covered it. Planned or merely activated standby without `completed_at` does not change ACTUAL fairness.
+- **History is monitoring/audit only.** The UI may show SYSTEM versus ACTUAL differences and monthly trends, but history **never feeds the next month's solver as catch-up**.
+- **Post debt / future fairness catch-up is disabled.** The Rule Profile field is retained only for schema compatibility and is ignored by the V2.5.96 engine.
+- **Only cross-month safety/spacing state remains active**, such as the real prior consecutive-weekend tail and last-day Onko state. That is safety context, not fairness compensation.
+
 # Schedule rules
 
 This document defines the resident monthly scheduling, publication, backup-cover, notification, and change workflow. The system aims to apply hard rules consistently, distribute burden transparently, and satisfy individual preferences whenever possible.
