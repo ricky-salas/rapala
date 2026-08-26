@@ -1,0 +1,25 @@
+V2.5.93 FINAL TEST REPORT
+==========================
+PASS app.py compile
+PASS db.py compile
+PASS scheduler_engine.py compile
+PASS app expects scheduler_engine API 2.5.91
+PASS packaged scheduler_engine API is 2.5.91
+PASS R.S./R.Š. operator email administration UI
+PASS automatic notification-email autofill RPC
+PASS manual notification-email update RPC + audit table
+PASS notification email change does not alter login identity/auth.uid
+PASS Streamlit root SCHEDULER_SMTP_* secrets supported
+PASS nested [smtp] Streamlit Secrets supported
+PASS STARTTLS and SMTP_SSL supported
+PASS SMTP test-email control
+PASS SMTP password never rendered in operator diagnostics
+PASS manual override BEFORE/AFTER snapshots persisted
+PASS new manual overrides start unreviewed
+PASS persistent before/after review checkpoint UI
+PASS PRELIMINARY blocked by unreviewed manual override
+PASS FINAL blocked by unreviewed manual override
+PASS backend open_swap_window also blocks unreviewed override
+PASS backend finalize_schedule also blocks unreviewed override
+PASS professional preliminary/final email tone retained
+PASS V2.5.89 account identity lock unchanged

@@ -43,7 +43,7 @@ from scheduler_engine import (
 import db
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.92 OPERATOR CONTROL + PRELIMINARY SWAPS + FINAL"
+APP_VERSION = "2.5.94 DEADLINE ZERO-PREFERENCE AUTO-SUBMIT"
 EXPECTED_ENGINE_API_VERSION = "2.5.91"
 DISPLAY_VERSION = "3.0"
 BASE = Path(__file__).parent
@@ -655,10 +655,48 @@ def deadline_message(y,m):
     else: msg=tr("deadline_passed").format(n=abs(diff))
     return dl,msg,diff
 
+def ensure_zero_preference_submissions_if_due(y,m):
+    """Operator-side automatic completion of missing preference forms after cutoff.
+
+    Missing residents become submitted with exactly zero monthly requests. This never
+    creates HARD/SOFT wishes and is transparent via submission_source=deadline_zero.
+    """
+    cutoff=preference_cutoff_for(y,m)
+    now_lt=datetime.now(ZoneInfo("Europe/Vilnius"))
+    if now_lt < cutoff:
+        return {"ok":True,"due":False,"count":0,"initials":[]}
+    try:
+        return db.auto_submit_zero_preferences_v2594(y,m,cutoff.isoformat())
+    except Exception as e:
+        # Do not break the whole app if a transient DB call fails; senior dashboard
+        # will still show any genuinely missing rows and generation stays inspectable.
+        return {"ok":False,"due":True,"count":0,"initials":[],"error":str(e)}
+
+_SMTP_SECRET_KEYS={
+    "SCHEDULER_SMTP_HOST":"host",
+    "SCHEDULER_SMTP_PORT":"port",
+    "SCHEDULER_SMTP_USER":"user",
+    "SCHEDULER_SMTP_PASSWORD":"password",
+    "SCHEDULER_SMTP_USE_TLS":"use_tls",
+    "SCHEDULER_SMTP_USE_SSL":"use_ssl",
+    "SCHEDULER_EMAIL_FROM":"from_email",
+    "SCHEDULER_SMTP_PROVIDER":"provider",
+}
+
 def config_value(name, default=""):
+    """Read deployment configuration from root Streamlit secrets, nested [smtp], or environment.
+
+    V2.5.93 accepts both the historical SCHEDULER_* secret names and a simpler
+    nested [smtp] block without ever exposing the password in the UI.
+    """
     try:
         if name in st.secrets:
             return str(st.secrets[name])
+        key=_SMTP_SECRET_KEYS.get(name)
+        if key and "smtp" in st.secrets:
+            block=st.secrets["smtp"]
+            if key in block:
+                return str(block[key])
     except Exception:
         pass
     return os.environ.get(name, default)
@@ -2578,20 +2616,57 @@ def build_xlsx(y,m,result,document_status=None,backup_rows_override=None):
             for c,v in enumerate(row): bk.write(rr,c,"" if pd.isna(v) else v,cell)
     wb.close(); out.seek(0); return out.getvalue()
 
-def smtp_ready(): return bool(config_value("SCHEDULER_SMTP_HOST","").strip() and config_value("SCHEDULER_EMAIL_FROM","").strip())
+def _truthy_cfg(value,default=False):
+    if value is None or str(value).strip()=="": return bool(default)
+    return str(value).strip().lower() in ("1","true","yes","on","y")
+
+def smtp_config():
+    provider=config_value("SCHEDULER_SMTP_PROVIDER","").strip().lower()
+    host=config_value("SCHEDULER_SMTP_HOST","").strip()
+    from_email=config_value("SCHEDULER_EMAIL_FROM","").strip()
+    user=config_value("SCHEDULER_SMTP_USER","").strip()
+    password=config_value("SCHEDULER_SMTP_PASSWORD","")
+    if not host and provider in ("gmail","google"):
+        host="smtp.gmail.com"
+    if not host and provider in ("outlook","microsoft","office365"):
+        host="smtp.office365.com"
+    if not host and (user.lower().endswith("@gmail.com") or from_email.lower().endswith("@gmail.com")):
+        host="smtp.gmail.com"
+    raw_port=config_value("SCHEDULER_SMTP_PORT","").strip()
+    use_ssl=_truthy_cfg(config_value("SCHEDULER_SMTP_USE_SSL",""),False)
+    port=int(raw_port or (465 if use_ssl else 587))
+    use_tls=_truthy_cfg(config_value("SCHEDULER_SMTP_USE_TLS",""),not use_ssl)
+    return {"provider":provider,"host":host,"port":port,"user":user,"password":password,"from_email":from_email,"use_tls":use_tls,"use_ssl":use_ssl}
+
+def smtp_diagnostics():
+    cfg=smtp_config(); missing=[]
+    if not cfg["host"]: missing.append("SMTP host")
+    if not cfg["from_email"]: missing.append("from email")
+    if cfg["user"] and not cfg["password"]: missing.append("SMTP password/app password")
+    return cfg,missing
+
+def smtp_ready():
+    _cfg,missing=smtp_diagnostics()
+    return not missing
 
 def send_email(to_addr,subject,body,ics_bytes=None,ics_name=None):
-    if not smtp_ready(): return False,("El. pašto siuntimas nesukonfigūruotas" if lang=="LT" else "Email delivery is not configured")
-    msg=EmailMessage(); msg["Subject"]=subject; msg["From"]=config_value("SCHEDULER_EMAIL_FROM"); msg["To"]=to_addr; msg.set_content(body)
+    cfg,missing=smtp_diagnostics()
+    if missing:
+        detail=("SMTP nesukonfigūruotas: " if lang=="LT" else "SMTP is not configured: ")+", ".join(missing)
+        return False,detail
+    msg=EmailMessage(); msg["Subject"]=subject; msg["From"]=cfg["from_email"]; msg["To"]=to_addr; msg.set_content(body)
     if ics_bytes: msg.add_attachment(ics_bytes,maintype="text",subtype="calendar",filename=ics_name or "grafikas.ics")
-    host=config_value("SCHEDULER_SMTP_HOST"); port=int(config_value("SCHEDULER_SMTP_PORT","587")); user=config_value("SCHEDULER_SMTP_USER",""); pwd=config_value("SCHEDULER_SMTP_PASSWORD",""); tls=config_value("SCHEDULER_SMTP_USE_TLS","1")!="0"
     try:
-        with smtplib.SMTP(host,port,timeout=20) as s:
-            if tls: s.starttls()
-            if user: s.login(user,pwd)
-            s.send_message(msg)
+        smtp_cls=smtplib.SMTP_SSL if cfg["use_ssl"] else smtplib.SMTP
+        with smtp_cls(cfg["host"],cfg["port"],timeout=20) as server:
+            if cfg["use_tls"] and not cfg["use_ssl"]:
+                server.starttls()
+            if cfg["user"]:
+                server.login(cfg["user"],cfg["password"])
+            server.send_message(msg)
         return True,""
-    except Exception as e: return False,str(e)
+    except Exception as e:
+        return False,f"{type(e).__name__}: {e}"
 
 def send_backup_activation_email(y,m,result,backup_row):
     eff=backup_row.get("actual_backup") or backup_row.get("planned_backup")
@@ -2753,6 +2828,159 @@ def _resident_email_preflight():
         if not str((settings.get(ini,{}) or {}).get("email") or "").strip():
             missing.append(ini)
     return missing
+
+
+def render_operator_email_smtp_admin(current_operator):
+    """Operator-only notification email completion + SMTP preflight/test UI."""
+    settings=db.all_account_settings()
+    missing=_resident_email_preflight()
+    cfg,smtp_missing=smtp_diagnostics()
+
+    with st.expander(
+        "El. pašto ir SMTP paruošimas" if lang=="LT" else "Email and SMTP readiness",
+        expanded=bool(missing or smtp_missing),
+    ):
+        st.caption(
+            "Čia keičiamas tik pranešimų el. paštas. Rezidento prisijungimo paskyra ir auth.uid() nėra keičiami."
+            if lang=="LT" else
+            "This changes notification email only. The resident login account and auth.uid() are not changed."
+        )
+
+        if missing:
+            st.warning(("Trūksta pranešimų el. pašto: " if lang=="LT" else "Missing notification email: ")+", ".join(missing))
+            if st.button(
+                "AUTOMATIŠKAI UŽPILDYTI IŠ PRISIJUNGIMO PASKYRŲ" if lang=="LT" else "AUTOFILL FROM LOGIN ACCOUNTS",
+                use_container_width=True,key="autofill_notification_emails_v2593"
+            ):
+                try:
+                    res=db.autofill_notification_emails_v2593()
+                    st.success((f"Automatiškai užpildyta: {int(res.get('filled',0))}." if lang=="LT" else f"Automatically filled: {int(res.get('filled',0))}."))
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+        else:
+            st.success("Visi aktyvūs rezidentai turi pranešimų el. pašto adresą." if lang=="LT" else "All active residents have a notification email address.")
+
+        people_options=[pp["initials"] for pp in DEFAULT_PEOPLE]
+        default_ini=missing[0] if missing else people_options[0]
+        c1,c2=st.columns([1,2])
+        with c1:
+            email_ini=st.selectbox("Rezidentas" if lang=="LT" else "Resident",people_options,index=people_options.index(default_ini),key="operator_email_ini_v2593")
+        with c2:
+            existing_email=str((settings.get(email_ini,{}) or {}).get("email") or "").strip()
+            email_value=st.text_input("Pranešimų el. paštas" if lang=="LT" else "Notification email",value=existing_email,key=f"operator_email_value_v2593_{email_ini}")
+        if st.button("IŠSAUGOTI EL. PAŠTĄ" if lang=="LT" else "SAVE EMAIL",use_container_width=True,key="operator_save_email_v2593"):
+            if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email_value.strip()):
+                st.error("Neteisingas el. pašto formatas." if lang=="LT" else "Invalid email format.")
+            else:
+                try:
+                    db.set_resident_notification_email_v2593(email_ini,email_value.strip())
+                    st.success("Pranešimų el. paštas išsaugotas." if lang=="LT" else "Notification email saved.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+
+        st.divider()
+        if smtp_missing:
+            st.error(("SMTP dar neparuoštas: " if lang=="LT" else "SMTP is not ready: ")+", ".join(smtp_missing))
+        else:
+            st.success("SMTP konfigūracija rasta." if lang=="LT" else "SMTP configuration found.")
+        smtp_rows=[
+            {"Parametras" if lang=="LT" else "Setting":"Host","Reikšmė" if lang=="LT" else "Value":cfg.get("host") or "—"},
+            {"Parametras" if lang=="LT" else "Setting":"Port","Reikšmė" if lang=="LT" else "Value":cfg.get("port")},
+            {"Parametras" if lang=="LT" else "Setting":"From","Reikšmė" if lang=="LT" else "Value":cfg.get("from_email") or "—"},
+            {"Parametras" if lang=="LT" else "Setting":"Login","Reikšmė" if lang=="LT" else "Value":cfg.get("user") or "be login" if lang=="LT" else cfg.get("user") or "no login"},
+            {"Parametras" if lang=="LT" else "Setting":"Security","Reikšmė" if lang=="LT" else "Value":"SSL" if cfg.get("use_ssl") else "STARTTLS" if cfg.get("use_tls") else "plain"},
+        ]
+        st.dataframe(pd.DataFrame(smtp_rows),use_container_width=True,hide_index=True)
+        st.caption(
+            "Slaptažodis niekada nerodomas. V2.5.93 priima tiek SCHEDULER_SMTP_* Streamlit Secrets, tiek [smtp] bloką."
+            if lang=="LT" else
+            "The password is never displayed. V2.5.93 accepts either SCHEDULER_SMTP_* Streamlit Secrets or a nested [smtp] block."
+        )
+        operator_email=str((db.all_account_settings().get(current_operator,{}) or {}).get("email") or "").strip()
+        test_to=st.text_input("Testinio laiško gavėjas" if lang=="LT" else "Test email recipient",value=operator_email,key="smtp_test_to_v2593")
+        if st.button("SIŲSTI SMTP TESTINĮ LAIŠKĄ" if lang=="LT" else "SEND SMTP TEST EMAIL",use_container_width=True,disabled=bool(smtp_missing or not test_to.strip()),key="smtp_test_v2593"):
+            ok,detail=send_email(
+                test_to.strip(),
+                "Shift Happens — SMTP testas" if lang=="LT" else "Shift Happens — SMTP test",
+                "SMTP testas sėkmingas. Šis laiškas patvirtina, kad realių grafiko pranešimų siuntimo kanalas veikia." if lang=="LT" else "SMTP test. This message confirms that the real schedule notification channel is working."
+            )
+            if ok: st.success("Testinis laiškas išsiųstas." if lang=="LT" else "Test email sent.")
+            else: st.error(detail)
+
+        try:
+            audit=db.list_resident_email_admin_audit_v2593(30)
+            if audit:
+                with st.expander("El. pašto pakeitimų auditas" if lang=="LT" else "Email change audit",expanded=False):
+                    rows=[]
+                    for r in audit:
+                        rows.append({
+                            "Laikas" if lang=="LT" else "Time":r.get("created_at"),
+                            "Rezidentas" if lang=="LT" else "Resident":r.get("initials"),
+                            "Senas" if lang=="LT" else "Old":r.get("old_email"),
+                            "Naujas" if lang=="LT" else "New":r.get("new_email"),
+                            "Šaltinis" if lang=="LT" else "Source":r.get("source"),
+                            "Operatorius" if lang=="LT" else "Operator":r.get("actor_initials"),
+                        })
+                    st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
+        except Exception:
+            pass
+
+
+def _manual_override_diff_rows(record,y,m):
+    slots={s.idx:s for s in make_slots(y,m)}
+    before=deserialize_result(record.get("before_json")) if record.get("before_json") else None
+    after=deserialize_result(record.get("after_json")) if record.get("after_json") else None
+    rows=[]
+    for sid in (int(record.get("slot_a",0)),int(record.get("slot_b",0))):
+        sl=slots.get(sid)
+        if not sl: continue
+        rows.append({
+            "Data / postas" if lang=="LT" else "Date / post":f"{y}-{m:02d}-{sl.day:02d} · {sl.department} · {block_label(sl.block)}",
+            "Prieš" if lang=="LT" else "Before":(before.assignments.get(sid) if before else "—"),
+            "Po" if lang=="LT" else "After":(after.assignments.get(sid) if after else "—"),
+        })
+    return rows
+
+
+def render_manual_override_review_checkpoint(y,m):
+    """Persistent checkpoint: manual changes must be reviewed before PRELIMINARY or FINAL."""
+    pending=db.list_unreviewed_manual_overrides_v2593(y,m)
+    if not pending:
+        return 0
+    _workflow_card(
+        "REIKIA PERŽIŪRĖTI RANKINIUS PAKEITIMUS" if lang=="LT" else "MANUAL CHANGES REQUIRE REVIEW",
+        (f"Neperžiūrėtų pakeitimų: {len(pending)}. Kitas etapas ir FINAL užblokuoti, kol patvirtinsite pokyčių peržiūrą." if lang=="LT" else f"Unreviewed changes: {len(pending)}. The next phase and FINAL are blocked until the changes are reviewed."),
+        "expired"
+    )
+    current_payload=db.load_schedule(y,m,"current")
+    current_result=refresh_result_payload(current_payload,y,m,use_actual_backups=True) if current_payload else None
+    hard=int(((current_result.stats or {}).get("global",{}) if current_result else {}).get("hard_errors",999))
+    if hard==0:
+        st.success("Dabartinis ACTUAL po korekcijų: HARD klaidų 0." if lang=="LT" else "Current ACTUAL after corrections: 0 HARD errors.")
+    else:
+        st.error((f"Dabartinis ACTUAL po korekcijų turi HARD klaidų: {hard}." if lang=="LT" else f"Current ACTUAL after corrections has HARD errors: {hard}."))
+    for r in pending:
+        with st.container(border=True):
+            st.markdown(f"**#{r.get('id')} · {r.get('person_a')} ↔ {r.get('person_b')}**")
+            st.caption(f"{r.get('created_at')} · {r.get('actor_initials')} · {r.get('reason')}")
+            diff=_manual_override_diff_rows(r,y,m)
+            if diff: st.dataframe(pd.DataFrame(diff),use_container_width=True,hide_index=True)
+            ack=st.checkbox(
+                "Peržiūrėjau pakeitimą ir dabartinį ACTUAL rezultatą." if lang=="LT" else "I reviewed this change and the current ACTUAL result.",
+                key=f"review_override_ack_{r.get('id')}"
+            )
+            if st.button(
+                "PATVIRTINTI POKYČIO PERŽIŪRĄ" if lang=="LT" else "CONFIRM CHANGE REVIEW",
+                use_container_width=True,disabled=not ack,key=f"review_override_btn_{r.get('id')}"
+            ):
+                try:
+                    db.review_manual_override_v2593(int(r["id"]))
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+    return len(pending)
 
 
 def swap_window_open_emails(y,m,result,deadline,window_days):
@@ -3492,6 +3720,19 @@ else:
 dl,dlmsg,dldiff=deadline_message(year,month); cutoff_exact=preference_cutoff_for(year,month)
 st.markdown(f'<div class="deadline-card"><b>{tr("deadline")}: {cutoff_exact.strftime("%Y-%m-%d %H:%M")}</b><br>{html.escape(dlmsg)}<br><span style="color:#6b7280">{html.escape(tr("deadline_note"))}</span></div>',unsafe_allow_html=True)
 
+# V2.5.94: after the exact cutoff, R.S./R.Š. views automatically materialize
+# every still-missing active resident as a submitted zero-request form.
+_zero_pref_autosubmit={"ok":True,"due":False,"count":0,"initials":[]}
+if lifecycle_operator_ui:
+    _zero_pref_autosubmit=ensure_zero_preference_submissions_if_due(year,month)
+    if int(_zero_pref_autosubmit.get("count",0) or 0)>0:
+        names=", ".join(_zero_pref_autosubmit.get("initials") or [])
+        st.info(
+            (f"Po pageidavimų termino automatiškai užfiksuotos 0 pageidavimų anketos: {names}."
+             if lang=="LT" else
+             f"After the preference deadline, zero-request submissions were recorded automatically for: {names}.")
+        )
+
 if advanced_mode:
     with st.expander(("IŠPLĖSTINIS LANGAS" if lang=="LT" else "ADVANCED WINDOW"), expanded=True):
         adv_state=db.get_schedule_state(year,month)
@@ -3567,6 +3808,14 @@ if senior_mode:
         c1,c2,c3=st.columns(3); c1.metric(tr("completion"),f"{len(prefs)}/{len(DEFAULT_PEOPLE)}"); c2.metric(tr("missing_preferences"),len(missing)); c3.metric(tr("missing_email"),len(missing_mail))
         if missing: st.warning(f"{tr('missing_preferences')}: {', '.join(missing)}")
         else: st.success(tr("all_complete"))
+        auto_zero=[i for i,x in prefs.items() if x.get("submission_source")=="deadline_zero"]
+        if auto_zero:
+            st.caption(
+                ("TAIP = anketa užfiksuota kaip pateikta. Automatiniai 0 pageidavimų įrašai po termino: "
+                 if lang=="LT" else
+                 "YES = form recorded as submitted. Automatic zero-request submissions after the deadline: ")
+                + ", ".join(sorted(auto_zero))
+            )
         if missing_mail: st.warning(f"{tr('missing_email')}: {', '.join(missing_mail)}")
         st.info(tr("email_ready") if smtp_ready() else tr("email_not_ready"))
         if st.button(tr("send_reminders"),type="primary"):
@@ -3720,6 +3969,12 @@ with tabs[pos]:
             rows.append({
                 tr("person"):p["initials"],tr("name"):p["name"],
                 tr("submitted"):tr("yes") if x else tr("no"),
+                ("Pateikimo būdas" if lang=="LT" else "Submission source"):(
+                    ("Automatiškai — 0 pageidavimų" if lang=="LT" else "Automatic — 0 requests")
+                    if x and x.get("submission_source")=="deadline_zero"
+                    else ("Rezidentas" if lang=="LT" else "Resident")
+                    if x else "—"
+                ),
                 tr("preference_load"):f"{vol} — {flag}",
                 tr("hard_dates"):", ".join(map(str,sorted(x.get("unavailable",set())))),
                 tr("hard_am_dates"):", ".join(map(str,sorted(x.get("unavailable_am",set())))),
@@ -4130,6 +4385,9 @@ with tabs[pos]:
         blockers=db.finalization_blockers_v2591(year,month)
         smtp_ok=smtp_ready(); missing_mail=_resident_email_preflight()
         prelim_start,prelim_end=preliminary_swap_window_for(year,month)
+        render_operator_email_smtp_admin(active_user)
+        # Refresh readiness after the operator email/SMTP panel (a successful edit reruns).
+        smtp_ok=smtp_ready(); missing_mail=_resident_email_preflight()
 
         if state=="final":
             _workflow_card(
@@ -4204,6 +4462,9 @@ with tabs[pos]:
             if payload:
                 render_operator_manual_override(year,month,payload,state)
 
+            # V2.5.93 persistent post-override review checkpoint.
+            unreviewed_manual=render_manual_override_review_checkpoint(year,month) if payload else 0
+
             st.divider()
             st.markdown("### Preliminarus paskelbimas ir rezidentų apsikeitimai" if lang=="LT" else "### Preliminary publication and resident swaps")
             st.caption(
@@ -4222,7 +4483,9 @@ with tabs[pos]:
                     st.info((f"Preliminarų etapą bus galima aktyvuoti nuo {prelim_start:%Y-%m-%d %H:%M}." if lang=="LT" else f"The preliminary phase can be activated from {prelim_start:%Y-%m-%d %H:%M}."))
                 elif now_lt>=prelim_end:
                     st.warning((f"Standartinis apsikeitimų langas šiam mėnesiui jau pasibaigė ({prelim_end:%Y-%m-%d %H:%M}). Galite pereiti tiesiai į FINAL." if lang=="LT" else f"The standard swap window for this month has already ended ({prelim_end:%Y-%m-%d %H:%M}). You may proceed directly to FINAL."))
-                can_prelim=bool((payload or draft_payload) and smtp_ok and not missing_mail and within_prelim)
+                can_prelim=bool((payload or draft_payload) and smtp_ok and not missing_mail and within_prelim and int(unreviewed_manual)==0)
+                if unreviewed_manual:
+                    st.warning("Preliminarus etapas užblokuotas, kol peržiūrėsite rankinius pakeitimus." if lang=="LT" else "Preliminary publication is blocked until manual changes are reviewed.")
                 if st.button(
                     "PASKELBTI PRELIMINARŲ GRAFIKĄ IR LEISTI APSIKEITIMUS" if lang=="LT" else "PUBLISH PRELIMINARY SCHEDULE AND OPEN SWAPS",
                     type="primary",use_container_width=True,disabled=not can_prelim,key=f"open_prelim_{year}_{month}"
@@ -4289,9 +4552,9 @@ with tabs[pos]:
             candidate_result=refresh_result_payload(candidate_payload,year,month,use_actual_backups=bool(payload)) if candidate_payload else None
             hard=int(((candidate_result.stats or {}).get("global",{}) if candidate_result else {}).get("hard_errors",999))
             blockers=db.finalization_blockers_v2591(year,month)
-            unresolved=(int(blockers.get("pending_normal",0))+int(blockers.get("waiting_senior_apply",0))+int(blockers.get("pending_backup",0))+int(blockers.get("active_late_grants",0)))
+            unresolved=(int(blockers.get("pending_normal",0))+int(blockers.get("waiting_senior_apply",0))+int(blockers.get("pending_backup",0))+int(blockers.get("active_late_grants",0))+int(blockers.get("unreviewed_manual_overrides",0)))
             if hard!=0 or unresolved:
-                st.error((f"FINAL blokuotas: HARD={hard}; pending={blockers.get('pending_normal',0)}; waiting operator={blockers.get('waiting_senior_apply',0)}; pending backup={blockers.get('pending_backup',0)}; active late={blockers.get('active_late_grants',0)}." if lang=="LT" else f"FINAL blocked: HARD={hard}; pending={blockers.get('pending_normal',0)}; waiting operator={blockers.get('waiting_senior_apply',0)}; pending backup={blockers.get('pending_backup',0)}; active late={blockers.get('active_late_grants',0)}."))
+                st.error((f"FINAL blokuotas: HARD={hard}; pending={blockers.get('pending_normal',0)}; waiting operator={blockers.get('waiting_senior_apply',0)}; pending backup={blockers.get('pending_backup',0)}; active late={blockers.get('active_late_grants',0)}; neperžiūrėti rankiniai={blockers.get('unreviewed_manual_overrides',0)}." if lang=="LT" else f"FINAL blocked: HARD={hard}; pending={blockers.get('pending_normal',0)}; waiting operator={blockers.get('waiting_senior_apply',0)}; pending backup={blockers.get('pending_backup',0)}; active late={blockers.get('active_late_grants',0)}; unreviewed manual={blockers.get('unreviewed_manual_overrides',0)}."))
             if state=="swap_open" and not expired:
                 st.warning("FINAL patvirtinimas dabar iš karto uždarys dar aktyvų rezidentų apsikeitimų langą." if lang=="LT" else "Confirming FINAL now will immediately close the still-active resident swap window.")
             confirm=st.checkbox("Patvirtinu, kad dabartinis ACTUAL grafikas yra galutinė administracijai teikiama versija." if lang=="LT" else "I confirm that the current ACTUAL schedule is the final version for administration.",key=f"final_confirm_{year}_{month}")

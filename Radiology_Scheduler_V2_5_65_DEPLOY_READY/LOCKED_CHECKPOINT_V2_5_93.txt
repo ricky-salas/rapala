@@ -1,0 +1,9 @@
+V2.5.93 LOCKED CHECKPOINT
+- Operator may autofill missing notification email from already-bound login profile, or enter it manually.
+- Notification email admin NEVER changes auth.uid/login/profile binding.
+- SMTP secrets are deployment-only; app supports root SCHEDULER_SMTP_* and nested [smtp].
+- Operator can send SMTP test email before lifecycle activation.
+- Every new manual ACTUAL override requires persistent post-change review before PRELIMINARY or FINAL.
+- Review checkpoint is enforced in UI and backend.
+- SYSTEM baseline remains frozen; manual corrections affect ACTUAL only.
+- FINAL remains immutable.

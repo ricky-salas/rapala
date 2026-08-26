@@ -164,6 +164,8 @@ def save_preference(year: int, month: int, initials: str, payload: dict):
         "backup_credits_am_to_use": int(payload.get("backup_credits_am_to_use", old.get("backup_credits_am_to_use", 0))),
         "backup_credits_pm_to_use": int(payload.get("backup_credits_pm_to_use", old.get("backup_credits_pm_to_use", 0))),
         "backup_credits_night_to_use": 0,
+        "submission_source": "resident",
+        "submitted_at": _now(),
         "updated_at": _now(),
     }
     client().table("preferences").upsert(row, on_conflict="year,month,initials").execute()
@@ -194,6 +196,8 @@ def _pref_from_row(row):
         "backup_credits_am_to_use": int(row.get("backup_credits_am_to_use", 0)),
         "backup_credits_pm_to_use": int(row.get("backup_credits_pm_to_use", 0)),
         "backup_credits_night_to_use": int(row.get("backup_credits_night_to_use", 0)),
+        "submission_source": str(row.get("submission_source") or "resident"),
+        "submitted_at": row.get("submitted_at") or row.get("updated_at", ""),
         "updated_at": row.get("updated_at", ""),
     }
 
@@ -206,6 +210,23 @@ def get_preference(year: int, month: int, initials: str) -> Optional[dict]:
 def all_preferences(year: int, month: int) -> Dict[str, dict]:
     rows = _data(_retry_db(lambda: client().table("preferences").select("*").eq("year", int(year)).eq("month", int(month)).execute()))
     return {r["initials"]: _pref_from_row(r) for r in rows}
+
+
+def auto_submit_zero_preferences_v2594(year: int, month: int, cutoff_iso: str) -> dict:
+    """After the exact preference cutoff, create zero-request submissions for missing active residents.
+
+    Server-side authorization and cutoff enforcement remain authoritative.
+    """
+    rows = _data(_retry_db(lambda: client().rpc("auto_submit_zero_preferences_v2594", {
+        "p_year": int(year),
+        "p_month": int(month),
+        "p_cutoff": str(cutoff_iso),
+    }).execute()))
+    if isinstance(rows, dict):
+        return rows
+    if isinstance(rows, list) and rows:
+        return rows[0] if isinstance(rows[0], dict) else {"ok": True, "result": rows[0]}
+    return {"ok": True, "count": 0, "initials": []}
 
 
 def get_account_settings(initials: str) -> dict:
@@ -266,6 +287,23 @@ def save_account_settings(initials: str, payload: dict):
         "updated_at": _now(),
     }
     client().table("account_settings").update({k:v for k,v in row.items() if k!="initials"}).eq("initials",initials).execute()
+
+
+def set_resident_notification_email_v2593(initials: str, email: str) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("set_resident_notification_email_v2593",{
+        "p_initials":str(initials),"p_email":str(email or "")
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def autofill_notification_emails_v2593() -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("autofill_notification_emails_v2593",{}).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def list_resident_email_admin_audit_v2593(limit: int=100) -> List[dict]:
+    return _data(_retry_db(lambda: client().table("resident_email_admin_audit")
+        .select("*").order("created_at",desc=True).limit(int(limit)).execute()))
 
 
 def ensure_calendar_feed_token(initials: str) -> str:
@@ -491,6 +529,19 @@ def list_manual_schedule_overrides_v2592(year: int, month: int) -> List[dict]:
     return _data(_retry_db(lambda: client().table("manual_schedule_overrides")
         .select("*").eq("year",int(year)).eq("month",int(month))
         .order("created_at",desc=True).execute()))
+
+
+def review_manual_override_v2593(override_id: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("review_manual_override_v2593",{
+        "p_id":int(override_id)
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def list_unreviewed_manual_overrides_v2593(year: int, month: int) -> List[dict]:
+    return _data(_retry_db(lambda: client().table("manual_schedule_overrides")
+        .select("*").eq("year",int(year)).eq("month",int(month)).is_("reviewed_at","null")
+        .order("created_at",desc=False).execute()))
 
 
 def finalize_schedule_v2592(year: int, month: int, final_json: dict) -> dict:
