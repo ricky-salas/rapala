@@ -1,0 +1,34 @@
+V2.5.92 FINAL CHECKPOINT — OPERATOR CONTROL + PRELIMINARY SWAPS + FINAL
+
+IDENTITY
+- current_identity_v2589 auth.uid() binding preserved
+- no R.S./R.Š. profile switch
+- same capability does not mean same account
+- R.S actions audit as R.S.; R.Š actions audit as R.Š.
+
+OPERATORS
+- R.S. primary lifecycle operator
+- R.Š. contingency lifecycle operator in Išplėstinis
+- G.M. and other residents cannot use operator lifecycle RPCs
+
+FLOW
+- Generate = private DRAFT, zero cohort email
+- Optional private manual correction freezes SYSTEM, edits ACTUAL only
+- Optional preliminary publish / resident swaps: previous month 14 08:00 → 17 00:00
+- Resident wishes cutoff: 14 00:00 (13th inclusive)
+- Operator manual correction available at all pre-FINAL times
+- Preliminary phase may be skipped
+- FINAL may be confirmed directly from working ACTUAL
+- FINAL snapshots schedule + backups, sends cohort email, exposes FINAL Excel
+
+EMAIL STYLE
+- professional / concise
+- preliminary cohort notification
+- affected-resident manual correction notification
+- targeted late-access notification
+- final cohort notification
+
+RESEARCH
+- SYSTEM never rewritten by manual operator correction
+- ACTUAL records operational changes
+- FINAL is immutable administration snapshot

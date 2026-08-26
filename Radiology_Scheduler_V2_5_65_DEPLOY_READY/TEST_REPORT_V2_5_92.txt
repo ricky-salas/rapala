@@ -1,0 +1,72 @@
+V2.5.92 FINAL TEST REPORT
+==========================
+
+BUILD
+PASS app.py compile
+PASS db.py compile
+PASS scheduler_engine.py compile
+PASS APP_VERSION = 2.5.92 OPERATOR CONTROL + PRELIMINARY SWAPS + FINAL
+PASS scheduler_engine API remains 2.5.91 and app expects 2.5.91
+PASS no playful/corny FINAL email wording remains
+
+IDENTITY / AUTHORIZATION — LIVE SUPABASE VERIFIED
+PASS current_identity_v2589 remains auth.uid()-bound
+PASS claim_resident_profile still blocks rebinding an authenticated account to different initials
+PASS no visible Resident/Seniūnė profile selector exists
+PASS R.S. lifecycle_operator = TRUE
+PASS R.Š. lifecycle_operator = TRUE through own authenticated account
+PASS G.M. lifecycle_operator = FALSE
+PASS R.Š. remains resident role for workload; privilege is capability only
+PASS manual_schedule_overrides has RLS enabled
+PASS manual override audit is readable only by lifecycle operators
+PASS scheduler_rule_admin_v2534 now follows is_senior(auth.uid()) so R.Š. contingency admin tools do not fail server-side
+
+LIFECYCLE
+PASS new private `working` state accepted by DB constraint
+PASS Generate remains private and sends no cohort email
+PASS first private manual correction freezes SYSTEM before ACTUAL changes
+PASS operator manual correction remains available in working / swap_open / swap_closed states
+PASS preliminary resident-swap phase is optional
+PASS FINAL may be reached directly from private working ACTUAL
+PASS FINAL may intentionally close an active resident swap window early after explicit confirmation
+PASS FINAL server RPC blocks pending normal swaps, accepted-awaiting-operator swaps, pending backup swaps, and active late-access grants
+PASS FINAL server RPC snapshots current ACTUAL JSON and effective backups
+PASS FINAL server RPC rejects changes once lifecycle state is final
+
+TIMING
+PASS preference cutoff displayed as previous month 14th 00:00 Europe/Vilnius (13th is last full day)
+PASS existing per-resident reminder-start settings remain in use
+PASS standard preliminary / resident swap window = previous month 14th 08:00 → 17th 00:00 Europe/Vilnius
+PASS resident new-swap creation remains server-gated by lifecycle deadline / late access
+
+MANUAL OPERATOR CORRECTION
+PASS R.S. sees tool in Grafikas
+PASS R.Š. sees same contingency tool in Išplėstinis under R.Š. identity
+PASS any two filled assignments can be swapped directly by operator
+PASS resident bilateral consent is not required for operator correction
+PASS true ACTUAL safety / operational HARD checks remain blocking
+PASS explicit audit reason required
+PASS actor initials + auth UID + slots + residents + timestamp recorded
+PASS unresolved resident swaps touching changed slots are superseded/rejected automatically
+PASS affected residents must have email and receive updated .ics notification
+PASS backup plan / calendar feeds are refreshed after operator correction
+
+EMAILS
+PASS preliminary cohort email uses professional wording
+PASS preliminary activation fail-closed on missing SMTP or missing resident email
+PASS individual late-access email uses professional wording
+PASS manual correction sends only to the two affected residents
+PASS FINAL cohort email uses professional wording
+PASS FINAL activation fail-closed on missing SMTP or missing resident email
+PASS FINAL email attaches each resident's final .ics
+PASS FINAL email can be resent from FINAL screen
+
+CURRENT LIVE EMAIL PREFLIGHT
+BLOCKED UNTIL FILLED: D.G., R.M., S.D., V.S. currently have no email in account_settings.
+This is expected fail-closed behavior; preliminary and FINAL activation will remain disabled until those addresses are present.
+
+STATIC REGRESSION
+PASS 29/29 V2.5.92 release assertions
+
+DATABASE
+PASS SUPABASE_MIGRATION_V2_5_92_OPERATOR_FINALIZATION.sql applied successfully to live project gqdlwhjgwqmuoolybusy

@@ -1,0 +1,40 @@
+V2.5.91 FINAL — COLORED FINALIZATION + CONTROLLED SWAP WINDOW
+
+DRAFT -> SWAP_OPEN -> SWAP_CLOSED -> FINAL
+
+R.S. ONLY:
+- opens normal swap window
+- closes normal swap window
+- grants/revokes late swap access
+- applies resident-accepted normal swaps
+- confirms FINAL for administration
+
+EMAIL:
+- real SMTP required before opening window
+- all active residents must have email
+- initial confirmation email includes exact X-day deadline + ICS
+- late access sends individual email
+- final confirmation sends FINAL email + ICS
+- resend controls available
+
+SERVER SAFETY:
+- normal + backup new swap requests created through V2.5.91 RPC
+- deadline/late grant enforced server-side
+- direct client INSERT policies removed
+- existing pending requests can still be responded to after deadline
+- FINAL blocks all new normal/late swaps
+
+FINAL:
+- exact authoritative ACTUAL snapshot frozen as final_json
+- effective backups frozen as final_backups
+- FINAL Excel uses frozen final snapshot
+- post-FINAL Emergency/ACTUAL changes do not rewrite FINAL
+- reset blocked after FINAL
+
+V2.5.90 preserved:
+- R.S. operational senior / -2 target
+- R.Š. resident-facing UI + embedded privileged/admin capabilities
+- G.M. ordinary resident
+- no profile switch
+- weekend volunteer override preserved
+- V2.5.89 auth.uid identity lock preserved

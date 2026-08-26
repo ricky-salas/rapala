@@ -401,9 +401,125 @@ def get_schedule_state(year: int, month: int) -> dict:
     return {"has_draft":bool(r.get("draft_json")),"has_published":r.get("status")=="published" and bool(r.get("current_json")),"status":r.get("status"),"published_at":r.get("published_at"),"updated_at":r.get("updated_at")}
 
 
+def get_schedule_lifecycle(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().table("schedule_lifecycle")
+        .select("*").eq("year",int(year)).eq("month",int(month)).limit(1).execute()))
+    if rows:
+        return rows[0]
+    state=get_schedule_state(year,month)
+    return {
+        "year":int(year),"month":int(month),
+        "state":"working" if state.get("has_published") else "draft",
+        "swap_opened_at":state.get("published_at"),
+        "swap_deadline":None,"swap_closed_at":None,
+        "finalized_at":None,"finalized_by":None,"final_json":None,"final_backups":None,
+    }
+
+
+def open_swap_window_v2591(year: int, month: int, deadline_iso: str) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("open_swap_window_v2591",{
+        "p_year":int(year),"p_month":int(month),"p_deadline":str(deadline_iso)
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def close_swap_window_v2591(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("close_swap_window_v2591",{
+        "p_year":int(year),"p_month":int(month)
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def get_swap_permission_v2591(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("get_swap_permission_v2591",{
+        "p_year":int(year),"p_month":int(month)
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {"allowed":False,"source":"unavailable"})
+
+
+def grant_late_swap_access_v2591(year: int, month: int, initials: str, expires_at_iso: str, request_limit: int=1, reason: str="") -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("grant_late_swap_access_v2591",{
+        "p_year":int(year),"p_month":int(month),"p_initials":str(initials),
+        "p_expires_at":str(expires_at_iso),"p_max_requests":int(request_limit),
+        "p_access_mode":"one_request" if int(request_limit)==1 else "time_window",
+        "p_reason":str(reason or "")
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def revoke_late_swap_access_v2591(grant_id: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("revoke_late_swap_access_v2591",{
+        "p_id":int(grant_id)
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def list_late_swap_access_v2591(year: int, month: int) -> List[dict]:
+    return _data(_retry_db(lambda: client().table("late_swap_access")
+        .select("*").eq("year",int(year)).eq("month",int(month))
+        .order("created_at",desc=True).execute()))
+
+
+def finalization_blockers_v2591(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("finalization_blockers_v2591",{
+        "p_year":int(year),"p_month":int(month)
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def ensure_working_schedule_v2592(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("ensure_working_schedule_v2592",{
+        "p_year":int(year),"p_month":int(month)
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def apply_manual_schedule_override_v2592(
+    year: int, month: int, current_json: dict,
+    slot_a: int, slot_b: int, person_a: str, person_b: str, reason: str
+) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("apply_manual_schedule_override_v2592",{
+        "p_year":int(year),"p_month":int(month),"p_current_json":current_json,
+        "p_slot_a":int(slot_a),"p_slot_b":int(slot_b),
+        "p_person_a":str(person_a),"p_person_b":str(person_b),
+        "p_reason":str(reason or "")
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def list_manual_schedule_overrides_v2592(year: int, month: int) -> List[dict]:
+    return _data(_retry_db(lambda: client().table("manual_schedule_overrides")
+        .select("*").eq("year",int(year)).eq("month",int(month))
+        .order("created_at",desc=True).execute()))
+
+
+def finalize_schedule_v2592(year: int, month: int, final_json: dict) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("finalize_schedule_v2592",{
+        "p_year":int(year),"p_month":int(month),"p_final_json":final_json
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def load_final_schedule_v2591(year: int, month: int) -> Optional[dict]:
+    lifecycle=get_schedule_lifecycle(year,month)
+    return lifecycle.get("final_json") if lifecycle.get("state")=="final" else None
+
+
 def create_swap_request(year: int, month: int, slot_a: int, slot_b: int, person_a: str, person_b: str, reason: str = ""):
-    row={"year":year,"month":month,"slot_a":slot_a,"slot_b":slot_b,"person_a":person_a,"person_b":person_b,"status":"pending","reason":str(reason or ""),"created_at":_now()}
-    return _data(client().table("swap_requests").insert(row).execute())
+    """V2.5.91 lifecycle-gated swap creation.
+
+    The server allows new requests only while the normal swap window is open or
+    while this authenticated resident has an active individual late-access grant.
+    Existing pending requests may still be responded to after the deadline.
+    """
+    rows=_data(_retry_db(lambda: client().rpc("create_swap_request_v2591",{
+        "p_year":int(year),"p_month":int(month),
+        "p_slot_a":int(slot_a),"p_slot_b":int(slot_b),
+        "p_person_a":str(person_a),"p_person_b":str(person_b),
+        "p_reason":str(reason or ""),
+    }).execute()))
+    if isinstance(rows,dict): return [rows]
+    return rows
 
 
 def delete_swap_action_v2586(request_id: int, current_json: Optional[dict] = None, backups: Optional[List[dict]] = None) -> dict:
@@ -646,12 +762,14 @@ def release_weekend_backup_claim(year: int, month: int, initials: str):
 
 
 def create_backup_swap_request(year: int, month: int, requester: str, requester_slot: int, target: str, target_slot: int, note: str=""):
-    return _data(client().table("backup_swap_requests").insert({
-        "year":int(year),"month":int(month),
-        "requester":requester,"requester_slot":int(requester_slot),
-        "target":target,"target_slot":int(target_slot),
-        "status":"pending","note":note
-    }).execute())
+    rows=_data(_retry_db(lambda: client().rpc("create_backup_swap_request_v2591",{
+        "p_year":int(year),"p_month":int(month),
+        "p_requester":str(requester),"p_requester_slot":int(requester_slot),
+        "p_target":str(target),"p_target_slot":int(target_slot),
+        "p_note":str(note or ""),
+    }).execute()))
+    if isinstance(rows,dict): return [rows]
+    return rows
 
 
 def list_backup_swap_requests(year: int, month: int, initials: Optional[str]=None) -> List[dict]:
