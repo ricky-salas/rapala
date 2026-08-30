@@ -1,0 +1,63 @@
+V2.5.107 TEST REPORT — HARD WISHES + EXPLICIT AUDIT
+
+PASS 1 — Python compile
+- app.py
+- db.py
+- scheduler_engine.py
+- solver_runner.py
+- notification_core.py
+- notification_worker.py
+Result: PASS
+
+PASS 2 — Engine/app version contract
+- scheduler_engine ENGINE_API_VERSION = 2.5.107
+- app expected engine API = 2.5.107
+Result: PASS
+
+PASS 3 — Real September 2026 clean-run regression
+- runner elapsed: 27.83 s
+- SolveResult.ok: True
+- HARD errors: 0
+- Resident-HARD total violations: 0
+- exact workload targets passed: True
+- Onko even pairs passed: True
+- Onko filled: 22/22
+- zero-HARD fallback wish mode: ALL_EXACT_PLUS_WORKSTYLE_FEASIBLE
+Result: PASS
+
+PASS 4 — Wish audit
+- active scored wishes: 77
+- honored: 77
+- missed: 0
+- Cannot-work misses: 0
+- mean exact preference score: 100.0%
+- mean soft preference score: 100.0%
+- mean overall preference score: 100.0%
+Result: PASS
+
+PASS 5 — September hard-date regression
+- MG has no assignment on 2026-09-11.
+- All September Resident-HARD requests are honored.
+Result: PASS
+
+PASS 6 — VL requested Sundays
+- 2026-09-06: honored
+- 2026-09-13: honored
+- 2026-09-20: honored
+- 2026-09-27: honored
+Result: PASS
+
+PASS 7 — Explicit audit UI/static inspection
+- Generation shows Active wishes / Honored / Missed / Cannot-work violations.
+- 0 misses -> ALL ACTIVE WISHES MET message.
+- >0 misses -> UNMET WISHES table.
+- any Cannot-work violation -> critical invalid-draft warning.
+Result: PASS
+
+STRUCTURAL DIAGNOSTICS FROM SEPTEMBER REGRESSION
+- monthly fairness score: 89.8%
+- critical structural spreads: {'SPS RO': 3, 'SPS UG': 3, 'SATURDAYS': 3, 'SUNDAYS': 1, 'FRIDAYS': 5}
+- rotation monthly spreads: {'CENTRO RO': 4, 'Onko RO': 2, 'SPS RO': 4, 'Centro UG': 4, 'SPS UG': 3, 'ADC 144': 4, 'ADC 145': 4, 'Vaikų UG': 4, 'Mamografijos': 1}
+- structural fairness relaxed for zero hard: True
+
+FINAL RESULT: PASS

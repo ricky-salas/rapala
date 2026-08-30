@@ -660,7 +660,7 @@ Pageidavimai optimizuojami dviem kryptimis. **Vertikaliai** galioja griežtas pr
 | Rangas | Kas įeina | Principas |
 |---|---|---|
 | ABSOLUTE HARD | Darbo teisė, poilsio sauga, patvirtinta liga/atostogos, fizinis neįmanomumas | 100 % privaloma; niekada nelaužoma |
-| RESIDENT HARD | „Negaliu dirbti“ — data, AM, PM, pasikartojantis | Pirma siekiama 0 praradimų; jei neįmanoma, minimalus bendras praradimas ir horizontalus water-filling |
+| RESIDENT HARD | „Negaliu dirbti“ — data, AM, PM, pasikartojantis | **0 pažeidimų privaloma.** Tai SYSTEM generavimo draudimas; fairness ir SOFT optimizuojami tik likusioje 0-loss erdvėje. Jei tokio grafiko nėra, juodraštis negrąžinamas. |
 | SOFT-1 | „Noriu laisvos“, struktūruotas dublių / atsistatymo vengimas | Pirmiausia saugomas asmeninis laikas ir poilsis |
 | SOFT-2 | „Pageidauju dirbti“ — konkreti data / AM / PM | Teigiamas paskyrimas į norimą laiką |
 | SOFT-3 | Ilgalaikis darbo pobūdis | Darbo dienų / savaitgalių kryptis, išsklaidymas / koncentracija ir kiti darbo stiliaus signalai. **Generuojant SYSTEM**, savaitgalio kryptis gali tik parinkti viršutinį / apatinį sluoksnį jau užrakintame šeštadienio ir sekmadienio water-fill koridoriuje; vien šis SOFT pasirinkimas jo nepraplečia. **Po publikavimo** abipusiai savanoriški swapai gali pakeisti ACTUAL šeštadienio / sekmadienio pasiskirstymą ir padidinti spread; SYSTEM baseline dėl to neperrašomas ir kito mėnesio catch-up nekuriamas. |
@@ -688,7 +688,7 @@ V2.5.53 įveda atskirą **temporal workload** matricą: rezidentas × savaitė /
 
 Savaitinis krūvis water-fill'inamas **horizontaliai tarp rezidentų**: toje pačioje kalendorinėje savaitėje sistema minimizuoja valandų max–min spread, o slenkančiuose 7 dienų languose pirmiausia mažina blogiausiai apkrautą žmogų. Tai yra analogiška kitoms water-filling taisyklėms: papildomas krūvio sluoksnis neturi kristi tam pačiam žmogui, kol egzistuoja lygiavertė galimybė jį paskirstyti kitiems.
 
-Šis sluoksnis „compilinamas“ su kitais užraktais: TRUE ABSOLUTE HARD → kritinis SPS RO/SPS UG/savaitgalių 0–1 → RESIDENT HARD → kritinis spacing → **weekly load/recovery water-fill** → kitas burden fairness → ordinary-post guardrails → SOFT → post debt. Todėl vėlesnis SOFT pageidavimas negali vėl sukurti 60 val. savaitės, panaikinti privalomos laisvos dienos ar sukurti trijų 12 val. dienų sekos.
+Šis sluoksnis „compilinamas“ su kitais užraktais: TRUE ABSOLUTE HARD → **RESIDENT HARD 0-loss** → kritinis SPS RO/SPS UG/savaitgalių fairness (0–1 tikslas, leidžiama sertifikuota struktūrinė išimtis prieš pažeidžiant „Negaliu dirbti“) → kritinis spacing → **weekly load/recovery water-fill** → kitas burden fairness → ordinary-post guardrails → SOFT → post debt. Todėl vėlesnis SOFT pageidavimas negali vėl sukurti 60 val. savaitės, panaikinti privalomos laisvos dienos ar sukurti trijų 12 val. dienų sekos.
 
 
 ## V2.5.54 — savanoriško normalių pamainų swapo >48 val. ACK
@@ -713,7 +713,7 @@ Jei neatvykstantis rezidentas buvo paskirtas į **SPS RO arba SPS UG**, kritinis
 3. Kritinis SPS postas niekada nenaudojamas kaip donorinis postas kitai mažesnio prioriteto vietai.
 4. Onko automatiškai nenaudojamas kaip donorinis postas, nes turi atskirą mėnesio coverage taisyklę.
 5. Jei nėra nė vieno saugaus tos pačios pamainos optional donorinio perkėlimo, tik tada galima naudoti tame laiko bloke laisvo rezidento fallback.
-6. Tarp kelių to paties bloko donorų pirmiausia vengiama naujų RESIDENT HARD praradimų. **Postų spread, post debt ir ankstesnis pull-down skaičius donorų pasirinkimui nelaikomi fairness kriterijais**, nes žmogus jau buvo suplanuotas dirbti tą patį laiką; keičiasi tik jo darbo vieta.
+6. Tarp kelių to paties bloko donorų pirmiausia vengiama naujų RESIDENT HARD konfliktų. **Postų spread, post debt ir ankstesnis pull-down skaičius donorų pasirinkimui nelaikomi fairness kriterijais**, nes žmogus jau buvo suplanuotas dirbti tą patį laiką; keičiasi tik jo darbo vieta.
 
 ### Fairness-neutral apskaitos taisyklė
 
@@ -886,3 +886,11 @@ Senas pavadinimas „Emergency swap“ buvo misnomer. Naujas modelis yra vienpus
    - rescued person **nėra** perkeliamas į mover seną vietą.
 
 Tai keičia tik ACTUAL operational grafiką. SYSTEM fairness, publication post matrix ir post debt lieka užšaldyti. Nauji rescue įrašai žurnale rodomi `CURRENT LOCATION → MOVING TO` formatu, su spalvotais mover / rescued inicialais. Seni `emergency_actual` bilateraliniai įrašai paliekami tik kaip aiškiai pažymėtas LEGACY auditas.
+
+## V2.5.107 — privalomi „Negaliu dirbti“ ir aiškus pageidavimų auditas
+
+SYSTEM generavime kiekvienas aktyvus **„Negaliu dirbti“** įrašas yra privalomas 0-pažeidimų apribojimas. Jis nėra baudos svoris ir negali būti iškeistas į gražesnį fairness ar didesnį kitų SOFT pageidavimų procentą. Jei safety / coverage / tikslus mėnesio krūvis negali egzistuoti kartu su visais tokiais blokais, SYSTEM juodraštis negrąžinamas.
+
+Po kiekvieno sėkmingo generavimo `Sudarymas` iš karto rodo **Aktyvūs pageidavimai / Įvykdyta / Neįvykdyta / Negaliu dirbti pažeidimai**. Jei visi aktyvūs pageidavimai įvykdyti, rodoma žalia žinutė **„VISI AKTYVŪS PAGEIDAVIMAI ĮVYKDYTI“**. Jei bent vienas SOFT pageidavimas neįvykdytas, šalia rodoma konkreti **NEĮVYKDYTI PAGEIDAVIMAI** lentelė su žmogumi, prašymu ir faktiniu SYSTEM rezultatu. Bet koks `Negaliu dirbti` pažeidimas yra kritinė klaida ir toks SYSTEM juodraštis negali būti publikuojamas.
+
+Kai griežtas struktūrinis 0–1 fairness koridorius nesuderinamas su privalomu 0-HARD sluoksniu, V2.5.107 pirmiau saugo visus HARD blokus. Fallback tada bounded-feasibility būdu bando išlaikyti visus konkrečių datų SOFT prašymus ir work-style tikslus; tik žemesnio rango sluoksniai gali būti atlaisvinami. Kas liko neįvykdyta, niekada neslepiama — tai matoma audito lentelėje.

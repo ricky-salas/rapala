@@ -1,0 +1,16 @@
+LOCKED CHECKPOINT — V2.5.106 SINGLE-PASS + ISOLATED SOLVER
+
+Operational regression fixed:
+- Real September 2026 request set no longer dies at the 6-second Resident-HARD-only staged solve.
+- Work-pattern MILP uses one weighted solve.
+- Work-style no longer adds a second blocking full-model solve.
+- Generate/Rebuild and Improve use a disposable solver subprocess with hard watchdog + clean-process retry.
+- No solver timeout/no-incumbent is interpreted as proof of infeasibility.
+- Existing draft remains unchanged unless a verified candidate returns.
+
+Pairing:
+- APP_VERSION = 2.5.106 SINGLE-PASS + ISOLATED SOLVER
+- EXPECTED_ENGINE_API_VERSION = 2.5.106
+- ENGINE_API_VERSION = 2.5.106
+
+No Supabase migration required.

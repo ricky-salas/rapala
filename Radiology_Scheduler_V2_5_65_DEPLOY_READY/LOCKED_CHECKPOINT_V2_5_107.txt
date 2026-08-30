@@ -1,0 +1,13 @@
+LOCKED CHECKPOINT V2.5.107 — HARD WISHES + EXPLICIT AUDIT
+
+- SYSTEM `Negaliu dirbti` / Unavailable is mandatory zero-violation.
+- No objective weight may trade Resident-HARD against fairness or SOFT.
+- If safety/coverage/exact workload cannot coexist with all hard wishes, no SYSTEM draft is returned.
+- Strict structural fairness is attempted first; structural fairness may relax before any hard wish.
+- Resilient fallback uses bounded feasibility tiers and returns the highest feasible wish tier found.
+- Generation always shows explicit wish totals and an unmet-wishes table when needed.
+- If all active wishes are fulfilled, UI says ALL ACTIVE WISHES MET.
+- September 2026 real regression: 0 HARD errors, 0 Resident-HARD violations, 77/77 active wishes honored, exact workload PASS, Onko 22/22 parity PASS, MG off Sep 11, VL requested Sundays all honored.
+- Clean runner regression completed in 27.83 s.
+
+Treat V2.5.107 as the current frozen baseline unless a later version explicitly supersedes it.

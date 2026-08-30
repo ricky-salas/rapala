@@ -422,7 +422,7 @@ Preferences are optimized on two axes. **Vertically**, strict priority is: ABSOL
 | Rank | Includes | Principle |
 |---|---|---|
 | ABSOLUTE HARD | Labour/rest safety, approved sickness/leave, physical impossibility | 100% mandatory; never relaxed |
-| RESIDENT HARD | Unavailable — date, AM, PM, recurring | Zero losses first; if impossible, minimum total loss plus horizontal water-filling |
+| RESIDENT HARD | Unavailable — date, AM, PM, recurring | **Zero violations are mandatory.** This is a SYSTEM-generation prohibition; fairness and SOFT are optimized only inside the zero-loss space. If no such schedule exists, no draft is returned. |
 | SOFT-1 | Want time off; structured double/recovery avoidance | Protect personal time and recovery first |
 | SOFT-2 | Want to work — exact date / AM / PM | Positive placement into desired work time |
 | SOFT-3 | Persistent work style | Weekday/weekend direction, dispersed/clustered shape, and other work-style signals. **During SYSTEM generation**, weekend direction may only choose the upper/lower layer inside the locked Saturday/Sunday water-fill corridor; this SOFT choice alone cannot widen it. **After publication**, bilateral voluntary swaps may change the ACTUAL Saturday/Sunday distribution and widen its spread; the SYSTEM baseline is not rewritten and no next-month catch-up is created. |
@@ -471,7 +471,7 @@ If the absent resident was assigned to **SPS RO or SPS UG**, critical coverage m
 3. A critical SPS post is never sacrificed as a donor for a lower-priority station.
 4. Onko is not used automatically as a donor because it has a separate monthly coverage rule.
 5. Only if no safe same-block optional-post transfer exists may a target-block-free resident fallback be used.
-6. Among feasible choices, avoid new Resident-HARD losses first, then minimize structural spread damage and additional repair burden.
+6. Among feasible choices, avoid new Resident-HARD conflicts first, then minimize structural spread damage and additional repair burden.
 
 The emergency pull-down may create an extra optional gap in the ACTUAL schedule. This is accepted because mandatory SPS coverage has higher operational priority; the original SYSTEM gap plan and fairness baseline remain frozen for audit/research.
 
@@ -488,7 +488,7 @@ Therefore:
 - post debt / future catch-up is not changed by the repair;
 - weekend/double/fairness-history burden is not changed by the repair;
 - actual workplace exposure may be displayed separately for operational/audit purposes, but it is explicitly **NOT FAIRNESS**;
-- donor ranking for same-block SPS pull-down does not use workplace spread or post debt as a fairness criterion; first avoid new Resident-HARD losses, then use deterministic operational selection.
+- donor ranking for same-block SPS pull-down does not use workplace spread or post debt as a fairness criterion; first avoid new Resident-HARD conflicts, then use deterministic operational selection.
 
 The SYSTEM matrix answers “what did the algorithm allocate?”, while the ACTUAL matrix answers “where did residents actually work after swaps/repairs?”. Longitudinal fairness and research fairness use the SYSTEM matrix.
 
@@ -644,3 +644,11 @@ The old “Emergency swap” name was a misnomer. The new model is a one-way ope
    - the rescued person is **not** moved into the mover's old post.
 
 Only ACTUAL changes. SYSTEM fairness, the publication post matrix and post debt remain frozen. New rescue audit entries use `CURRENT LOCATION → MOVING TO` and colored mover/rescued identities. Historical bilateral `emergency_actual` rows remain visible only as explicitly marked LEGACY records.
+
+## V2.5.107 — mandatory Unavailable blocks and explicit wish audit
+
+During SYSTEM generation every active **Unavailable / Resident-HARD** block is a mandatory zero-violation constraint. It is not a penalty weight and can never be traded for prettier fairness or a higher SOFT satisfaction percentage. If safety / coverage / exact monthly workload cannot coexist with every Unavailable block, no SYSTEM draft is returned.
+
+After every successful generation, `Generation` immediately shows **Active wishes / Honored / Missed / Cannot-work violations**. If every active wish is met, the app shows **“ALL ACTIVE WISHES MET”**. If any SOFT wish is missed, an explicit **UNMET WISHES** table shows the resident, request, and actual SYSTEM result. Any Cannot-work violation is a critical error and such a SYSTEM draft cannot be published.
+
+If the strict structural 0–1 fairness corridor is incompatible with the mandatory zero-HARD layer, V2.5.107 protects every HARD block first. Its bounded-feasibility fallback then tries to preserve all exact date/block SOFT wishes and work-style targets; only lower-ranked layers may be relaxed. Anything not achieved is always surfaced in the audit table rather than hidden behind an average percentage.

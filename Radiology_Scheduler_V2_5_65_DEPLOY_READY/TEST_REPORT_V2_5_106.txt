@@ -1,0 +1,94 @@
+V2.5.106 TEST REPORT — SINGLE-PASS WORK PATTERN + ISOLATED SOLVER
+==================================================================
+
+1. Python compile
+- app.py: PASS
+- db.py: PASS
+- scheduler_engine.py: PASS
+- solver_runner.py: PASS
+- notification_core.py: PASS
+- notification_worker.py: PASS
+
+2. Exact September 2026 production-request regression
+Input reproduced from the active September request/settings state, including recurring preferences.
+
+V2.5.105 reproduction:
+- Result: FAIL / no verified candidate.
+- Direct run elapsed: ~12.9 s.
+- Instrumented root cause: the first Resident-HARD-only work-pattern solve had a 6.0 s limit and returned HiGHS status 1 (time limit) with no incumbent after ~6.03 s.
+- That was a timeout/no-incumbent, not an infeasibility proof.
+
+V2.5.106:
+- Disposable solver_runner.py process: PASS.
+- Representative clean-process runtime: ~33 s on this test environment.
+- SolveResult.ok: TRUE.
+- ABSOLUTE HARD errors: 0.
+- Exact workload targets: PASS.
+- Onko even-pair rule: PASS.
+- Onko filled count: 22 / expected 22.
+- Onko consecutive-day rule: PASS via validator / HARD=0.
+
+3. Resident-HARD hierarchy
+- The zero-loss Resident-HARD corridor was tested explicitly first.
+- Zero-loss corridor: PROVEN INFEASIBLE (HiGHS status 2) on the exact September input.
+- First feasible corridor: total Resident-HARD losses <= 1.
+- Final Resident-HARD losses: 1.
+- resident_hard_minimum_proven: TRUE.
+- resident_hard_verified_min_total_cap: 1.
+Interpretation: one Resident-HARD loss is mathematically unavoidable under the complete phase-1 HARD/coverage/workload structure; the solver is no longer mistaking a timeout for that conclusion.
+
+4. Structural fairness / post water-fill
+Critical structural spreads (volunteer-adjusted where applicable):
+- SPS RO: 0
+- SPS UG: 1
+- Saturdays: 1
+- Sundays: 1
+- Fridays: 1
+Result: PASS (all <= 1).
+
+Ordinary non-Onko / non-SPS-RO post raw spreads:
+- CENTRO RO: 1
+- Centro UG: 1
+- SPS UG: 1
+- ADC 144: 1
+- ADC 145: 1
+- Vaikų UG: 1
+- Mamografijos: 1
+Result: PASS.
+
+Note: raw SPS RO exposure can be wider because explicitly requested weekend work is voluntary and is removed from involuntary fairness burden; the structural adjusted SPS RO spread remains 0 in this run.
+
+5. Weekend positive-work regression
+- VL requested Sundays: 6, 13, 20, 27.
+- Honored: 6, 13, 20, 27 (4/4).
+- MR weekend Sunday requests present in the active request set: 6 and 27.
+- Both honored in the representative run.
+Result: PASS.
+
+6. V2.5.106 architecture
+- Work-pattern stage no longer executes the V2.5.105 chain:
+  Resident-HARD objective solve -> volunteer lock solve -> neutral solve -> second work-style solve.
+- A single weighted work-pattern objective is used inside each verified Resident-HARD loss corridor.
+- Wider Resident-HARD loss corridor is allowed only after the tighter corridor is PROVEN infeasible.
+- Timeout/no-incumbent does not widen the Resident-HARD corridor.
+- 6h/mixed/12h work-style is a small single-pass tie-breaker; no second blocking full-model style solve is launched.
+Result: PASS by code-path inspection + September regression.
+
+7. Isolated production execution
+- Operational Generate/Rebuild calls solve_schedule_isolated().
+- Operational Re-check/Improve calls solve_schedule_isolated().
+- solver_runner.py receives frozen request snapshot + active validated rule profile only.
+- Worker does not connect to Supabase and cannot overwrite a draft itself.
+- Parent process saves only after SolveResult.ok=True.
+- Watchdogs: 100 s first process, 130 s clean-process retry.
+- POSIX timeout path kills the entire worker process group with SIGKILL before retry.
+Result: PASS by compile/static execution-path inspection.
+
+8. Version pairing
+- APP_VERSION = 2.5.106 SINGLE-PASS + ISOLATED SOLVER: PASS
+- EXPECTED_ENGINE_API_VERSION = 2.5.106: PASS
+- ENGINE_API_VERSION = 2.5.106: PASS
+- solver_runner verifies engine API before solving: PASS
+
+9. Database
+- No V2.5.106 Supabase migration required.

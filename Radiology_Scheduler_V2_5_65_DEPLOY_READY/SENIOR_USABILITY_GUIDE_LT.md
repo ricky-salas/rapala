@@ -59,7 +59,7 @@ Seniūnei nereikia dar kartą perskaičiuoti viso mėnesio. Reikia patikrinti, a
 
 ### A. HARD / diagnostics
 - TRUE ABSOLUTE HARD klaidų turi būti 0.
-- Jei RESIDENT HARD negalėjimas neišvengiamai prarastas, turi būti nurodyta: rezidentas, data, laiko blokas, postas ir kodėl 0-loss grafikas nebuvo įmanomas.
+- RESIDENT HARD „Negaliu dirbti“ SYSTEM juodraštyje turi būti **0/0 pažeidimų**. Jei 0-loss grafiko rasti nepavyksta, sistema negrąžina juodraščio, o ne paskiria žmogų jo užblokuotu laiku.
 - Mandatory SPS RO, SPS UG ir savaitgalio coverage turi būti užpildytas.
 
 ### B. Critical exposure
@@ -121,7 +121,7 @@ Nepublikuoti, jei:
 - yra TRUE ABSOLUTE HARD pažeidimas;
 - trūksta privalomo SPS RO / SPS UG / savaitgalio coverage;
 - kritinis spread >1 ir nėra aiškios diagnostikos, kodėl tai neišvengiama;
-- RESIDENT HARD praradimas rodomas be konkretaus paaiškinimo;
+- bet koks RESIDENT HARD pažeidimas atsiranda SYSTEM juodraštyje (tai V2.5.107 kritinė klaida);
 - preference, post ar workload statistika nesutampa su pačiu grafiku;
 - pageidavimų importas akivaizdžiai nepilnas;
 - yra akivaizdus overlap ar kitas feasibility konfliktas.
@@ -222,3 +222,7 @@ Senas pavadinimas „Emergency swap“ buvo misnomer. Naujas modelis yra vienpus
    - rescued person **nėra** perkeliamas į mover seną vietą.
 
 Tai keičia ACTUAL operational grafiką ir ACTUAL fairness statistiką. SYSTEM publication baseline lieka užšaldytas auditui; post debt / future catch-up V2.5.96 nebenaudojamas. Nauji rescue įrašai žurnale rodomi `CURRENT LOCATION → MOVING TO` formatu, su spalvotais mover / rescued inicialais. Seni `emergency_actual` bilateraliniai įrašai paliekami tik kaip aiškiai pažymėtas LEGACY auditas.
+
+## V2.5.107 greita patikra po GENERUOTI
+
+Po generavimo `Sudarymas` turi rodyti keturis skaičius: **Aktyvūs pageidavimai**, **Įvykdyta**, **Neįvykdyta**, **Negaliu dirbti pažeidimai**. Paskutinis skaičius SYSTEM juodraštyje privalo būti **0**. Jei `Neįvykdyta = 0`, turi būti matoma žalia žinutė **„VISI AKTYVŪS PAGEIDAVIMAI ĮVYKDYTI“**. Jei `Neįvykdyta > 0`, prieš publikavimą peržiūrėkite šalia esančią **NEĮVYKDYTI PAGEIDAVIMAI** lentelę.

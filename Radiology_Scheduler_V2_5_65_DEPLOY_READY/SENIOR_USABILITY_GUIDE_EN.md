@@ -55,7 +55,7 @@ Core workflow:
 
 ## Pre-publication checks
 
-1. **HARD / diagnostics:** zero TRUE ABSOLUTE HARD errors; every unavoidable Resident-HARD loss must identify resident, date, block, post and reason.
+1. **HARD / diagnostics:** zero TRUE ABSOLUTE HARD errors and **zero Resident-HARD / Unavailable violations**. If zero-loss generation is impossible, the engine returns no draft instead of assigning a resident in blocked time.
 2. **Critical exposure:** SPS RO, SPS UG and weekend spread should be 0–1 and avoid unnecessary clustering.
 3. **Workload:** inspect worst rolling-7 hours, doubles and disproportionate weekly burden.
 4. **Preference audit:** spot-check 3–5 residents rather than recounting everyone.
@@ -78,7 +78,7 @@ If the tool says `SPS UG = 2`, the SYSTEM schedule / Post Matrix must show exact
 - TRUE ABSOLUTE HARD is violated;
 - mandatory SPS RO / SPS UG / weekend coverage is missing;
 - critical spread exceeds 1 without explicit unavoidable-conflict diagnostics;
-- a Resident-HARD loss is unexplained;
+- any Resident-HARD / Unavailable violation appears in a SYSTEM draft (critical V2.5.107 failure);
 - preference / post / workload tool statements do not match the schedule;
 - imported requests are clearly incomplete;
 - overlap or feasibility conflicts exist.
@@ -135,3 +135,7 @@ The old “Emergency swap” name was a misnomer. The new model is a one-way ope
    - the rescued person is **not** moved into the mover's old post.
 
 ACTUAL schedule and ACTUAL fairness change. The SYSTEM publication baseline remains frozen for audit; V2.5.96 has no post debt or future catch-up. New rescue audit entries use `CURRENT LOCATION → MOVING TO` and colored mover/rescued identities. Historical bilateral `emergency_actual` rows remain visible only as explicitly marked LEGACY records.
+
+## V2.5.107 quick check after GENERATE
+
+After generation, `Generation` must show four numbers: **Active wishes**, **Honored**, **Missed**, and **Cannot-work violations**. The last number must be **0** in every SYSTEM draft. If `Missed = 0`, the green **“ALL ACTIVE WISHES MET”** message must be visible. If `Missed > 0`, review the adjacent **UNMET WISHES** table before publication.
