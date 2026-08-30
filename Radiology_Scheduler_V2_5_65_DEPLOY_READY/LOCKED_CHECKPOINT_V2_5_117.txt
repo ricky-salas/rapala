@@ -1,0 +1,3 @@
+LOCKED CHECKPOINT — V2.5.117 CONFIRMATION + WESTON CREDITS
+
+Restores ŠR Schedule Confirmation in both Simple and Advanced modes and moves the mirrored WESTON running balance into the operational Credits tab. Does not change solver allocation, theoretical backup isolation, weekend water-fill, Dream Team, swap gate, or schedule lifecycle backend authorization.

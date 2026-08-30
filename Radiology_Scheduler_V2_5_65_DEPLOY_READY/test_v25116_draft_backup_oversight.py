@@ -1,7 +1,7 @@
 from pathlib import Path
 
 src=Path('app.py').read_text(encoding='utf-8')
-assert 'APP_VERSION = "2.5.116 DRAFT BACKUP OVERSIGHT"' in src
+assert 'APP_VERSION = "2.5.117 CONFIRMATION + WESTON CREDITS"' in src
 assert 'def backup_overview_grid(y,m,result):' in src
 assert 'TEORINIS DUBLIŲ PLANAS — SENIŪNĖS PATIKRA' in src
 assert 'Visas dublių sąrašas — kiekviena dengiama pamaina' in src

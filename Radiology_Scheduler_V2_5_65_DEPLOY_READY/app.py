@@ -50,7 +50,7 @@ import db
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.116 DRAFT BACKUP OVERSIGHT"
+APP_VERSION = "2.5.117 CONFIRMATION + WESTON CREDITS"
 EXPECTED_ENGINE_API_VERSION = "2.5.112"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "SP"
@@ -4048,8 +4048,11 @@ ui_mode=st.sidebar.radio(
           "Simple: daily actions and only the most important results. Advanced: full fairness, guardrail and solver diagnostics.")
 )
 advanced_mode=(ui_mode==ui_advanced)
-# V2.5.92 lifecycle controls: SP primary; ŠR contingency only in Išplėstinis.
-lifecycle_operator_ui=(is_seniune_account or (is_researcher_account and advanced_mode))
+# V2.5.117 — SP remains the primary senior, but ŠR retains the explicitly
+# granted lifecycle/operator contingency controls in BOTH Simple and Advanced
+# modes. Interface complexity must never remove Grafikas → Grafiko tvirtinimas.
+# Backend RPCs still authorize and audit the real ŠR identity; no SP impersonation.
+lifecycle_operator_ui=(is_seniune_account or is_researcher_account)
 st.sidebar.caption(
     ("Paprastas režimas yra numatytasis." if not advanced_mode and lang=="LT" else
      "Simple mode is the default." if not advanced_mode else
@@ -4126,7 +4129,10 @@ if senior_mode:
     names.append(tr("generation"))
 names.append(tr("schedule"))
 if advanced_mode:
-    names += [tr("summary"),tr("transparency"),tr("credits_debts")]
+    names += [tr("summary"),tr("transparency")]
+# Credits are operational, not merely diagnostic: every resident can see the
+# rest-credit bank; SP/ŠR additionally see their mirrored WESTON balance here.
+names.append(tr("credits_debts"))
 names += [tr("backups"),tr("swaps"),tr("calendar"),tr("research")]
 if advanced_mode:
     names.append(tr("proof"))
@@ -5855,30 +5861,57 @@ if advanced_mode:
     pos+=1
 
 # --- Credits ---
-if advanced_mode:
-    with tabs[pos]:
-        st.subheader(tr("credit_balances"))
-        st.caption(tr("netting_explain"))
-        rest_bank=db.rest_credit_balances(active_user)
-        rb1,rb2,rb3=st.columns(3)
-        rb1.metric(tr("credit_am"),rest_bank.get("AM",0))
-        rb2.metric(tr("credit_pm"),rest_bank.get("PM",0))
-        rb3.metric(tr("credit_night"),rest_bank.get("NIGHT",0))
-        st.caption(tr("credit_month_cap")); st.caption(tr("night_bank_only"))
-        if senior_mode:
-            st.divider(); st.markdown(f"### {tr('credit_balances')} — {tr('summary')}")
-            rest_all=db.all_rest_credit_balances()
-            rows=[]
-            for person in DEFAULT_PEOPLE:
-                i=person["initials"]
-                rows.append({
-                    tr("person"):i,
-                    f"{tr('rest_credit_bank')} AM":rest_all.get(i,{}).get("AM",0),
-                    f"{tr('rest_credit_bank')} PM":rest_all.get(i,{}).get("PM",0),
-                    f"{tr('rest_credit_bank')} NIGHT":rest_all.get(i,{}).get("NIGHT",0),
-                })
-            st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
-        pos+=1
+# V2.5.117 — operational Credits is visible in both Simple and Advanced modes.
+with tabs[pos]:
+    st.subheader(tr("credits_debts"))
+
+    # One immutable WESTON click ledger, mirrored as a negative balance for SP
+    # and an equal positive receivable for ŠR. This is intentionally shown in
+    # Credits, where both sides can see the running balance without hunting
+    # through Summary/Transparency.
+    if active_user in (SENIOR_INITIALS,WESTON_CREDITOR_INITIALS):
+        try:
+            _weston_credit=db.weston_beer_stats_v25110(year,month)
+            _w_total=int(_weston_credit.get("total_beers",0) or 0)
+            _w_month=int(_weston_credit.get("month_beers",0) or 0)
+            st.markdown("### WESTON balansas" if lang=="LT" else "### WESTON balance")
+            _wc1,_wc2,_wc3=st.columns(3)
+            if active_user==SENIOR_INITIALS:
+                _wc1.metric(("Tavo balansas" if lang=="LT" else "Your balance"),f"−{_w_total} WESTON")
+                _wc2.metric(("Skola ŠR — iš viso" if lang=="LT" else "Debt to ŠR — lifetime"),_w_total)
+                _wc3.metric(("Šį mėnesį prisidėjo" if lang=="LT" else "Added this month"),f"+{_w_month}")
+                st.caption(("SP: 1 GENERUOTI / PERKURTI paspaudimas = −1 WESTON tavo balanse ir +1 WESTON ŠR. Tas pats ledgeris rodomas abiem pusėms." if lang=="LT" else "SP: 1 GENERATE / REGENERATE click = −1 WESTON on your balance and +1 WESTON for ŠR. Both views come from the same ledger."))
+            else:
+                _wc1.metric(("Tavo balansas" if lang=="LT" else "Your balance"),f"+{_w_total} WESTON")
+                _wc2.metric(("SP tau skolinga — iš viso" if lang=="LT" else "SP owes you — lifetime"),_w_total)
+                _wc3.metric(("Šį mėnesį uždirbai" if lang=="LT" else "Earned this month"),f"+{_w_month}")
+                st.caption(("ŠR: kiekvienas SP GENERUOTI / PERKURTI paspaudimas = +1 WESTON tau. SP mato tą patį skaičių kaip savo skolą." if lang=="LT" else "ŠR: every SP GENERATE / REGENERATE click = +1 WESTON for you. SP sees the same number as her debt."))
+            st.divider()
+        except Exception as _weston_exc:
+            st.caption(("WESTON balanso šiuo metu nepavyko nuskaityti." if lang=="LT" else "WESTON balance is temporarily unavailable."))
+
+    st.markdown(f"### {tr('credit_balances')}")
+    st.caption(tr("netting_explain"))
+    rest_bank=db.rest_credit_balances(active_user)
+    rb1,rb2,rb3=st.columns(3)
+    rb1.metric(tr("credit_am"),rest_bank.get("AM",0))
+    rb2.metric(tr("credit_pm"),rest_bank.get("PM",0))
+    rb3.metric(tr("credit_night"),rest_bank.get("NIGHT",0))
+    st.caption(tr("credit_month_cap")); st.caption(tr("night_bank_only"))
+    if senior_mode:
+        st.divider(); st.markdown(f"### {tr('credit_balances')} — {tr('summary')}")
+        rest_all=db.all_rest_credit_balances()
+        rows=[]
+        for person in DEFAULT_PEOPLE:
+            i=person["initials"]
+            rows.append({
+                tr("person"):i,
+                f"{tr('rest_credit_bank')} AM":rest_all.get(i,{}).get("AM",0),
+                f"{tr('rest_credit_bank')} PM":rest_all.get(i,{}).get("PM",0),
+                f"{tr('rest_credit_bank')} NIGHT":rest_all.get(i,{}).get("NIGHT",0),
+            })
+        st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
+    pos+=1
 
 # --- Backups ---
 with tabs[pos]:

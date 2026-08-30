@@ -920,3 +920,9 @@ Planuotas dublis / pavadavimas nėra darbo pamaina. Jis nekeičia „Negaliu dir
 Paspaudus **GENERUOTI / PERKURTI JUODRAŠTĮ**, kartu su normaliu SYSTEM juodraščiu iškart sugeneruojamas atskiras teorinis dublių / standby planas. Seniūnė jį mato tame pačiame **Sudarymas** lange dar prieš paskelbdama grafiką: rodoma rezidentų × dienų matrica, visas dengiamos pamainos sąrašas, dublių skaičių spread ir galimos neuždengtos privalomos standby vietos.
 
 Šis planas iki paskelbimo yra tik juodraščio snapshotas. Jis **nėra darbas**, nekeičia pageidavimų, workload, poilsio ar fairness ir dar nėra operacinis `backup_assignments` įrašas. Tik paskelbus SYSTEM grafiką peržiūrėtas planas tampa operaciniu dublių planu.
+
+## V2.5.117 — Grafiko tvirtinimas ir WESTON balansas
+
+ŠR paskyra turi `Grafikas → Grafiko tvirtinimas` valdymą tiek Paprastame, tiek Išplėstiniame režime. Sąsajos režimas keičia tik techninės informacijos kiekį, bet ne operatoriaus teises. Veiksmai registruojami kaip ŠR; SP paskyra neperimama.
+
+`Kreditai` yra operacinė skiltis ir rodoma abiejuose sąsajos režimuose. SP ir ŠR joje papildomai mato tą patį persistent WESTON ledgerį: SP kaip skolą / neigiamą balansą, ŠR kaip gautiną / teigiamą balansą.

@@ -1,0 +1,16 @@
+V2.5.117 CONFIRMATION + WESTON CREDITS — TEST REPORT
+
+PASS — Python compile: app.py, db.py, scheduler_engine.py, solver_runner.py.
+PASS — Static regression: ŠR lifecycle_operator_ui is independent of Simple/Advanced mode.
+PASS — Static regression: Credits tab is present outside Advanced-only navigation.
+PASS — Static regression: WESTON balance is rendered in Credits for SP and ŠR from the same persistent ledger.
+PASS — V2.5.116 draft backup oversight regression preserved.
+PASS — V2.5.114 WESTON mirror regression preserved.
+PASS — V2.5.115 theoretical-backup September regression preserved: theoretical standbys remain isolated; only COMPLETED cover becomes ACTUAL work.
+
+Behavioral result:
+- ŠR always sees Grafikas → Grafiko tvirtinimas, including Simple mode.
+- SP remains the primary senior; ŠR actions are still performed/audited as ŠR.
+- Credits is now an operational tab available in both interface modes.
+- SP sees WESTON as debt/negative balance; ŠR sees the identical ledger as gain/positive balance.
+- No Supabase migration required.

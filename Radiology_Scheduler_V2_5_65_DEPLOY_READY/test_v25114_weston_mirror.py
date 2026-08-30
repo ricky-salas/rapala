@@ -3,7 +3,7 @@ import hashlib
 
 base=Path(__file__).parent
 app=(base/'app.py').read_text(encoding='utf-8')
-assert 'APP_VERSION = "2.5.115 THEORETICAL BACKUP LAYER"' in app
+assert 'APP_VERSION = "2.5.117 CONFIRMATION + WESTON CREDITS"' in app
 assert 'SENIOR_INITIALS = "SP"' in app
 assert 'RESEARCHER_INITIALS = "ŠR"' in app
 assert 'WESTON_CREDITOR_INITIALS = RESEARCHER_INITIALS' in app
