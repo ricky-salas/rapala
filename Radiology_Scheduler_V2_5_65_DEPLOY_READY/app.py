@@ -50,7 +50,7 @@ import db
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.108 LIVE WISH COMPARISON"
+APP_VERSION = "2.5.109 EXCEL SCHEDULE EXPORT"
 EXPECTED_ENGINE_API_VERSION = "2.5.108"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "SR"
@@ -2671,6 +2671,38 @@ def build_xlsx(y,m,result,document_status=None,backup_rows_override=None):
             for c,v in enumerate(row): bk.write(rr,c,"" if pd.isna(v) else v,cell)
     wb.close(); out.seek(0); return out.getvalue()
 
+def render_schedule_download_buttons(y,m,result,*,status_label,file_prefix,key_prefix,backup_rows_override=None):
+    """Explicit schedule exports next to every operational schedule view.
+
+    Streamlit's dataframe toolbar exposes CSV only. This helper makes the same
+    displayed schedule downloadable as a formatted Excel workbook as well, while
+    retaining an explicit CSV option for users who prefer flat data.
+    """
+    if result is None:
+        return
+    excel_label=("ATSISIŲSTI EXCEL (.xlsx)" if lang=="LT" else "DOWNLOAD EXCEL (.xlsx)")
+    csv_label=("ATSISIŲSTI CSV (.csv)" if lang=="LT" else "DOWNLOAD CSV (.csv)")
+    c_excel,c_csv=st.columns(2)
+    with c_excel:
+        st.download_button(
+            excel_label,
+            build_xlsx(y,m,result,document_status=status_label,backup_rows_override=backup_rows_override),
+            file_name=f"{file_prefix}_{y}_{m:02d}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key=f"{key_prefix}_xlsx_{y}_{m}",
+        )
+    with c_csv:
+        st.download_button(
+            csv_label,
+            schedule_list_df(y,m,result).to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"{file_prefix}_{y}_{m:02d}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key=f"{key_prefix}_csv_{y}_{m}",
+        )
+
+
 def _truthy_cfg(value,default=False):
     if value is None or str(value).strip()=="": return bool(default)
     return str(value).strip().lower() in ("1","true","yes","on","y")
@@ -4852,6 +4884,17 @@ if senior_mode:
                  "The score is recalculated live by the current engine.")
             )
             st.dataframe(style_schedule(schedule_grid(year,month,dr)),use_container_width=True,height=520)
+            st.caption(
+                "Lentelės viršuje Streamlit siūlo CSV. Žemiau visada pateikiamas ir pilnas spalvotas Excel failas."
+                if lang=="LT" else
+                "Streamlit offers CSV in the table toolbar. A full formatted Excel workbook is always available below as well."
+            )
+            render_schedule_download_buttons(
+                year,month,dr,
+                status_label=("SYSTEM JUODRAŠTIS" if lang=="LT" else "SYSTEM DRAFT"),
+                file_prefix="SYSTEM_juodrastis" if lang=="LT" else "SYSTEM_draft",
+                key_prefix="generation_draft_export",
+            )
 
         # V2.5.22 — senior-only safe month reset.
         state_now=db.get_schedule_state(year,month)
@@ -4949,13 +4992,22 @@ with tabs[pos]:
             fp=lifecycle.get("final_json")
             if fp:
                 fr=refresh_result_payload(fp,year,month,use_actual_backups=True)
-                st.download_button(
-                    "ATSISIŲSTI FINAL EXCEL ADMINISTRACIJAI" if lang=="LT" else "DOWNLOAD FINAL EXCEL FOR ADMINISTRATION",
-                    build_xlsx(year,month,fr,document_status="FINAL — ADMINISTRACIJAI" if lang=="LT" else "FINAL — FOR ADMINISTRATION",backup_rows_override=lifecycle.get("final_backups") or []),
-                    file_name=f"FINAL_grafikas_{year}_{month:02d}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary",use_container_width=True,key=f"final_xlsx_{year}_{month}"
-                )
+                _fc1,_fc2=st.columns(2)
+                with _fc1:
+                    st.download_button(
+                        "ATSISIŲSTI FINAL EXCEL ADMINISTRACIJAI" if lang=="LT" else "DOWNLOAD FINAL EXCEL FOR ADMINISTRATION",
+                        build_xlsx(year,month,fr,document_status="FINAL — ADMINISTRACIJAI" if lang=="LT" else "FINAL — FOR ADMINISTRATION",backup_rows_override=lifecycle.get("final_backups") or []),
+                        file_name=f"FINAL_grafikas_{year}_{month:02d}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary",use_container_width=True,key=f"final_xlsx_{year}_{month}"
+                    )
+                with _fc2:
+                    st.download_button(
+                        "ATSISIŲSTI FINAL CSV" if lang=="LT" else "DOWNLOAD FINAL CSV",
+                        schedule_list_df(year,month,fr).to_csv(index=False).encode("utf-8-sig"),
+                        file_name=f"FINAL_grafikas_{year}_{month:02d}.csv",
+                        mime="text/csv",use_container_width=True,key=f"final_csv_{year}_{month}"
+                    )
                 if smtp_ready() and st.button("PAKARTOTI TIK NEPAVYKUSIUS FINAL PRANEŠIMUS" if lang=="LT" else "RETRY FAILED FINAL NOTIFICATIONS",use_container_width=True,key=f"resend_final_mail_{year}_{month}"):
                     mailres=retry_failed_lifecycle_notifications(year,month,"final")
                     if mailres: st.dataframe(localized_delivery_rows(mailres),use_container_width=True,hide_index=True)
@@ -5103,6 +5155,14 @@ with tabs[pos]:
             st.markdown("### Galutinis patvirtinimas" if lang=="LT" else "### Final confirmation")
             candidate_payload=payload or draft_payload
             candidate_result=refresh_result_payload(candidate_payload,year,month,use_actual_backups=bool(payload)) if candidate_payload else None
+            if candidate_result is not None:
+                candidate_is_actual=bool(payload)
+                render_schedule_download_buttons(
+                    year,month,candidate_result,
+                    status_label=(("ACTUAL — PRIEŠ FINAL" if lang=="LT" else "ACTUAL — BEFORE FINAL") if candidate_is_actual else ("SYSTEM JUODRAŠTIS — PRIEŠ TVIRTINIMĄ" if lang=="LT" else "SYSTEM DRAFT — BEFORE CONFIRMATION")),
+                    file_prefix=("ACTUAL_pries_FINAL" if candidate_is_actual else "SYSTEM_juodrastis_pries_tvirtinima"),
+                    key_prefix="finalization_candidate_export",
+                )
             hard=int(((candidate_result.stats or {}).get("global",{}) if candidate_result else {}).get("hard_errors",999))
             blockers=db.finalization_blockers_v2591(year,month)
             unresolved=(int(blockers.get("pending_normal",0))+int(blockers.get("waiting_senior_apply",0))+int(blockers.get("pending_backup",0))+int(blockers.get("active_late_grants",0))+int(blockers.get("unreviewed_manual_overrides",0)))
@@ -5214,9 +5274,12 @@ with tabs[pos]:
                     st.rerun()
         if state!="final":
             st.caption("Tai dabartinis ACTUAL grafikas. Administracijai skirtas FINAL Excel atsiras tik po galutinio operatoriaus patvirtinimo." if lang=="LT" else "This is the current ACTUAL schedule. The administration FINAL Excel appears only after final operator confirmation.")
-            c1,c2=st.columns(2)
-            with c1: st.download_button("ACTUAL Excel" if lang=="LT" else "ACTUAL Excel",build_xlsx(year,month,result,document_status="ACTUAL"),file_name=f"ACTUAL_grafikas_{year}_{month:02d}.xlsx",mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
-            with c2: st.download_button(tr("download_csv"),schedule_list_df(year,month,result).to_csv(index=False).encode("utf-8-sig"),file_name=f"ACTUAL_grafikas_{year}_{month:02d}.csv",mime="text/csv",use_container_width=True)
+            render_schedule_download_buttons(
+                year,month,result,
+                status_label="ACTUAL",
+                file_prefix="ACTUAL_grafikas",
+                key_prefix="actual_schedule_export",
+            )
 pos+=1
 
 # --- Summary ---

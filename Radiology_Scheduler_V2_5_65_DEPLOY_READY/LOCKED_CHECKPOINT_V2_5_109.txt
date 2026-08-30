@@ -1,0 +1,9 @@
+V2.5.109 EXCEL SCHEDULE EXPORT — LOCKED CHECKPOINT
+
+- Sudarymas generated SYSTEM draft: explicit XLSX + CSV.
+- Grafiko tvirtinimas candidate before FINAL: explicit XLSX + CSV.
+- ACTUAL schedule: explicit XLSX + CSV.
+- FINAL administration schedule: XLSX + CSV.
+- XLSX uses existing formatted build_xlsx workbook (Grafikas/Schedule, Suvestinė/Summary, Dubliai/Backups).
+- No database migration.
+- No scheduler/solver behavior changed.

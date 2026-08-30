@@ -657,3 +657,12 @@ If the strict structural 0–1 fairness corridor is incompatible with the mandat
 ## V2.5.108 — LIVE wish comparison
 
 In the ŠR research window `AVAILABLE GPT + HUMAN vs MY ENGINE`, choose **LIVE APP WISHES / HARD** when the selected month's real requests exist in the app database. The app previews and freezes that exact input snapshot at case lock. **The same frozen snapshot is used for both schedules**: the real/manual GPT+human schedule and MY ENGINE. Wishes are never reconstructed from the final hand-made schedule. After Run 1, the app shows a direct request-by-request fulfilment comparison.
+
+## V2.5.109 — Excel download in Generation and Schedule control
+
+- In **Generation**, every generated SYSTEM draft now has explicit **DOWNLOAD EXCEL (.xlsx)** and **DOWNLOAD CSV (.csv)** buttons below the grid.
+- In **Schedule → Finalization**, the current candidate can be downloaded in both formats **before FINAL confirmation**.
+- The current **ACTUAL** schedule also always exposes both formats.
+- After **FINAL** is locked, the formatted administration Excel remains the primary file and a FINAL CSV is available beside it.
+- The Excel workbook preserves the schedule grid, resident colors, Summary sheet, and Backups sheet. Streamlit's built-in top-right “Download as CSV” is therefore no longer the only export route.
+

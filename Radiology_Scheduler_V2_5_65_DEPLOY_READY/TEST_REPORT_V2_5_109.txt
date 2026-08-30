@@ -1,0 +1,21 @@
+V2.5.109 TEST REPORT — EXCEL SCHEDULE EXPORT
+
+PASS — app_version_2_5_109
+PASS — engine_api_unchanged
+PASS — shared_export_helper
+PASS — draft_export
+PASS — pre_final_export
+PASS — actual_export
+PASS — final_excel
+PASS — final_csv
+PASS — xlsx_mime
+PASS — xlsx_builder_intact
+PASS — Python compile: app.py / db.py / scheduler_engine.py
+PASS — shared export helper calls build_xlsx for .xlsx and schedule_list_df for .csv
+PASS — Sudarymas draft has explicit XLSX + CSV buttons
+PASS — Grafiko tvirtinimas candidate before FINAL has explicit XLSX + CSV buttons
+PASS — ACTUAL view has explicit XLSX + CSV buttons
+PASS — FINAL view has administration XLSX + FINAL CSV
+PASS — existing formatted Excel builder retained (Schedule + Summary + Backups sheets)
+PASS — no Supabase schema migration required
+NOTE — solver behavior is unchanged; scheduler_engine API remains 2.5.108.

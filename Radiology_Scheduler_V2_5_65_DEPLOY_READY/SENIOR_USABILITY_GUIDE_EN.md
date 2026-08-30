@@ -139,3 +139,7 @@ ACTUAL schedule and ACTUAL fairness change. The SYSTEM publication baseline rema
 ## V2.5.107 quick check after GENERATE
 
 After generation, `Generation` must show four numbers: **Active wishes**, **Honored**, **Missed**, and **Cannot-work violations**. The last number must be **0** in every SYSTEM draft. If `Missed = 0`, the green **“ALL ACTIVE WISHES MET”** message must be visible. If `Missed > 0`, review the adjacent **UNMET WISHES** table before publication.
+
+### V2.5.109 — schedule export
+Generation and Schedule control no longer rely only on the dataframe toolbar CSV export. Explicit **Excel (.xlsx)** and **CSV (.csv)** buttons are shown below the schedule. Excel is available immediately after generation, before FINAL, from ACTUAL, and after FINAL confirmation.
+

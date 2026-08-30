@@ -899,3 +899,12 @@ Kai griežtas struktūrinis 0–1 fairness koridorius nesuderinamas su privalomu
 ## V2.5.108 — LIVE pageidavimų palyginimas
 
 ŠR tyrimo lange `AVAILABLE GPT + HUMAN vs MY ENGINE` galima pasirinkti **LIVE APP WISHES / HARD**. Šis režimas paima pasirinkto mėnesio realius pageidavimus tiesiai iš programos duomenų bazės, prieš užrakinimą parodo jų suvestinę ir sukuria nekintamą snapshot. **Tas pats snapshot naudojamas abiem grafikams**: rankiniam / GPT+human ir MY ENGINE. Galutinis rankinis grafikas niekada nenaudojamas pageidavimams atkurti. Po Run 1 rodoma tiesioginė kiekvieno pageidavimo išpildymo lentelė.
+
+## V2.5.109 — Excel atsisiuntimas Sudaryme ir Grafiko tvirtinime
+
+- **Sudarymas** lange po sugeneruotu SYSTEM juodraščiu visada rodomi du aiškūs mygtukai: **ATSISIŲSTI EXCEL (.xlsx)** ir **ATSISIŲSTI CSV (.csv)**.
+- **Grafikas → Grafiko tvirtinimas** lange tas pats kandidatas gali būti atsisiųstas Excel ir CSV formatu dar **prieš FINAL patvirtinimą**.
+- Dabartiniam **ACTUAL** grafikui taip pat visada rodomi abu formatai.
+- Užrakinus **FINAL**, administracijai skirta spalvota Excel versija lieka pagrindinis failas, o šalia pateikiamas ir FINAL CSV.
+- Excel faile išlaikomas grafiko tinklelis, rezidentų spalvos, Suvestinė ir Dublių lapas. Streamlit lentelės viršutiniame dešiniajame kampe esantis „Download as CSV“ nėra vienintelis eksportas.
+

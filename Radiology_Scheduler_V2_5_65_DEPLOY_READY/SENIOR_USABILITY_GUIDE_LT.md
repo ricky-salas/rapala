@@ -226,3 +226,7 @@ Tai keičia ACTUAL operational grafiką ir ACTUAL fairness statistiką. SYSTEM p
 ## V2.5.107 greita patikra po GENERUOTI
 
 Po generavimo `Sudarymas` turi rodyti keturis skaičius: **Aktyvūs pageidavimai**, **Įvykdyta**, **Neįvykdyta**, **Negaliu dirbti pažeidimai**. Paskutinis skaičius SYSTEM juodraštyje privalo būti **0**. Jei `Neįvykdyta = 0`, turi būti matoma žalia žinutė **„VISI AKTYVŪS PAGEIDAVIMAI ĮVYKDYTI“**. Jei `Neįvykdyta > 0`, prieš publikavimą peržiūrėkite šalia esančią **NEĮVYKDYTI PAGEIDAVIMAI** lentelę.
+
+### V2.5.109 — grafiko eksportas
+Sudaryme ir Grafiko tvirtinime nebereikia naudotis vien tik lentelės viršuje esančiu CSV eksportu. Po grafiku visada yra atskiri **Excel (.xlsx)** ir **CSV (.csv)** mygtukai. Excel galima atsisiųsti iš karto po generavimo, prieš FINAL, iš ACTUAL būsenos ir po FINAL patvirtinimo.
+
