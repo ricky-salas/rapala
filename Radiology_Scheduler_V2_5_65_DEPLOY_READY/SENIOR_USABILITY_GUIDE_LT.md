@@ -1,16 +1,16 @@
 # DABARTINĖ OPERACINĖ POLITIKA — V2.5.112
 
-> Ši V2.5.112 politika yra viršesnė už žemiau likusias istorines versijų pastabas: `Negaliu dirbti` = 0 pažeidimų; savaitgaliai skirstomi ADMIN RAW water-fill principu ir jų negalima „nusipirkti“ pageidavimu; SR+ŠR+GE Dream Team siekiama kartu CENTRO RO kartą per savaitę; AUTO dubliai/pavadavimai water-fill'inami automatiškai; savanoriškas swapas keičia ACTUAL tik po abiejų rezidentų sutikimo ir SR galutinio APPROVE.
+> Ši V2.5.112 politika yra viršesnė už žemiau likusias istorines versijų pastabas: `Negaliu dirbti` = 0 pažeidimų; savaitgaliai skirstomi ADMIN RAW water-fill principu ir jų negalima „nusipirkti“ pageidavimu; SP+ŠR+GE Dream Team siekiama kartu CENTRO RO kartą per savaitę; AUTO dubliai/pavadavimai water-fill'inami automatiškai; savanoriškas swapas keičia ACTUAL tik po abiejų rezidentų sutikimo ir SP galutinio APPROVE.
 
-# V2.5.112 — ADMIN WATER-FILL + DREAM TEAM + AUTO DUBLIAI + SR GATE + WESTON
+# V2.5.112 — ADMIN WATER-FILL + DREAM TEAM + AUTO DUBLIAI + SP GATE + WESTON
 
 - **SYSTEM savaitgaliai nebėra rezidento pasirinkimas.** Konkretus „Pageidauju dirbti“ šeštadienį / sekmadienį ir senas savaitgalio krypties nustatymas negali nupirkti papildomo savaitgalio krūvio. Generatorius pirmiausia ieško **mažiausio matematiškai įmanomo RAW šeštadienių, sekmadienių ir bendro savaitgalio spread**, saugodamas 0 „Negaliu dirbti“ pažeidimų, saugą, coverage ir tikslų krūvį.
 - Jei 0–1 neįmanoma, engine **neapsimeta**, kad lygybė pasiekta: tikrina 1 → 2 → 3 → 4 ir užrakina pirmą įmanomą koridorių. Po publikavimo savanoriški swapai gali pakeisti ACTUAL balansą, bet SYSTEM baseline nekeičiamas.
-- **Dream Team SR + ŠR + GE** prioritetiškai statomi kartu į **CENTRO RO bent vieną AM arba PM bloką kiekvieną atstovaujamą kalendorinę savaitę**, jei tai nepažeidžia aukštesnių HARD taisyklių. Rodomas pasiektas savaičių skaičius.
+- **Dream Team SP + ŠR + GE** prioritetiškai statomi kartu į **CENTRO RO bent vieną AM arba PM bloką kiekvieną atstovaujamą kalendorinę savaitę**, jei tai nepažeidžia aukštesnių HARD taisyklių. Rodomas pasiektas savaičių skaičius.
 - **AUTO dubliai / pavadavimai sukuriami kartu su GENERUOTI paspaudimu**, todėl jie iš karto matomi juodraščio statistikoje, Excel „Dubliai“ lape ir asmeniniame grafike. Privalomi: SPS RO, SPS UG, Centro UG 120 rytas ir Onko RO. CENTRO RO naudojamas tik kaip best-effort fairness filler: keliami mažesnį backup krūvį turintys žmonės iki privalomų dublių viršutinio sluoksnio, bet optional dubliai negali sukurti naujos nelygybės.
 - Rezidento dublio claim yra tik tie-break lygiame sluoksnyje; jis negali aplenkti backup water-fill. Dublis niekada neplanuojamas per „Negaliu dirbti“ bloką.
-- **Swapas ACTUAL pritaikomas tik po 3 žingsnių:** iniciatorius → kitas rezidentas sutinka → **SR galutinai APPROVE / DECLINE**. SR mato visus normalius ir dublių swapus. Swapai gali sąmoningai pralaužti SYSTEM fairness; tai lieka matoma kaip ACTUAL pokytis.
-- **WESTON:** kiekvienas SR paspaudimas `GENERUOTI / PERKURTI` = +1 WESTON beer. Skaitiklis saugomas DB ir rodomas SR statistikoje.
+- **Swapas ACTUAL pritaikomas tik po 3 žingsnių:** iniciatorius → kitas rezidentas sutinka → **SP galutinai APPROVE / DECLINE**. SP mato visus normalius ir dublių swapus. Swapai gali sąmoningai pralaužti SYSTEM fairness; tai lieka matoma kaip ACTUAL pokytis.
+- **WESTON:** kiekvienas SP paspaudimas `GENERUOTI / PERKURTI` = +1 WESTON beer. Skaitiklis saugomas DB ir rodomas SP statistikoje.
 
 # V2.5.100 — EMAIL LIFECYCLE + DURABLE OUTBOX
 
@@ -39,7 +39,7 @@ Privalomas dublio dengimas yra pozicijomis paremtas: SPS RO ir SPS UG visada, Ce
 - **Šeštadieniai ir sekmadieniai nuo šiol yra dvi atskiros teisingumo kategorijos.** SYSTEM generavimo metu kiekviena jų water-fill'inama atskirai iki raw spread 0–1. Po publikavimo leidžiami abipusiai swapai / operaciniai pakeitimai gali ACTUAL balansą pakeisti; SYSTEM baseline auditui lieka nekintamas.
 - **Darbo dienos trukmės pageidavimas yra tikras aktyvus SOFT signalas.** Sistema pirmiausia nustato neutralų bendrą matematiškai reikalingų AM+PM dvigubų dienų kiekį. Tada, nekeisdama šio bendro kiekio, perskirsto jas pagal aktyvius 6 val. / 12 val. darbo pobūdžio pasirinkimus. Neutralus N/A žmogus nekonkuruoja su aiškiu pageidavimu. Todėl jei tik vienas rezidentas renkasi „dažniausiai 12 val.“, jis turi gauti kuo daugiau jau reikalingų 12 val. dienų, kiek leidžia ABSOLUTE/HARD, poilsis, tikslus mėnesio krūvis ir kritiniai SPS / šeštadienio / sekmadienio guardrailai.
 - **Vienodas pageidavimas visai grupei yra atskiras scarcity klausimas.** Galutinė taisyklė, kam pirmiau tenkinti ribotą vienodą pageidavimą, dar neužrakinama V2.5.97 ir bus apibrėžta atskirai.
-- **Operacinės nedarbo dienos:** SR (ir ŠR contingency operatorius Išplėstiniame režime) Grafiko lange gali pažymėti `Nedarbingumas`, `Kvalifikacijos kėlimas` arba `Sveikatinimosi diena`. Žyma spalvinama to rezidento spalva, išima jo tos dienos ACTUAL pamainas ir nekeičia SYSTEM baseline. Tiksli priežastis / pastaba rodoma tik lifecycle operatoriui.
+- **Operacinės nedarbo dienos:** SP (ir ŠR contingency operatorius Išplėstiniame režime) Grafiko lange gali pažymėti `Nedarbingumas`, `Kvalifikacijos kėlimas` arba `Sveikatinimosi diena`. Žyma spalvinama to rezidento spalva, išima jo tos dienos ACTUAL pamainas ir nekeičia SYSTEM baseline. Tiksli priežastis / pastaba rodoma tik lifecycle operatoriui.
 
 # V2.5.96 dabartinė taisyklė
 
@@ -232,3 +232,7 @@ Po generavimo `Sudarymas` turi rodyti keturis skaičius: **Aktyvūs pageidavimai
 ### V2.5.109 — grafiko eksportas
 Sudaryme ir Grafiko tvirtinime nebereikia naudotis vien tik lentelės viršuje esančiu CSV eksportu. Po grafiku visada yra atskiri **Excel (.xlsx)** ir **CSV (.csv)** mygtukai. Excel galima atsisiųsti iš karto po generavimo, prieš FINAL, iš ACTUAL būsenos ir po FINAL patvirtinimo.
 
+
+## V2.5.114 — WESTON skolos veidrodis
+
+SP paspaudus **GENERUOTI / PERKURTI**, esamas persistent WESTON ledgeris padidėja +1. Tas pats skaičius SP statistikoje rodomas kaip **skola ŠR**, o ŠR statistikoje — kaip **WESTON, kuriuos SP jam skolinga**. Tai nėra du atskiri skaitikliai: abi pusės visada mato tą patį lifetime ir pasirinkto mėnesio ledgerį.

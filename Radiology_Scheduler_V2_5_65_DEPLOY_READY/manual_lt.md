@@ -1,16 +1,16 @@
 # DABARTINĖ OPERACINĖ POLITIKA — V2.5.112
 
-> Ši V2.5.112 politika yra viršesnė už žemiau likusias istorines versijų pastabas: `Negaliu dirbti` = 0 pažeidimų; savaitgaliai skirstomi ADMIN RAW water-fill principu ir jų negalima „nusipirkti“ pageidavimu; SR+ŠR+GE Dream Team siekiama kartu CENTRO RO kartą per savaitę; AUTO dubliai/pavadavimai water-fill'inami automatiškai; savanoriškas swapas keičia ACTUAL tik po abiejų rezidentų sutikimo ir SR galutinio APPROVE.
+> Ši V2.5.112 politika yra viršesnė už žemiau likusias istorines versijų pastabas: `Negaliu dirbti` = 0 pažeidimų; savaitgaliai skirstomi ADMIN RAW water-fill principu ir jų negalima „nusipirkti“ pageidavimu; SP+ŠR+GE Dream Team siekiama kartu CENTRO RO kartą per savaitę; AUTO dubliai/pavadavimai water-fill'inami automatiškai; savanoriškas swapas keičia ACTUAL tik po abiejų rezidentų sutikimo ir SP galutinio APPROVE.
 
-# V2.5.112 — ADMIN WATER-FILL + DREAM TEAM + AUTO DUBLIAI + SR GATE + WESTON
+# V2.5.112 — ADMIN WATER-FILL + DREAM TEAM + AUTO DUBLIAI + SP GATE + WESTON
 
 - **SYSTEM savaitgaliai nebėra rezidento pasirinkimas.** Konkretus „Pageidauju dirbti“ šeštadienį / sekmadienį ir senas savaitgalio krypties nustatymas negali nupirkti papildomo savaitgalio krūvio. Generatorius pirmiausia ieško **mažiausio matematiškai įmanomo RAW šeštadienių, sekmadienių ir bendro savaitgalio spread**, saugodamas 0 „Negaliu dirbti“ pažeidimų, saugą, coverage ir tikslų krūvį.
 - Jei 0–1 neįmanoma, engine **neapsimeta**, kad lygybė pasiekta: tikrina 1 → 2 → 3 → 4 ir užrakina pirmą įmanomą koridorių. Po publikavimo savanoriški swapai gali pakeisti ACTUAL balansą, bet SYSTEM baseline nekeičiamas.
-- **Dream Team SR + ŠR + GE** prioritetiškai statomi kartu į **CENTRO RO bent vieną AM arba PM bloką kiekvieną atstovaujamą kalendorinę savaitę**, jei tai nepažeidžia aukštesnių HARD taisyklių. Rodomas pasiektas savaičių skaičius.
+- **Dream Team SP + ŠR + GE** prioritetiškai statomi kartu į **CENTRO RO bent vieną AM arba PM bloką kiekvieną atstovaujamą kalendorinę savaitę**, jei tai nepažeidžia aukštesnių HARD taisyklių. Rodomas pasiektas savaičių skaičius.
 - **AUTO dubliai / pavadavimai sukuriami kartu su GENERUOTI paspaudimu**, todėl jie iš karto matomi juodraščio statistikoje, Excel „Dubliai“ lape ir asmeniniame grafike. Privalomi: SPS RO, SPS UG, Centro UG 120 rytas ir Onko RO. CENTRO RO naudojamas tik kaip best-effort fairness filler: keliami mažesnį backup krūvį turintys žmonės iki privalomų dublių viršutinio sluoksnio, bet optional dubliai negali sukurti naujos nelygybės.
 - Rezidento dublio claim yra tik tie-break lygiame sluoksnyje; jis negali aplenkti backup water-fill. Dublis niekada neplanuojamas per „Negaliu dirbti“ bloką.
-- **Swapas ACTUAL pritaikomas tik po 3 žingsnių:** iniciatorius → kitas rezidentas sutinka → **SR galutinai APPROVE / DECLINE**. SR mato visus normalius ir dublių swapus. Swapai gali sąmoningai pralaužti SYSTEM fairness; tai lieka matoma kaip ACTUAL pokytis.
-- **WESTON:** kiekvienas SR paspaudimas `GENERUOTI / PERKURTI` = +1 WESTON beer. Skaitiklis saugomas DB ir rodomas SR statistikoje.
+- **Swapas ACTUAL pritaikomas tik po 3 žingsnių:** iniciatorius → kitas rezidentas sutinka → **SP galutinai APPROVE / DECLINE**. SP mato visus normalius ir dublių swapus. Swapai gali sąmoningai pralaužti SYSTEM fairness; tai lieka matoma kaip ACTUAL pokytis.
+- **WESTON:** kiekvienas SP paspaudimas `GENERUOTI / PERKURTI` = +1 WESTON beer. Skaitiklis saugomas DB ir rodomas SP statistikoje.
 
 # V2.5.100 — EMAIL LIFECYCLE + DURABLE OUTBOX
 
@@ -42,7 +42,7 @@
 - **Šeštadieniai ir sekmadieniai nuo šiol yra dvi atskiros teisingumo kategorijos.** SYSTEM generavimo metu kiekviena jų water-fill'inama atskirai iki raw spread 0–1. Po publikavimo leidžiami abipusiai swapai / operaciniai pakeitimai gali ACTUAL balansą pakeisti; SYSTEM baseline auditui lieka nekintamas.
 - **Darbo dienos trukmės pageidavimas yra tikras aktyvus SOFT signalas.** Sistema pirmiausia nustato neutralų bendrą matematiškai reikalingų AM+PM dvigubų dienų kiekį. Tada, nekeisdama šio bendro kiekio, perskirsto jas pagal aktyvius 6 val. / 12 val. darbo pobūdžio pasirinkimus. Neutralus N/A žmogus nekonkuruoja su aiškiu pageidavimu. Todėl jei tik vienas rezidentas renkasi „dažniausiai 12 val.“, jis turi gauti kuo daugiau jau reikalingų 12 val. dienų, kiek leidžia ABSOLUTE/HARD, poilsis, tikslus mėnesio krūvis ir kritiniai SPS / šeštadienio / sekmadienio guardrailai.
 - **Vienodas pageidavimas visai grupei yra atskiras scarcity klausimas.** Galutinė taisyklė, kam pirmiau tenkinti ribotą vienodą pageidavimą, dar neužrakinama V2.5.97 ir bus apibrėžta atskirai.
-- **Operacinės nedarbo dienos:** SR (ir ŠR contingency operatorius Išplėstiniame režime) Grafiko lange gali pažymėti `Nedarbingumas`, `Kvalifikacijos kėlimas` arba `Sveikatinimosi diena`. Žyma spalvinama to rezidento spalva, išima jo tos dienos ACTUAL pamainas ir nekeičia SYSTEM baseline. Tiksli priežastis / pastaba rodoma tik lifecycle operatoriui.
+- **Operacinės nedarbo dienos:** SP (ir ŠR contingency operatorius Išplėstiniame režime) Grafiko lange gali pažymėti `Nedarbingumas`, `Kvalifikacijos kėlimas` arba `Sveikatinimosi diena`. Žyma spalvinama to rezidento spalva, išima jo tos dienos ACTUAL pamainas ir nekeičia SYSTEM baseline. Tiksli priežastis / pastaba rodoma tik lifecycle operatoriui.
 
 # V2.5.96 — DABARTINĖ FAIRNESS KONSTITUCIJA: MONTHLY BASELINE + LIVE ACTUAL, BE CATCH-UP
 
@@ -63,7 +63,7 @@
 
 ## 1. Vartotojų vaidmenys
 
-Kiekvienas žmogus turi atskirą paskyrą su el. paštu ir slaptažodžiu. Pirmos registracijos metu paskyra susiejama su konkrečia rezidento tapatybe naudojant vienkartinį kvietimo kodą. Viena paskyra gali būti susieta tik su vienu rezidentu. **SR** yra operacinė Seniūnė. **ŠR** turi rezidento / tyrėjo paskyrą ir Išplėstiniame režime gali naudoti kontingencines lifecycle administravimo funkcijas; kitų rezidentų paskyros yra rezidento-only.
+Kiekvienas žmogus turi atskirą paskyrą su el. paštu ir slaptažodžiu. Pirmos registracijos metu paskyra susiejama su konkrečia rezidento tapatybe naudojant vienkartinį kvietimo kodą. Viena paskyra gali būti susieta tik su vienu rezidentu. **SP** yra operacinė Seniūnė. **ŠR** turi rezidento / tyrėjo paskyrą ir Išplėstiniame režime gali naudoti kontingencines lifecycle administravimo funkcijas; kitų rezidentų paskyros yra rezidento-only.
 
 ### Rezidento profilis
 
@@ -553,9 +553,9 @@ Stebėtojo paskyra aktyvuojama atskiru vienkartiniu invite kodu ir po aktyvavimo
 
 Visi rezidentai turi **Tyrimas** skiltį, kurioje gali užpildyti trumpą bazinę („Prieš naudojimą“) arba vėlesnę („Po naudojimo“) anketą. Tie patys pagrindiniai 1–5 balų klausimai kartojami abiejuose etapuose, kad vėliau būtų galima skaičiuoti pokytį.
 
-ŠR ir SR turi papildomą tyrimo skydą. SR mato grupės lygio operacinius rodiklius ir agreguotas anketų suvestines; ŠR tyrėjo paskyra papildomai turi tyrimo kokybės kontrolės ir eksporto funkcijas.
+ŠR ir SP turi papildomą tyrimo skydą. SP mato grupės lygio operacinius rodiklius ir agreguotas anketų suvestines; ŠR tyrėjo paskyra papildomai turi tyrimo kokybės kontrolės ir eksporto funkcijas.
 
-Privatumas: SR mato tik grupės agreguotus anketų rezultatus ir anoniminius komentarus. ŠR tyrėjo vaizde papildomai prieinami deidentifikuoti individualūs įrašai su pseudoniminiu kodu; šiame lange rezidentų vardai ir inicialai prie atsakymų nerodomi. Tyrimo duomenys saugomi atskiroje lentelėje nuo grafiko pageidavimų.
+Privatumas: SP mato tik grupės agreguotus anketų rezultatus ir anoniminius komentarus. ŠR tyrėjo vaizde papildomai prieinami deidentifikuoti individualūs įrašai su pseudoniminiu kodu; šiame lange rezidentų vardai ir inicialai prie atsakymų nerodomi. Tyrimo duomenys saugomi atskiroje lentelėje nuo grafiko pageidavimų.
 
 Ši anketa yra projekto v0.1 instrumentas, o ne galutinai validuota psichometrinė skalė. Prieš formalų publikavimą klausimynas ir tyrimo protokolas turi būti metodologiškai peržiūrėti ir, jei reikia, suderinti su etikos / IRB tvarka.
 

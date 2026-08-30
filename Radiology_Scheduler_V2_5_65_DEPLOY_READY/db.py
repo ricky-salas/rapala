@@ -179,7 +179,7 @@ def save_preference(year: int, month: int, initials: str, payload: dict):
 def save_preference_for_resident_v2595(year: int, month: int, target_initials: str, payload: dict, reason: str):
     """Lifecycle-operator manual entry for another resident (or a late self-entry).
 
-    The backend authorizes SR/ŠR, preserves account identity, and writes an audit row.
+    The backend authorizes SP/ŠR, preserves account identity, and writes an audit row.
     """
     rows=_data(_retry_db(lambda: client().rpc("save_preferences_for_resident_v2595", {
         "p_year": int(year),
@@ -1626,7 +1626,7 @@ def record_research_shadow_run_v2545(
     return rows[0] if rows else {}
 
 # ---------------------------------------------------------------------------
-# V2.5.110 — SR WESTON beer ledger
+# V2.5.110 — SP WESTON beer ledger
 # ---------------------------------------------------------------------------
 def record_weston_beer_click_v25110(year: int, month: int) -> dict:
     rows=_data(_retry_db(lambda: client().rpc("record_weston_beer_click_v25110",{
@@ -1644,7 +1644,7 @@ def weston_beer_stats_v25110(year: int, month: int) -> dict:
     return {"total_beers":int(row.get("total_beers",0) or 0),"month_beers":int(row.get("month_beers",0) or 0)}
 
 # ---------------------------------------------------------------------------
-# V2.5.111 — SR leader gate for all voluntary swaps
+# V2.5.111 — SP leader gate for all voluntary swaps
 # ---------------------------------------------------------------------------
 def accept_backup_swap_participant_v25111(request_id: int) -> dict:
     rows=_data(_retry_db(lambda: client().rpc(

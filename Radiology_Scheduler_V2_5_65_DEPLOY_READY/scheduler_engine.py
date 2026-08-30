@@ -250,10 +250,10 @@ DEFAULT_PEOPLE = [
     {"initials": "MG", "name": "Maleckaitė Gabrielė", "target_adjustment": 0, "color": "#D1495B"},
     {"initials": "MŽ", "name": "Mažonavičius Ignas", "target_adjustment": 0, "color": "#9C6644"},
     {"initials": "GB", "name": "Grumblys Justinas", "target_adjustment": 0, "color": "#3A86FF"},
-    {"initials": "SK", "name": "Stašinskas Kipras", "target_adjustment": 0, "color": "#8338EC"},
+    {"initials": "SŠ", "name": "Stašinskas Kipras", "target_adjustment": 0, "color": "#8338EC"},
     {"initials": "VL", "name": "Volkovskaja Laura", "target_adjustment": 0, "color": "#D45087"},
     {"initials": "MR", "name": "Montvilaitė Reda", "target_adjustment": 0, "color": "#00A896"},
-    {"initials": "SR", "name": "Steponavičiūtė Rosita", "target_adjustment": -2, "color": "#E9C46A"},
+    {"initials": "SP", "name": "Steponavičiūtė Rosita", "target_adjustment": -2, "color": "#E9C46A"},
     {"initials": "ŠR", "name": "Šalaševičius Rapolas", "target_adjustment": 0, "color": "#43AA8B"},
     {"initials": "DU", "name": "Dulkė Sofija Ana", "target_adjustment": 0, "color": "#577590"},
     {"initials": "SN", "name": "Stankevičiūtė Vytautė", "target_adjustment": 0, "color": "#F9844A"},
@@ -715,7 +715,7 @@ NONCRITICAL_SPREAD_LAST_RESORT_CEILING = 3
 DOUBLE_SPREAD_MAX = 2
 
 # Internal allocation priority. Not part of resident preference scoring/UI.
-_PRIORITY_COLOCATION_GROUP = ("SR", "GE", "ŠR")
+_PRIORITY_COLOCATION_GROUP = ("SP", "GE", "ŠR")
 _PRIORITY_COLOCATION_MAX_PER_MONTH = 6
 
 # V2.5.53 WEEKLY LOAD / RECOVERY CONSTITUTION.
@@ -2113,7 +2113,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         for (pi,d),v in pm.items(): mb.c[v]+=(((pi+1)*29+d*11)%89)*1e-8
         for (pi,d),v in full.items(): mb.c[v]+=(((pi+1)*23+d*13)%83)*1e-8
         # Dream Team is an administrator rule above ordinary SOFT. Maximize the
-        # number of represented weeks with a common SR+GE+ŠR work block inside
+        # number of represented weeks with a common SP+GE+ŠR work block inside
         # the already-fixed weekend water-fill corridor.
         for wv in priority_colocation_week_vars:
             mb.c[wv]-=1000.0
@@ -2493,7 +2493,7 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
       * SPS RO/SPS UG and ordinary post water-fill are tried in the same ascending
         certified corridors;
       * weekend-volunteered SPS RO exposure is offset from the fairness burden;
-      * SR+GE+ŠR CENTRO RO co-location is maximized across every represented week;
+      * SP+GE+ŠR CENTRO RO co-location is maximized across every represented week;
         if all weeks cannot coexist with higher HARD/critical fairness, the engine
         returns the largest feasible weekly count and reports it explicitly;
       * Onko-zero residents are preferentially given at least one of the remaining
@@ -2744,7 +2744,7 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
     if assigned is None: return None
     stats=validate_schedule(year,month,people,slots,assigned,targets)
     g=stats.setdefault("global",{})
-    # V2.5.112 Dream Team audit: count weeks with SR+GE+ŠR together on the same
+    # V2.5.112 Dream Team audit: count weeks with SP+GE+ŠR together on the same
     # CENTRO RO AM or PM block in the final SYSTEM assignment.
     _dream_weeks=[]
     _dream_group=set(_PRIORITY_COLOCATION_GROUP)
@@ -2849,7 +2849,7 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "weekend_volunteer_counts":dict(pattern.get("weekend_volunteer_counts") or {}),
         "weekend_raw_counts":dict(pattern.get("weekend_raw_counts") or {}),
         "weekend_fair_counts":dict(pattern.get("weekend_fair_counts") or {}),
-        "weekend_volunteer_policy":"V2.5.112 ADMIN rule: SYSTEM uses RAW weekend/Saturday/Sunday water-fill. Weekend work/off wishes and the weekend-style slider are audit-only and cannot buy extra SYSTEM weekend exposure. The engine searches the tightest feasible raw cap before lower fairness/SOFT tiers. ACTUAL swaps may later change real exposure after SR approval.",
+        "weekend_volunteer_policy":"V2.5.112 ADMIN rule: SYSTEM uses RAW weekend/Saturday/Sunday water-fill. Weekend work/off wishes and the weekend-style slider are audit-only and cannot buy extra SYSTEM weekend exposure. The engine searches the tightest feasible raw cap before lower fairness/SOFT tiers. ACTUAL swaps may later change real exposure after SP approval.",
     })
     msg=(
         "OK — exact-workload fairness-first two-phase schedule. Mėnesio krūvio targetas kiekvienam rezidentui išlaikytas tiksliai; Onko skiriamas poromis ir ne dvi kalendorines dienas iš eilės; "

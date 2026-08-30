@@ -1,0 +1,14 @@
+V2.5.113 INITIALS CORRECTION + SP LEADER — LOCKED CHECKPOINT
+
+Canonical roster corrections:
+- SK -> SŠ (Stašinskas Kipras)
+- SR -> SP (Steponavičiūtė Rosita)
+
+Operational consequences:
+- SP is the senior scheduler and keeps target_adjustment = -2.
+- Dream Team = SP + ŠR + GE.
+- WESTON counter belongs to SP.
+- Final normal/backup swap gate belongs to SP.
+- Existing DB identity-linked data is migrated without account recreation.
+
+All V2.5.112 scheduling/water-fill/backup behavior otherwise remains unchanged.

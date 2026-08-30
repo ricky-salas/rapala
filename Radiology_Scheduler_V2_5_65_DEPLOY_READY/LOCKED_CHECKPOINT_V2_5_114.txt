@@ -1,0 +1,11 @@
+V2.5.114 LOCKED CHECKPOINT — WESTON DEBT MIRROR
+
+Baseline: V2.5.113 canonical initials.
+
+Change:
+- Existing SP WESTON generation-click ledger is mirrored as a two-sided running joke/account:
+  SP sees debt owed to ŠR; ŠR sees the same amount as WESTONs owed/gained.
+- Lifetime and selected-month figures come from one persistent ledger and therefore cannot diverge.
+
+No solver, water-fill, HARD, Dream Team, auto-backup, Excel export, lifecycle or swap-policy change.
+No Supabase migration required.

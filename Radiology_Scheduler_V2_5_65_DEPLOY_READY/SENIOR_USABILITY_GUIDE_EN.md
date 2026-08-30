@@ -1,16 +1,16 @@
 # CURRENT OPERATIONAL POLICY — V2.5.112
 
-> This V2.5.112 policy supersedes older historical version notes below: Cannot-work = zero violations; weekends use ADMIN RAW water-fill and cannot be bought through preference; SR+ŠR+GE Dream Team is targeted together at CENTRO RO once per week; AUTO backup duties are fairness-water-filled automatically; a voluntary swap changes ACTUAL only after both residents consent and SR gives final APPROVE.
+> This V2.5.112 policy supersedes older historical version notes below: Cannot-work = zero violations; weekends use ADMIN RAW water-fill and cannot be bought through preference; SP+ŠR+GE Dream Team is targeted together at CENTRO RO once per week; AUTO backup duties are fairness-water-filled automatically; a voluntary swap changes ACTUAL only after both residents consent and SP gives final APPROVE.
 
-# V2.5.112 — ADMIN WATER-FILL + DREAM TEAM + AUTO BACKUPS + SR GATE + WESTON
+# V2.5.112 — ADMIN WATER-FILL + DREAM TEAM + AUTO BACKUPS + SP GATE + WESTON
 
 - **SYSTEM weekends are no longer resident-selectable.** A specific Saturday/Sunday “Prefer to work” request and the legacy weekend-direction setting cannot buy extra weekend exposure. The generator first searches for the **tightest mathematically feasible RAW Saturday, Sunday and total-weekend spread**, while preserving zero Cannot-work violations, safety, coverage and exact workload.
 - If 0–1 is impossible, the engine does not pretend equality was achieved: it tests 1 → 2 → 3 → 4 and locks the first feasible corridor. Voluntary post-publication swaps may change ACTUAL balance, but never rewrite the SYSTEM baseline.
-- **Dream Team SR + ŠR + GE** is prioritized together at **CENTRO RO in at least one AM or PM block in every represented calendar week**, unless a higher HARD rule prevents it. The achieved-week count is shown explicitly.
+- **Dream Team SP + ŠR + GE** is prioritized together at **CENTRO RO in at least one AM or PM block in every represented calendar week**, unless a higher HARD rule prevents it. The achieved-week count is shown explicitly.
 - **AUTO backup duties are generated at the same Generate click**, so they immediately appear in draft statistics, the Excel Backups sheet and each personal schedule. Required scope: SPS RO, SPS UG, Centro UG 120 AM and Onko RO. CENTRO RO is used only as a best-effort fairness filler: low-backup residents are lifted toward the upper required-backup layer, but optional cover is stopped before it creates new inequality.
 - A resident backup claim is only a tie-break inside the equal-load layer; it cannot bypass backup water-fill. A backup is never planned through a Cannot-work block.
-- **An ACTUAL swap requires 3 steps:** requester → other resident consent → **SR final APPROVE / DECLINE**. SR sees all normal and backup swaps. Swaps may intentionally break SYSTEM fairness; the result remains visible as an ACTUAL change.
-- **WESTON:** each SR `GENERATE / REBUILD` click adds +1 WESTON beer. The counter is persisted in the database and shown in SR statistics.
+- **An ACTUAL swap requires 3 steps:** requester → other resident consent → **SP final APPROVE / DECLINE**. SP sees all normal and backup swaps. Swaps may intentionally break SYSTEM fairness; the result remains visible as an ACTUAL change.
+- **WESTON:** each SP `GENERATE / REBUILD` click adds +1 WESTON beer. The counter is persisted in the database and shown in SP statistics.
 
 # V2.5.100 — EMAIL LIFECYCLE + DURABLE OUTBOX
 
@@ -39,7 +39,7 @@ Mandatory backup coverage is position-based: SPS RO and SPS UG always, Centro UG
 - **Saturday and Sunday are separate fairness categories.** During SYSTEM generation each is independently water-filled to raw spread 0–1. Accepted post-publication swaps/operational changes may change ACTUAL balance while the SYSTEM baseline remains frozen for audit.
 - **Workday-length preference is a real active SOFT signal.** The solver first determines the neutral total pool of mathematically needed AM+PM double days. It then redistributes that fixed pool according to active 6-hour / 12-hour work-style choices without creating extra total double demand. A neutral N/A resident does not compete with an explicit preference. If only one resident asks for mostly 12-hour days, that resident should receive as many of the already-needed 12-hour days as feasible while ABSOLUTE/HARD, rest, exact workload and critical SPS/Saturday/Sunday guardrails remain valid.
 - **Group-wide identical preferences are a separate scarcity problem.** V2.5.97 does not yet lock a final rule for deciding whose identical scarce request is fulfilled first; that constitution will be defined separately.
-- **Operational non-working days:** SR (and ŠR as contingency lifecycle operator in Advanced mode) can mark `Sick leave`, `Qualification / training`, or `Wellness day` from the Schedule view. The marker uses the resident's color, removes that resident's ACTUAL assignments for the day, and does not rewrite SYSTEM. Exact reason/note is lifecycle-operator-only.
+- **Operational non-working days:** SP (and ŠR as contingency lifecycle operator in Advanced mode) can mark `Sick leave`, `Qualification / training`, or `Wellness day` from the Schedule view. The marker uses the resident's color, removes that resident's ACTUAL assignments for the day, and does not rewrite SYSTEM. Exact reason/note is lifecycle-operator-only.
 
 # V2.5.96 current rule
 
@@ -145,3 +145,7 @@ After generation, `Generation` must show four numbers: **Active wishes**, **Hono
 ### V2.5.109 — schedule export
 Generation and Schedule control no longer rely only on the dataframe toolbar CSV export. Explicit **Excel (.xlsx)** and **CSV (.csv)** buttons are shown below the schedule. Excel is available immediately after generation, before FINAL, from ACTUAL, and after FINAL confirmation.
 
+
+## V2.5.114 — WESTON debt mirror
+
+Each SP **GENERATE / REGENERATE** click adds +1 to the existing persistent WESTON ledger. SP sees that same number as **debt owed to ŠR**, while ŠR sees it as **WESTONs SP owes him**. These are not separate counters: both views always use the same lifetime and selected-month ledger.

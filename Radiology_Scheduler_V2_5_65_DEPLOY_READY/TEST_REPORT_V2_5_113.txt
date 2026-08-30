@@ -1,0 +1,51 @@
+V2.5.113 TEST REPORT — CANONICAL INITIALS CORRECTION + SP LEADER
+
+PASS 1 — Python compile
+- app.py
+- db.py
+- scheduler_engine.py
+- solver_runner.py
+- notification_core.py
+- notification_worker.py
+- test_v25113_initials.py
+Result: PASS
+
+PASS 2 — Canonical roster
+Expected corrected tokens:
+- SŠ — Stašinskas Kipras
+- SP — Steponavičiūtė Rosita
+Observed in DEFAULT_PEOPLE: PASS
+SP target_adjustment = -2: PASS
+Old operational tokens SK / SR absent from current app/engine/user manuals: PASS
+
+PASS 3 — Administrative identity bindings
+- SENIOR_INITIALS = SP
+- Dream Team = SP + ŠR + GE
+- WESTON UI follows SENIOR_INITIALS, therefore SP
+- final normal/backup swap UI gate follows SENIOR_INITIALS, therefore SP
+Result: PASS
+
+PASS 4 — Historical Excel compatibility
+Research preference/schedule import accepts legacy SK -> SŠ and SR -> SP aliases while exporting/using canonical corrected initials.
+Result: PASS
+
+PASS 5 — September 2026 solver regression using corrected initials
+Observed:
+- solve ok = True
+- ABSOLUTE HARD errors = 0
+- Dream Team weeks = 5 / 5
+- tightest ADMIN weekend cap used = 4
+Result: PASS
+
+PASS 6 — Production Supabase migration
+Migration: v2_5_113_initials_correction
+- linked resident_directory keys migrated SK -> SŠ and SR -> SP
+- user_profiles preserved and relinked
+- settings/preferences/audit/JSON identity tokens migrated in place
+- SP remains role=senior and target_adjustment=-2
+- WESTON CHECK moved from SR to SP
+- operational senior/WESTON/swap RPC bodies now authorize exact SP, not old SR
+Result: PASS
+
+NO SCHEDULER POLICY CHANGE
+V2.5.112 water-fill, Cannot-work, Dream Team frequency, auto-backup and swap policies are retained; this build corrects identity tokens and all identity-dependent bindings.

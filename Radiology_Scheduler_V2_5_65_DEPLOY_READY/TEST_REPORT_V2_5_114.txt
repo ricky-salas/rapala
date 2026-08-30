@@ -1,0 +1,52 @@
+V2.5.114 TEST REPORT — WESTON DEBT MIRROR
+
+PASS 1 — Python compile
+- app.py
+- db.py
+- scheduler_engine.py
+- solver_runner.py
+- test_v25114_weston_mirror.py
+Result: PASS
+
+PASS 2 — Canonical identities
+- SP = Steponavičiūtė Rosita / operational senior
+- ŠR = Šalaševičius Rapolas / WESTON creditor
+- WESTON_CREDITOR_INITIALS follows RESEARCHER_INITIALS = ŠR
+Result: PASS
+
+PASS 3 — One ledger, two views
+The UI reads the existing db.weston_beer_stats_v25110(year, month) ledger for both users.
+- SP view: lifetime + selected-month WESTON debt to ŠR
+- ŠR view: lifetime + selected-month WESTON amount owed/gain from SP
+No duplicate counter is created; debt and receivable therefore cannot diverge.
+Result: PASS
+
+PASS 4 — Generate click semantics
+SP Generate / Regenerate still records exactly one call to record_weston_beer_click_v25110 per button press before generation.
+UI confirmation now explicitly says +1 debt to ŠR.
+Result: PASS
+
+PASS 5 — Personal visibility
+Mirrored WESTON totals are shown in:
+- SP Generation screen
+- SP/ŠR Summary statistics
+- SP/ŠR Transparency/personal statistics
+- SP/ŠR personal Calendar/Schedule view
+Result: PASS
+
+PASS 6 — Scheduler regression boundary
+V2.5.113 September regression was rerun from the V2.5.114 package before packaging:
+- solve ok = True
+- ABSOLUTE HARD errors = 0
+- Dream Team = 5 / 5 weeks
+- tightest ADMIN weekend cap used = 4
+Result: PASS
+
+PASS 7 — No scheduler / DB regression
+scheduler_engine.py SHA-256 is byte-identical to V2.5.113.
+db.py SHA-256 is byte-identical to V2.5.113.
+No Supabase migration is required; existing canonical SP WESTON ledger is reused.
+Result: PASS
+
+SCOPE
+This release is presentation/accounting only. It does not change water-fill, HARD constraints, Dream Team, backup generation, Excel export, lifecycle, or swap approval behavior.

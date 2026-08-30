@@ -50,11 +50,12 @@ import db
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.112 ADMIN WATERFILL + DREAM TEAM + AUTO BACKUPS + SR GATE + WESTON"
+APP_VERSION = "2.5.114 WESTON DEBT MIRROR"
 EXPECTED_ENGINE_API_VERSION = "2.5.112"
 BASE = Path(__file__).parent
-SENIOR_INITIALS = "SR"
+SENIOR_INITIALS = "SP"
 RESEARCHER_INITIALS = "ŠR"
+WESTON_CREDITOR_INITIALS = RESEARCHER_INITIALS  # SP generation clicks are owed to ŠR
 DEFAULT_SUPABASE_URL = "https://gqdlwhjgwqmuoolybusy.supabase.co"
 DEFAULT_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_kHX4M55rZoHJr61S9kzdLg_tgKN-oDI"
 DEFAULT_MANUAL_LT = (BASE / "manual_lt.md").read_text(encoding="utf-8")
@@ -115,7 +116,7 @@ TR = {
 "generation_title":"Grafiko sudarymas ir paskelbimas","senior_only":"Šią funkciją gali atlikti tik seniūnė.","generate_draft":"GENERUOTI / PERKURTI JUODRAŠTĮ","solver_wait":"Sistema ieško geriausio sprendinio...",
 "draft_saved":"Juodraštis sukurtas. Oficialus grafikas dar nepakeistas.","no_solution":"Pagal dabartines kietas taisykles tinkamo grafiko rasti nepavyko.","publish":"PASKELBTI IR UŽRAKINTI",
 "published":"Grafikas paskelbtas ir pradinė versija užrakinta.","publication_mail":"Paskelbimo laiškai","no_draft":"Nėra juodraščio, kurį būtų galima paskelbti.","draft_outdated":"Po juodraščio sukūrimo pasikeitė pageidavimai, ilgalaikės taisyklės arba bonusų pasirinkimas. Perkurkite juodraštį prieš paskelbiant.","state":"Būsena","draft":"Juodraštis","published_state":"Paskelbtas","not_created":"Nesukurtas",
-"hard_errors":"Privalomų taisyklių klaidos","fairness_score":"Teisingumo rodiklis","monthly_fairness":"Mėnesio teisingumas","cumulative_fairness":"Kaupiamasis teisingumas","fairness_hierarchy":"Grafiko vertinimo hierarchija","fairness_hierarchy_intro":"TRUE ABSOLUTE HARD → RESIDENT HARD „Negaliu dirbti“ (0 pažeidimų privaloma) → ADMIN RAW savaitgalių / šeštadienių / sekmadienių water-filling mažiausiu įmanomu spread (savaitgalio pageidavimai jo neapeina) → Dream Team SR+ŠR+GE kartu CENTRO RO bent kartą kiekvieną darbo savaitę, jei matematiškai įmanoma → SPS RO/SPS UG ir VISŲ kitų postų water-filling mažiausiu įmanomu spread → savaitinio krūvio / recovery fairness → kiti SOFT pageidavimai. Po publikavimo savanoriški swapai gali pakeisti ACTUAL balansą, bet tik po abiejų rezidentų sutikimo ir SR galutinio patvirtinimo.","hard_validity":"ABSOLUTE HARD atitiktis","hard_validity_pass":"0 ABSOLUTE HARD klaidų — tinkama","hard_validity_fail":"Yra ABSOLUTE HARD klaidų — negalima skelbti","fairness_monthly_explain":"Mėnesio teisingumas vertina tik pasirinktą mėnesį. Jis gali būti mažesnis net sąmoningai, jei šis mėnuo taiso ankstesnių mėnesių nelygybę.","fairness_cumulative_explain":"Kaupiamasis teisingumas sumuoja visus sistemoje paskelbtus ankstesnius mėnesius ir šį mėnesį. Tai pagrindinis ilgalaikio grupės lygumo rodiklis.","fairness_100_note":"100% reiškia, kad SYSTEM struktūrinis krūvis yra optimaliai subalansuotas pagal galiojančius HARD apribojimus. Savaitgalio „Pageidauju dirbti“ NEGALI nusipirkti papildomų savaitgalių: SYSTEM vertina raw šeštadienių, sekmadienių ir bendrą savaitgalių krūvį. Po publikavimo savanoriškas ACTUAL swapas gali balansą pakeisti tik po abiejų rezidentų sutikimo ir SR galutinio patvirtinimo.","fairness_formula_month":"Mėnesio formulė: 100 − 18× savaitgalių skirtumas − 7× penktadienių skirtumas − 4× dublių skirtumas − 2× darbo dienų skirtumas.","fairness_formula_cumulative":"Kaupiamojo teisingumo formulė tokia pati, bet kiekvienas skirtumas skaičiuojamas iš visų paskelbtų mėnesių sukauptų sumų.","fairness_breakdown":"Teisingumo išskaidymas","fairness_penalty":"Baudos taškai","fairness_scope":"Apimtis","fairness_metric":"Komponentas","fairness_spread":"Skirtumas (didž.−maž.)","fairness_history":"Teisingumo istorija","fairness_history_help":"Grafike mėnesio teisingumas parodo konkretaus mėnesio lygumą, o kaupiamasis teisingumas — ar sistema laikui bėgant artėja prie lygaus bendro krūvio.","fairness_ledger":"Sistemos teisingumo apskaita","actual_ledger":"Faktinio darbo apskaita","fairness_swap_neutral":"Abipusis savanoriškas apsikeitimas nekeičia teisingumo apskaitos: keičiasi faktinis darbas, bet ne algoritmo paskirstymo vertinimas.","fairness_forced_change":"Pateisinamas post-publication repair (liga, atostogos, force majeure, kritinis SPS pull-down) registruojamas ACTUAL audite, bet NEKEIČIA SYSTEM fairness / spread / postų istorijos. Savanoriški swapai taip pat fairness-neutral; keičiasi tik faktinis grafikas ir retrospektyvinis request satisfaction.","fairness_no_history":"Dar nėra pakankamai paskelbtų mėnesių teisingumo istorijai.","fairness_priority_table":"Ką reiškia hierarchija","fairness_level":"Lygis","fairness_goal":"Tikslas","fairness_interpretation":"Kaip interpretuoti","fairness_hard_goal":"ABSOLUTE HARD: 0 saugos / fizinio neįmanomumo pažeidimų","voluntary_unpopular_goal":"Vykdyti aiškiai savanoriškai pasirinktą nepopuliarų darbą, kai tai nepažeidžia HARD / saugos / coverage. Savaitgalio savanoriškas darbas gali būti virš RAW water-fill, nes fairness skaičiuoja likusį nesavanorišką krūvį.","voluntary_unpopular_explain":"Savaitgalio „Pageidauju dirbti“ yra savanoriškas nepopuliaraus darbo pasirinkimas: generatorius pirmiausia stengiasi jį įvykdyti, jei leidžia HARD / poilsis / coverage. Tokia savanoriška pamaina gali padidinti RAW šeštadienių ar sekmadienių spread, o fairness 0–1 taikomas likusiam nesavanoriškam krūviui. Po publikavimo ACTUAL swapai gali balansą keisti papildomai.","other_preferences_goal":"SOFT: griežtai SOFT-1 → SOFT-2 → SOFT-3; kiekviename range pirmiausia horizontalus water-filling, po to likęs įmanomas išpildymas","other_preferences_explain":"SOFT pageidavimai optimizuojami tik po TRUE ABSOLUTE HARD, SYSTEM HARD postų lygybės, RESIDENT HARD ir likusio workload/fatigue fairness; aukštesnis SOFT rangas užrakinamas prieš pereinant į žemesnį.","fairness_cumulative_goal":"Antrinis ilgalaikis tikslas: po gero einamojo mėnesio balanso taisyti ankstesnės SYSTEM istorijos likutinę nelygybę","fairness_monthly_goal":"SPS UG ir penktadieniai SYSTEM grafike išlieka struktūriškai water-fill'inami. Savaitgaliuose aiškiai savanoriškai pageidautos pamainos gali būti virš RAW 0–1, o likęs nesavanoriškas SPS RO / šeštadienių / sekmadienių krūvis turi 0–1 water-fill. Visos ne-Onko darbo vietos taip pat water-fill'inamos iki raw spread 0–1 prieš SOFT; platesnis postų koridorius leidžiamas tik jei siauresnis įrodytas neįmanomas.","preference_avg":"Vidutinis pageidavimų išpildymas","weekend_spread":"Savaitgalių skirtumas",
+"hard_errors":"Privalomų taisyklių klaidos","fairness_score":"Teisingumo rodiklis","monthly_fairness":"Mėnesio teisingumas","cumulative_fairness":"Kaupiamasis teisingumas","fairness_hierarchy":"Grafiko vertinimo hierarchija","fairness_hierarchy_intro":"TRUE ABSOLUTE HARD → RESIDENT HARD „Negaliu dirbti“ (0 pažeidimų privaloma) → ADMIN RAW savaitgalių / šeštadienių / sekmadienių water-filling mažiausiu įmanomu spread (savaitgalio pageidavimai jo neapeina) → Dream Team SP+ŠR+GE kartu CENTRO RO bent kartą kiekvieną darbo savaitę, jei matematiškai įmanoma → SPS RO/SPS UG ir VISŲ kitų postų water-filling mažiausiu įmanomu spread → savaitinio krūvio / recovery fairness → kiti SOFT pageidavimai. Po publikavimo savanoriški swapai gali pakeisti ACTUAL balansą, bet tik po abiejų rezidentų sutikimo ir SP galutinio patvirtinimo.","hard_validity":"ABSOLUTE HARD atitiktis","hard_validity_pass":"0 ABSOLUTE HARD klaidų — tinkama","hard_validity_fail":"Yra ABSOLUTE HARD klaidų — negalima skelbti","fairness_monthly_explain":"Mėnesio teisingumas vertina tik pasirinktą mėnesį. Jis gali būti mažesnis net sąmoningai, jei šis mėnuo taiso ankstesnių mėnesių nelygybę.","fairness_cumulative_explain":"Kaupiamasis teisingumas sumuoja visus sistemoje paskelbtus ankstesnius mėnesius ir šį mėnesį. Tai pagrindinis ilgalaikio grupės lygumo rodiklis.","fairness_100_note":"100% reiškia, kad SYSTEM struktūrinis krūvis yra optimaliai subalansuotas pagal galiojančius HARD apribojimus. Savaitgalio „Pageidauju dirbti“ NEGALI nusipirkti papildomų savaitgalių: SYSTEM vertina raw šeštadienių, sekmadienių ir bendrą savaitgalių krūvį. Po publikavimo savanoriškas ACTUAL swapas gali balansą pakeisti tik po abiejų rezidentų sutikimo ir SP galutinio patvirtinimo.","fairness_formula_month":"Mėnesio formulė: 100 − 18× savaitgalių skirtumas − 7× penktadienių skirtumas − 4× dublių skirtumas − 2× darbo dienų skirtumas.","fairness_formula_cumulative":"Kaupiamojo teisingumo formulė tokia pati, bet kiekvienas skirtumas skaičiuojamas iš visų paskelbtų mėnesių sukauptų sumų.","fairness_breakdown":"Teisingumo išskaidymas","fairness_penalty":"Baudos taškai","fairness_scope":"Apimtis","fairness_metric":"Komponentas","fairness_spread":"Skirtumas (didž.−maž.)","fairness_history":"Teisingumo istorija","fairness_history_help":"Grafike mėnesio teisingumas parodo konkretaus mėnesio lygumą, o kaupiamasis teisingumas — ar sistema laikui bėgant artėja prie lygaus bendro krūvio.","fairness_ledger":"Sistemos teisingumo apskaita","actual_ledger":"Faktinio darbo apskaita","fairness_swap_neutral":"Abipusis savanoriškas apsikeitimas nekeičia teisingumo apskaitos: keičiasi faktinis darbas, bet ne algoritmo paskirstymo vertinimas.","fairness_forced_change":"Pateisinamas post-publication repair (liga, atostogos, force majeure, kritinis SPS pull-down) registruojamas ACTUAL audite, bet NEKEIČIA SYSTEM fairness / spread / postų istorijos. Savanoriški swapai taip pat fairness-neutral; keičiasi tik faktinis grafikas ir retrospektyvinis request satisfaction.","fairness_no_history":"Dar nėra pakankamai paskelbtų mėnesių teisingumo istorijai.","fairness_priority_table":"Ką reiškia hierarchija","fairness_level":"Lygis","fairness_goal":"Tikslas","fairness_interpretation":"Kaip interpretuoti","fairness_hard_goal":"ABSOLUTE HARD: 0 saugos / fizinio neįmanomumo pažeidimų","voluntary_unpopular_goal":"Vykdyti aiškiai savanoriškai pasirinktą nepopuliarų darbą, kai tai nepažeidžia HARD / saugos / coverage. Savaitgalio savanoriškas darbas gali būti virš RAW water-fill, nes fairness skaičiuoja likusį nesavanorišką krūvį.","voluntary_unpopular_explain":"Savaitgalio „Pageidauju dirbti“ yra savanoriškas nepopuliaraus darbo pasirinkimas: generatorius pirmiausia stengiasi jį įvykdyti, jei leidžia HARD / poilsis / coverage. Tokia savanoriška pamaina gali padidinti RAW šeštadienių ar sekmadienių spread, o fairness 0–1 taikomas likusiam nesavanoriškam krūviui. Po publikavimo ACTUAL swapai gali balansą keisti papildomai.","other_preferences_goal":"SOFT: griežtai SOFT-1 → SOFT-2 → SOFT-3; kiekviename range pirmiausia horizontalus water-filling, po to likęs įmanomas išpildymas","other_preferences_explain":"SOFT pageidavimai optimizuojami tik po TRUE ABSOLUTE HARD, SYSTEM HARD postų lygybės, RESIDENT HARD ir likusio workload/fatigue fairness; aukštesnis SOFT rangas užrakinamas prieš pereinant į žemesnį.","fairness_cumulative_goal":"Antrinis ilgalaikis tikslas: po gero einamojo mėnesio balanso taisyti ankstesnės SYSTEM istorijos likutinę nelygybę","fairness_monthly_goal":"SPS UG ir penktadieniai SYSTEM grafike išlieka struktūriškai water-fill'inami. Savaitgaliuose aiškiai savanoriškai pageidautos pamainos gali būti virš RAW 0–1, o likęs nesavanoriškas SPS RO / šeštadienių / sekmadienių krūvis turi 0–1 water-fill. Visos ne-Onko darbo vietos taip pat water-fill'inamos iki raw spread 0–1 prieš SOFT; platesnis postų koridorius leidžiamas tik jei siauresnis įrodytas neįmanomas.","preference_avg":"Vidutinis pageidavimų išpildymas","weekend_spread":"Savaitgalių skirtumas",
 "published_schedule":"Galiojantis paskelbtas grafikas","not_published":"Šiam mėnesiui oficialus grafikas dar nepaskelbtas.","colors":"Nuolatinės žmonių spalvos","download_xlsx":"ATSISIŲSTI SPALVOTĄ GRAFIKĄ (.xlsx)","download_csv":"Atsisiųsti duomenų sąrašą (.csv)",
 "summary_title":"Žmonių suvestinė","frozen_fairness":"Paskelbimo teisingumas","current_after_changes":"Dabartinė būsena po savanoriškų pakeitimų","fairness_frozen_note":"Sistemos teisingumo, postų spread ir future catch-up apskaita fiksuojama pagal paskirstymą paskelbimo momentu. Abipusiai savanoriški swapai ir pateisinami post-publication repair (liga, atostogos, force majeure, SPS pull-down) keičia ACTUAL grafiką, bet NEĮEINA į fairness / spread / istorijos. Faktinis darbas ir retrospektyvinis request satisfaction gali būti rodomi atskirai.",
 "person":"Žmogus","name":"Vardas","target":"Tikslas","workload":"Krūvis","weekday_assignments":"Darbo dienų paskyrimai","weekday_days":"Atskiros darbo dienos","weekend_assignments":"Savaitgalio pamainos","saturday_assignments":"Šeštadienio pamainos","sunday_assignments":"Sekmadienio pamainos","prior_weekends":"Ankstesni savaitgaliai","cumulative_weekends":"Sukaupti savaitgaliai","fridays":"Penktadieniai","double_shifts":"12h darbo dienos (AM+PM)","max_consecutive":"Daugiausia dienų iš eilės","max_rolling7_hours":"Daugiausia val. per 7 d.","max_calendar_week_hours":"Daugiausia val. kalendorinę savaitę","free_days":"Laisvos dienos","preference_score":"Bendras prašymų išpildymas, %","planned_backups":"AUTO pavadavimai / dubliai","effective_backups":"Galiojantys pavadavimai / dubliai",
@@ -156,10 +157,10 @@ TR = {
 }}
 
 TR["LT"].update({
-"research":"Anketa","research_title":"Radiology Scheduler anketos langas","research_survey":"Anketa","research_dashboard":"Tyrimo skydas","research_phase":"Etapas","research_baseline":"Prieš naudojimą","research_followup":"Po naudojimo","research_likert_help":"1 = visiškai nesutinku · 5 = visiškai sutinku","research_submit":"IŠSAUGOTI ANKETĄ","research_saved":"Tyrimo anketa išsaugota.","research_privacy":"Atsakymai analizei saugomi atskirai nuo grafiko. Seniūnė SR mato tik grupės suvestines ir anoniminius komentarus; ŠR tyrimo lange gali matyti deidentifikuotus atsakymus. Individualūs vardai šiame lange nerodomi.","research_response_count":"Atsakymų skaičius","research_mean":"Vidurkis","research_change":"Pokytis","research_operational":"Operaciniai mėnesio rodikliai","research_survey_results":"Anketos rezultatai","research_deidentified":"Deidentifikuoti atsakymai","research_comments":"Anoniminiai komentarai","research_gm_note":"Seniūnės vaizde rodomi tik grupės lygio rezultatai, kad individualūs atsakymai nebūtų naudojami personalo vertinimui.","research_rs_note":"ŠR tyrėjo vaizde papildomai rodomi deidentifikuoti individualūs įrašai kokybės kontrolei ir vėlesnei analizei.","research_no_data":"Dar nėra tyrimo duomenų.","research_month_note":"Operaciniai rodikliai skaičiuojami pasirinktam mėnesiui; anketų suvestinė apima visus pateiktus įrašus.","research_stress":"Kiek stresą kelia grafiko sudarymo / keitimo procesas? (0–10)","research_changes":"Kiek kartų per mėnesį paprastai prašote ar atliekate grafiko pakeitimą?","research_contact":"Kaip dažnai reikia kreiptis į seniūnę dėl neaiškaus ar neteisingo grafiko?","research_problem":"Didžiausia dabartinio proceso problema","research_improve":"Ką labiausiai reikėtų pagerinti?","research_easy":"Sistema lengva naudotis","research_mobile":"Mobilioji versija lengva naudotis","research_actual":"Sistema rodo realų aktualų grafiką po pakeitimų","research_system_actual":"Naudingas skirtumas tarp sistemos pradinio ir faktinio grafiko","research_continue":"Norėčiau tęsti šios sistemos naudojimą vietoje ankstesnio metodo","research_access_denied":"Tyrimo skydas prieinamas tik ŠR ir SR","research_hard_errors":"Privalomų taisyklių klaidos","research_changed_assignments":"Pakeistos normalios pamainos","research_normal_swaps":"Normalių apsikeitimų","research_backup_swaps":"Dublių apsikeitimų","research_completed_covers":"Realiai įvykdyti pavadavimai"
+"research":"Anketa","research_title":"Radiology Scheduler anketos langas","research_survey":"Anketa","research_dashboard":"Tyrimo skydas","research_phase":"Etapas","research_baseline":"Prieš naudojimą","research_followup":"Po naudojimo","research_likert_help":"1 = visiškai nesutinku · 5 = visiškai sutinku","research_submit":"IŠSAUGOTI ANKETĄ","research_saved":"Tyrimo anketa išsaugota.","research_privacy":"Atsakymai analizei saugomi atskirai nuo grafiko. Seniūnė SP mato tik grupės suvestines ir anoniminius komentarus; ŠR tyrimo lange gali matyti deidentifikuotus atsakymus. Individualūs vardai šiame lange nerodomi.","research_response_count":"Atsakymų skaičius","research_mean":"Vidurkis","research_change":"Pokytis","research_operational":"Operaciniai mėnesio rodikliai","research_survey_results":"Anketos rezultatai","research_deidentified":"Deidentifikuoti atsakymai","research_comments":"Anoniminiai komentarai","research_gm_note":"Seniūnės vaizde rodomi tik grupės lygio rezultatai, kad individualūs atsakymai nebūtų naudojami personalo vertinimui.","research_rs_note":"ŠR tyrėjo vaizde papildomai rodomi deidentifikuoti individualūs įrašai kokybės kontrolei ir vėlesnei analizei.","research_no_data":"Dar nėra tyrimo duomenų.","research_month_note":"Operaciniai rodikliai skaičiuojami pasirinktam mėnesiui; anketų suvestinė apima visus pateiktus įrašus.","research_stress":"Kiek stresą kelia grafiko sudarymo / keitimo procesas? (0–10)","research_changes":"Kiek kartų per mėnesį paprastai prašote ar atliekate grafiko pakeitimą?","research_contact":"Kaip dažnai reikia kreiptis į seniūnę dėl neaiškaus ar neteisingo grafiko?","research_problem":"Didžiausia dabartinio proceso problema","research_improve":"Ką labiausiai reikėtų pagerinti?","research_easy":"Sistema lengva naudotis","research_mobile":"Mobilioji versija lengva naudotis","research_actual":"Sistema rodo realų aktualų grafiką po pakeitimų","research_system_actual":"Naudingas skirtumas tarp sistemos pradinio ir faktinio grafiko","research_continue":"Norėčiau tęsti šios sistemos naudojimą vietoje ankstesnio metodo","research_access_denied":"Tyrimo skydas prieinamas tik ŠR ir SP","research_hard_errors":"Privalomų taisyklių klaidos","research_changed_assignments":"Pakeistos normalios pamainos","research_normal_swaps":"Normalių apsikeitimų","research_backup_swaps":"Dublių apsikeitimų","research_completed_covers":"Realiai įvykdyti pavadavimai"
 })
 TR["EN"].update({
-"research":"Research","research_title":"Radiology Scheduler research window","research_survey":"Research survey","research_dashboard":"Research dashboard","research_phase":"Phase","research_baseline":"Before use","research_followup":"After use","research_likert_help":"1 = strongly disagree · 5 = strongly agree","research_submit":"SAVE RESEARCH SURVEY","research_saved":"Research survey saved.","research_privacy":"Research answers are stored separately from scheduling data. The current senior SR sees group summaries and anonymous comments only; the ŠR research view can inspect de-identified responses. Individual names are not shown in this window.","research_response_count":"Response count","research_mean":"Mean","research_change":"Change","research_operational":"Monthly operational metrics","research_survey_results":"Survey results","research_deidentified":"De-identified responses","research_comments":"Anonymous comments","research_gm_note":"The senior view shows group-level results only so individual responses are not used for personnel evaluation.","research_rs_note":"The ŠR researcher view additionally shows de-identified individual records for quality control and later analysis.","research_no_data":"No research data yet.","research_month_note":"Operational metrics use the selected month; survey summaries include all submitted responses.","research_stress":"How stressful is the scheduling / change process? (0–10)","research_changes":"How many schedule changes do you usually request or participate in per month?","research_contact":"How often do you need to contact the senior because the schedule is unclear or incorrect?","research_problem":"Biggest problem with the current process","research_improve":"What should be improved most?","research_easy":"The platform is easy to use","research_mobile":"The mobile version is easy to use","research_actual":"The platform reflects the real current schedule after changes","research_system_actual":"The SYSTEM versus ACTUAL distinction is useful","research_continue":"I would prefer to continue using this platform rather than return to the previous method","research_access_denied":"The research dashboard is available only to ŠR and SR","research_hard_errors":"HARD errors","research_changed_assignments":"Changed normal assignments","research_normal_swaps":"Normal swaps","research_backup_swaps":"Backup swaps","research_completed_covers":"Completed actual covers"
+"research":"Research","research_title":"Radiology Scheduler research window","research_survey":"Research survey","research_dashboard":"Research dashboard","research_phase":"Phase","research_baseline":"Before use","research_followup":"After use","research_likert_help":"1 = strongly disagree · 5 = strongly agree","research_submit":"SAVE RESEARCH SURVEY","research_saved":"Research survey saved.","research_privacy":"Research answers are stored separately from scheduling data. The current senior SP sees group summaries and anonymous comments only; the ŠR research view can inspect de-identified responses. Individual names are not shown in this window.","research_response_count":"Response count","research_mean":"Mean","research_change":"Change","research_operational":"Monthly operational metrics","research_survey_results":"Survey results","research_deidentified":"De-identified responses","research_comments":"Anonymous comments","research_gm_note":"The senior view shows group-level results only so individual responses are not used for personnel evaluation.","research_rs_note":"The ŠR researcher view additionally shows de-identified individual records for quality control and later analysis.","research_no_data":"No research data yet.","research_month_note":"Operational metrics use the selected month; survey summaries include all submitted responses.","research_stress":"How stressful is the scheduling / change process? (0–10)","research_changes":"How many schedule changes do you usually request or participate in per month?","research_contact":"How often do you need to contact the senior because the schedule is unclear or incorrect?","research_problem":"Biggest problem with the current process","research_improve":"What should be improved most?","research_easy":"The platform is easy to use","research_mobile":"The mobile version is easy to use","research_actual":"The platform reflects the real current schedule after changes","research_system_actual":"The SYSTEM versus ACTUAL distinction is useful","research_continue":"I would prefer to continue using this platform rather than return to the previous method","research_access_denied":"The research dashboard is available only to ŠR and SP","research_hard_errors":"HARD errors","research_changed_assignments":"Changed normal assignments","research_normal_swaps":"Normal swaps","research_backup_swaps":"Backup swaps","research_completed_covers":"Completed actual covers"
 })
 
 # V2.5.53 — wording aligned with critical exposure + weekly recovery constitution.
@@ -203,7 +204,7 @@ TR["EN"].update({
     "swap_48_reaccept":"The swap consequences changed after the request was created. A fresh explicit acknowledgement is required; recreate the swap request.",
     "swap_note":"Voluntary swaps change only the ACTUAL schedule. Each affected resident sees a consequence table before consent. The swap is blocked by ABSOLUTE/operational and labour-time guardrails: overlap, approved absence, >12h/day, <11h rest, >6 workdays/7d or the active swap hard cap (up to 60h/7d). New 12h doubles, >40/>48h load, six-day streaks, post-double recovery patterns and self-overridden Resident-HARD requests are ACK warnings. SYSTEM fairness remains frozen. Workplace/post fairness, modality mix, US exposure and diversity never block a mutually accepted ACTUAL swap.",
     "labour_hard_summary":"Generation: ≤12h/day; ≥11h between workdays; at least 1 fully free day per rolling 7d; ≤48 known hours/7d; target ~40h/7d; after 2 consecutive doubles the next day is PM-only or off. Post-publication voluntary swaps use a separate consequence + ACK mode: >48h is not an automatic blocker, while >12h/day, <11h rest, >6 workdays/7d, the active swap hard cap and ABSOLUTE/overlap/coverage remain blockers.",
-    "fairness_hierarchy_intro":"During generation: ABSOLUTE safety/work rules → Cannot-work / RESIDENT HARD with zero violations → ADMIN RAW Saturday/Sunday/weekend water-fill at the tightest feasible spread (weekend preferences cannot bypass it) → Dream Team SR+ŠR+GE together on CENTRO RO at least once per represented workweek when mathematically feasible → SPS RO/SPS UG and every other workplace water-filled as tightly as feasible → recovery/workload fairness → remaining SOFT wishes. After publication, ACTUAL swaps may disturb SYSTEM fairness only after both residents consent and SR gives final approval.",
+    "fairness_hierarchy_intro":"During generation: ABSOLUTE safety/work rules → Cannot-work / RESIDENT HARD with zero violations → ADMIN RAW Saturday/Sunday/weekend water-fill at the tightest feasible spread (weekend preferences cannot bypass it) → Dream Team SP+ŠR+GE together on CENTRO RO at least once per represented workweek when mathematically feasible → SPS RO/SPS UG and every other workplace water-filled as tightly as feasible → recovery/workload fairness → remaining SOFT wishes. After publication, ACTUAL swaps may disturb SYSTEM fairness only after both residents consent and SP gives final approval.",
 })
 
 # V2.5.66 — multiple swaps are allowed, but one concrete shift can have only
@@ -236,19 +237,19 @@ TR["LT"].update({
 "research_checkpoint":"Tyrimo matavimo taškas","research_baseline_checkpoint":"Pradinis vertinimas · prieš paleidimą (2026 rugsėjis)","research_month3_checkpoint":"3 mėn. pakartotinis vertinimas (2026 gruodis)","research_month6_checkpoint":"6 mėn. pakartotinis vertinimas (2027 kovas)",
 "research_checkpoint_done":"Užpildyta","research_checkpoint_locked":"Dar neaktyvuota","research_checkpoint_pending":"Neužpildyta","research_next_task":"Kitas tyrimo veiksmas","research_resident_note":"Rezidentui reikia tik trijų trumpų anketų per visą tyrimą: pradinio vertinimo, po ~3 mėn. ir po ~6 mėn.",
 "research_completion":"Anketų užpildymas","research_expected":"Numatyta","research_export":"Eksportas analizei","research_download_surveys":"ATSISIŲSTI DEIDENTIFIKUOTAS ANKETAS (.csv)","research_download_monthly":"ATSISIŲSTI MĖNESIO RODIKLIUS (.csv)",
-"research_monthly_table":"Spalis–kovas: automatiniai operaciniai rodikliai","research_scheduler_section":"SR / Seniūnės grafikų sudarymo darbo krūvis","research_scheduler_intro":"SR kaip dabartinė Seniūnė pildo du trumpus įrašus kiekvienam tyrimo mėnesiui: iškart paruošus grafiką ir mėnesiui pasibaigus. Operacinių apsikeitimų ir pavadavimų skaičius sistema renka automatiškai.",
-"research_scheduler_month":"Tyrimo mėnuo","research_scheduler_checkpoint":"Seniūnės SR matavimo taškas","research_after_creation":"Iškart paruošus grafiką","research_after_month":"Mėnesiui pasibaigus",
+"research_monthly_table":"Spalis–kovas: automatiniai operaciniai rodikliai","research_scheduler_section":"SP / Seniūnės grafikų sudarymo darbo krūvis","research_scheduler_intro":"SP kaip dabartinė Seniūnė pildo du trumpus įrašus kiekvienam tyrimo mėnesiui: iškart paruošus grafiką ir mėnesiui pasibaigus. Operacinių apsikeitimų ir pavadavimų skaičius sistema renka automatiškai.",
+"research_scheduler_month":"Tyrimo mėnuo","research_scheduler_checkpoint":"Seniūnės SP matavimo taškas","research_after_creation":"Iškart paruošus grafiką","research_after_month":"Mėnesiui pasibaigus",
 "research_workflow_method":"Kaip šį mėnesį buvo sudarytas grafikas?","research_method_tool":"Tik sistema","research_method_excel":"Tik Excel","research_method_shadow":"Excel + sistema: lygiagretus palyginimas",
 "research_total_minutes":"Bendras tavo aktyvus laikas grafikui paruošti (min.)","research_corrections":"Rankinių korekcijų / iteracijų skaičius","research_resident_contacts":"Kiek rezidentų kontaktų / derinimų reikėjo?","research_communication_minutes":"Kiek laiko užėmė komunikacija dėl grafiko? (min.)",
 "research_scheduler_stress":"Grafiko sudarymo stresas (0–10)","research_fairness_confidence":"Pasitikėjimas, kad paskirstymas teisingas (1–5)","research_hard_confidence":"Pasitikėjimas, kad privalomos taisyklės išlaikytos (1–5)","research_scheduler_satisfaction":"Pasitenkinimas galutiniu grafiku (1–5)",
 "research_excel_minutes":"Excel laikas (min.)","research_tool_minutes":"Sistemos laikas (min.)","research_excel_corrections":"Excel korekcijų sk.","research_tool_corrections":"Sistemos korekcijų / pakartotinių generavimų sk.",
 "research_post_minutes":"Laikas po publikavimo pakeitimams / problemoms (min.)","research_post_interventions":"Kiek pakeitimų reikėjo tavo tiesioginio įsikišimo?","research_post_contacts":"Kiek žinučių / skambučių dėl grafiko gavai per mėnesį?",
 "research_actual_confidence":"Pasitikėjimas, kad portalas rodė realų faktinį grafiką (1–5)","research_use_next":"Ar rinktumeisi sistemą kitam mėnesiui?","research_yes":"Taip","research_unsure":"Neaišku","research_no":"Ne",
-"research_scheduler_notes":"Pastabos / kas užėmė daugiausia laiko","research_scheduler_saved":"Seniūnės SR tyrimo įrašas išsaugotas.","research_scheduler_status":"Seniūnės SR duomenų užpildymas",
+"research_scheduler_notes":"Pastabos / kas užėmė daugiausia laiko","research_scheduler_saved":"Seniūnės SP tyrimo įrašas išsaugotas.","research_scheduler_status":"Seniūnės SP duomenų užpildymas",
 "research_generation_telemetry":"Automatiniai generavimo rodikliai","research_generation_attempts":"Generavimo bandymų","research_solver_seconds":"Skaičiavimo laikas, s","research_generation_success":"Sėkmingų generavimų",
 "research_observer_tab":"Tyrimo atsiliepimai","research_observer_intro":"Tik peržiūros teisės grafikui nesikeičia. Šiame lange galima tik pateikti tyrimo atsiliepimą apie stebėsenos patogumą.","research_observer_checkpoint":"Administratorės vertinimas",
 "research_obs_actual":"Lengva nustatyti, kas realiai dirba kiekvieną pamainą.","research_obs_changes":"Lengva peržiūrėti pakeitimus po publikavimo.","research_obs_system_actual":"Sistemos pradinio ir faktinio grafiko skirtumas yra naudingas.","research_obs_privacy":"Sistema suteikia pakankamai matomumo neatskleisdama nereikalingų privačių rezidentų duomenų.","research_obs_log":"Pakeitimų žurnalas yra suprantamas.","research_obs_fairness":"Teisingumo informacija yra suprantama.","research_obs_trust":"Pasitikiu portale rodoma operacine informacija.","research_obs_missing":"Kokios informacijos trūksta, kai reikia suprasti realią skyriaus situaciją?","research_observer_saved":"Administratorės tyrimo feedback išsaugotas.",
-"research_data_quality":"Duomenų pilnumas","research_missing_scheduler":"Trūksta Seniūnės SR įrašo","research_complete":"Pilna","research_researcher_only":"Ši išsami skiltis matoma tik ŠR tyrėjo paskyroje."
+"research_data_quality":"Duomenų pilnumas","research_missing_scheduler":"Trūksta Seniūnės SP įrašo","research_complete":"Pilna","research_researcher_only":"Ši išsami skiltis matoma tik ŠR tyrėjo paskyroje."
 })
 TR["EN"].update({
 "research_role_resident":"Resident · study participant","research_role_researcher":"Resident · researcher","research_role_senior":"Resident · senior scheduler",
@@ -256,19 +257,19 @@ TR["EN"].update({
 "research_checkpoint":"Research checkpoint","research_baseline_checkpoint":"Baseline · pre-launch (September 2026)","research_month3_checkpoint":"3-month follow-up (December 2026)","research_month6_checkpoint":"6-month follow-up (March 2027)",
 "research_checkpoint_done":"Completed","research_checkpoint_locked":"Not active yet","research_checkpoint_pending":"Not completed","research_next_task":"Next research task","research_resident_note":"Residents complete only three short surveys during the whole study: baseline, ~3 months, and ~6 months.",
 "research_completion":"Survey completion","research_expected":"Expected","research_export":"Analysis export","research_download_surveys":"DOWNLOAD DE-IDENTIFIED SURVEYS (.csv)","research_download_monthly":"DOWNLOAD MONTHLY METRICS (.csv)",
-"research_monthly_table":"October–March: automatic operational metrics","research_scheduler_section":"SR / senior scheduler workload","research_scheduler_intro":"SR as the current senior completes two short records per study month: immediately after preparing the schedule and after the month ends. Operational swap / cover counts are collected automatically.",
-"research_scheduler_month":"Study month","research_scheduler_checkpoint":"Senior SR checkpoint","research_after_creation":"Immediately after schedule preparation","research_after_month":"After the month is complete",
+"research_monthly_table":"October–March: automatic operational metrics","research_scheduler_section":"SP / senior scheduler workload","research_scheduler_intro":"SP as the current senior completes two short records per study month: immediately after preparing the schedule and after the month ends. Operational swap / cover counts are collected automatically.",
+"research_scheduler_month":"Study month","research_scheduler_checkpoint":"Senior SP checkpoint","research_after_creation":"Immediately after schedule preparation","research_after_month":"After the month is complete",
 "research_workflow_method":"How was this month's schedule prepared?","research_method_tool":"Tool only","research_method_excel":"Excel only","research_method_shadow":"Excel + Tool parallel comparison",
 "research_total_minutes":"Total active time you spent preparing the schedule (min)","research_corrections":"Manual corrections / iterations","research_resident_contacts":"Resident contacts / coordination episodes","research_communication_minutes":"Time spent on schedule communication (min)",
 "research_scheduler_stress":"Schedule-preparation stress (0–10)","research_fairness_confidence":"Confidence allocation is fair (1–5)","research_hard_confidence":"Confidence HARD rules are respected (1–5)","research_scheduler_satisfaction":"Satisfaction with final schedule (1–5)",
 "research_excel_minutes":"Excel time (min)","research_tool_minutes":"Tool time (min)","research_excel_corrections":"Excel corrections","research_tool_corrections":"Tool corrections / regenerations",
 "research_post_minutes":"Time spent on post-publication changes/problems (min)","research_post_interventions":"Changes requiring your direct intervention","research_post_contacts":"Schedule-related messages/calls received during month",
 "research_actual_confidence":"Confidence portal reflected the true ACTUAL schedule (1–5)","research_use_next":"Would you choose the Tool next month?","research_yes":"Yes","research_unsure":"Unsure","research_no":"No",
-"research_scheduler_notes":"Notes / what consumed the most time","research_scheduler_saved":"Senior SR research record saved.","research_scheduler_status":"Senior SR data completion",
+"research_scheduler_notes":"Notes / what consumed the most time","research_scheduler_saved":"Senior SP research record saved.","research_scheduler_status":"Senior SP data completion",
 "research_generation_telemetry":"Automatic generation telemetry","research_generation_attempts":"Generation attempts","research_solver_seconds":"Solver time, s","research_generation_success":"Successful generations",
 "research_observer_tab":"Research feedback","research_observer_intro":"Read-only scheduling rights remain unchanged. This tab only allows research feedback about the monitoring experience.","research_observer_checkpoint":"Administrator evaluation",
 "research_obs_actual":"It is easy to determine who is actually working each shift.","research_obs_changes":"It is easy to review changes made after publication.","research_obs_system_actual":"The SYSTEM baseline versus ACTUAL distinction is useful.","research_obs_privacy":"The platform provides enough visibility without exposing unnecessary private resident information.","research_obs_log":"The change log is understandable.","research_obs_fairness":"The fairness information is understandable.","research_obs_trust":"I trust the operational information shown in the portal.","research_obs_missing":"What information is missing when you need to understand the real departmental staffing situation?","research_observer_saved":"Administrator research feedback saved.",
-"research_data_quality":"Data completeness","research_missing_scheduler":"Missing senior SR record","research_complete":"Complete","research_researcher_only":"This detailed section is visible only to the ŠR researcher account."
+"research_data_quality":"Data completeness","research_missing_scheduler":"Missing senior SP record","research_complete":"Complete","research_researcher_only":"This detailed section is visible only to the ŠR researcher account."
 })
 
 # V2.5.96 — monthly baseline fairness + live ACTUAL ledger; no future catch-up.
@@ -386,24 +387,24 @@ lang = st.sidebar.radio("Kalba / Language", ["LT","EN"], horizontal=True, key="l
 # V2.5.112 FINAL ADMIN POLICY OVERRIDES — these intentionally supersede older
 # V2.5.104 volunteer-weekend wording retained in historical source comments.
 TR["LT"].update({
-    "fairness_hierarchy_intro":"TRUE ABSOLUTE / sauga → 0 „Negaliu dirbti“ pažeidimų → mažiausias matematiškai įmanomas RAW šeštadienių, sekmadienių ir bendro savaitgalio water-fill → SPS RO / SPS UG ir kitų postų water-fill → Dream Team SR+ŠR+GE CENTRO RO kartą per savaitę → AUTO dublių/pavadavimų water-fill → SOFT pageidavimai. Savaitgalio noras SYSTEM paskirstymo nekeičia; ACTUAL swapas gali pakeisti tik po abiejų rezidentų + SR patvirtinimo.",
+    "fairness_hierarchy_intro":"TRUE ABSOLUTE / sauga → 0 „Negaliu dirbti“ pažeidimų → mažiausias matematiškai įmanomas RAW šeštadienių, sekmadienių ir bendro savaitgalio water-fill → SPS RO / SPS UG ir kitų postų water-fill → Dream Team SP+ŠR+GE CENTRO RO kartą per savaitę → AUTO dublių/pavadavimų water-fill → SOFT pageidavimai. Savaitgalio noras SYSTEM paskirstymo nekeičia; ACTUAL swapas gali pakeisti tik po abiejų rezidentų + SP patvirtinimo.",
     "fairness_100_note":"100% yra diagnostinis idealios pusiausvyros rodiklis. SYSTEM savaitgalių skirstymas remiasi RAW administraciniu water-fill, o ne rezidentų noru dirbti daugiau savaitgalių. Jei 0–1 matematiškai neįmanoma dėl HARD prieinamumo ir tikslaus krūvio, rodomas mažiausias įrodytas įmanomas spread.",
     "fairness_monthly_goal":"SYSTEM pirmiausia ieško mažiausio įmanomo RAW šeštadienių, sekmadienių ir bendro savaitgalio spread. SPS RO / SPS UG ir visi kiti postai taip pat water-fill'inami kuo lygiau, bet 0 „Negaliu dirbti“ pažeidimų lieka aukščiau fairness. Dream Team savaitinis CENTRO RO tikslas yra aukštas administracinis prioritetas postų paskirstymo fazėje.",
     "voluntary_unpopular_goal":"Savaitgalio darbo noras yra tik informacinis / audito SOFT signalas ir SYSTEM savaitgalių water-fill nekeičia.",
-    "voluntary_unpopular_explain":"Rezidentas negali nupirkti papildomų šeštadienių ar sekmadienių pažymėdamas „Pageidauju dirbti“. SYSTEM paskirsto savaitgalius pagal mažiausią įmanomą RAW spread. Po publikavimo abipusis swapas gali balansą pakeisti tik po SR galutinio patvirtinimo.",
+    "voluntary_unpopular_explain":"Rezidentas negali nupirkti papildomų šeštadienių ar sekmadienių pažymėdamas „Pageidauju dirbti“. SYSTEM paskirsto savaitgalius pagal mažiausią įmanomą RAW spread. Po publikavimo abipusis swapas gali balansą pakeisti tik po SP galutinio patvirtinimo.",
     "weekend_help":"ADMIN WATER-FILL: savaitgalių krypties pasirinkimas išjungtas SYSTEM generavimui. Naudok „Negaliu dirbti“ tik tikram neprieinamumui.",
     "preferred_help":"Darbo dienų pageidavimai yra SOFT. Savaitgalio pageidavimas registruojamas auditui, bet SYSTEM dėl jo negali skirti papildomų šeštadienių ar sekmadienių virš mažiausio įmanomo RAW water-fill.",
-    "backup_swap_help":"Po publikavimo galima siūlyti dublio apsikeitimą. Jis pritaikomas tik po abiejų rezidentų sutikimo, HARD patikros ir SR galutinio APPROVE; SR gali ir DECLINE.",
+    "backup_swap_help":"Po publikavimo galima siūlyti dublio apsikeitimą. Jis pritaikomas tik po abiejų rezidentų sutikimo, HARD patikros ir SP galutinio APPROVE; SP gali ir DECLINE.",
 })
 TR["EN"].update({
-    "fairness_hierarchy_intro":"TRUE ABSOLUTE / safety → zero Cannot-work violations → tightest mathematically feasible RAW Saturday, Sunday and total-weekend water-fill → SPS RO / SPS UG and all-post water-fill → Dream Team SR+ŠR+GE at CENTRO RO once per week → AUTO backup-duty water-fill → SOFT wishes. Weekend preference cannot change SYSTEM allocation; ACTUAL swaps require both residents plus SR final approval.",
+    "fairness_hierarchy_intro":"TRUE ABSOLUTE / safety → zero Cannot-work violations → tightest mathematically feasible RAW Saturday, Sunday and total-weekend water-fill → SPS RO / SPS UG and all-post water-fill → Dream Team SP+ŠR+GE at CENTRO RO once per week → AUTO backup-duty water-fill → SOFT wishes. Weekend preference cannot change SYSTEM allocation; ACTUAL swaps require both residents plus SP final approval.",
     "fairness_100_note":"100% is a diagnostic ideal-balance score. SYSTEM weekend allocation uses RAW administrative water-fill, not resident willingness to take extra weekends. If 0–1 is mathematically impossible because of HARD availability and exact workload, the tightest proven feasible spread is shown.",
     "fairness_monthly_goal":"SYSTEM first searches for the tightest feasible RAW Saturday, Sunday and total-weekend spread. SPS RO / SPS UG and every other workplace are also water-filled as evenly as possible, while zero Cannot-work violations remain above fairness. Weekly Dream Team CENTRO RO co-location is a high administrative priority in the workplace-placement phase.",
     "voluntary_unpopular_goal":"Weekend willingness is informational/audit-only and does not change SYSTEM weekend water-fill.",
-    "voluntary_unpopular_explain":"A resident cannot buy extra Saturdays or Sundays by selecting Prefer to work. SYSTEM allocates weekends by the tightest feasible RAW spread. After publication a bilateral swap may change the balance only after SR final approval.",
+    "voluntary_unpopular_explain":"A resident cannot buy extra Saturdays or Sundays by selecting Prefer to work. SYSTEM allocates weekends by the tightest feasible RAW spread. After publication a bilateral swap may change the balance only after SP final approval.",
     "weekend_help":"ADMIN WATER-FILL: resident weekend-direction selection is disabled for SYSTEM generation. Use Cannot-work only for genuine unavailability.",
     "preferred_help":"Weekday requests are SOFT. Weekend requests are recorded for audit, but SYSTEM cannot use them to give extra Saturdays or Sundays beyond the tightest feasible RAW water-fill.",
-    "backup_swap_help":"After publication a backup swap may be proposed, but it is applied only after both residents consent, HARD validation passes, and SR gives final APPROVE; SR may DECLINE.",
+    "backup_swap_help":"After publication a backup swap may be proposed, but it is applied only after both residents consent, HARD validation passes, and SP gives final APPROVE; SP may DECLINE.",
 })
 
 def tr(k): return TR[lang][k]
@@ -3374,7 +3375,7 @@ def publish_system_baseline_for_swap_window(y,m):
 
 
 def render_operator_manual_override(y,m,current_payload,lifecycle_state):
-    """Direct SR/ŠR pre-FINAL ACTUAL correction tool.
+    """Direct SP/ŠR pre-FINAL ACTUAL correction tool.
 
     Resident consent is not required, but ACTUAL safety/coverage HARD checks remain
     mandatory. SYSTEM is never rewritten by this tool.
@@ -3985,7 +3986,7 @@ if st.sidebar.button(tr("logout"),use_container_width=True):
     st.rerun()
 
 # V2.5.90: one visible interface per account. There is no profile switch.
-# SR = operational Seniūnė.
+# SP = operational Seniūnė.
 # ŠR = resident-facing account with embedded researcher + senior/admin capabilities.
 # MG and all others = resident-only.
 is_seniune_account=(active_user==SENIOR_INITIALS)
@@ -4007,7 +4008,7 @@ ui_mode=st.sidebar.radio(
           "Simple: daily actions and only the most important results. Advanced: full fairness, guardrail and solver diagnostics.")
 )
 advanced_mode=(ui_mode==ui_advanced)
-# V2.5.92 lifecycle controls: SR primary; ŠR contingency only in Išplėstinis.
+# V2.5.92 lifecycle controls: SP primary; ŠR contingency only in Išplėstinis.
 lifecycle_operator_ui=(is_seniune_account or (is_researcher_account and advanced_mode))
 st.sidebar.caption(
     ("Paprastas režimas yra numatytasis." if not advanced_mode and lang=="LT" else
@@ -4041,7 +4042,7 @@ if advanced_mode:
 else:
     st.caption("Paprastas režimas" if lang=="LT" else "Simple mode")
 
-# V2.5.94: after the exact cutoff, SR/ŠR views automatically materialize
+# V2.5.94: after the exact cutoff, SP/ŠR views automatically materialize
 # every still-missing active resident as a submitted zero-request form.
 _zero_pref_autosubmit={"ok":True,"due":False,"count":0,"initials":[]}
 if lifecycle_operator_ui:
@@ -4545,9 +4546,9 @@ with tabs[pos]:
             wp=st.slider(tr("weekday_pref"),-2,2,int(s.get("weekday_preference",0) or 0),help=tr("weekday_help"))
             wep=0
             st.info(
-                "SAVAITGALIAI — ADMIN WATER-FILL. Rezidentas nebegali pasirinkti „noriu daugiau savaitgalių / sekmadienių“. SYSTEM automatiškai ieško mažiausio matematiškai įmanomo šeštadienių, sekmadienių ir bendro savaitgalio krūvio skirtumo. Tik tikras „Negaliu dirbti“ gali apriboti konkrečią dieną. Po publikavimo savanoriškas swapas gali pakeisti ACTUAL balansą, bet tik po abiejų rezidentų sutikimo ir SR galutinio patvirtinimo."
+                "SAVAITGALIAI — ADMIN WATER-FILL. Rezidentas nebegali pasirinkti „noriu daugiau savaitgalių / sekmadienių“. SYSTEM automatiškai ieško mažiausio matematiškai įmanomo šeštadienių, sekmadienių ir bendro savaitgalio krūvio skirtumo. Tik tikras „Negaliu dirbti“ gali apriboti konkrečią dieną. Po publikavimo savanoriškas swapas gali pakeisti ACTUAL balansą, bet tik po abiejų rezidentų sutikimo ir SP galutinio patvirtinimo."
                 if lang=="LT" else
-                "WEEKENDS — ADMIN WATER-FILL. Residents can no longer choose to receive more weekends/Sundays. SYSTEM searches for the tightest mathematically feasible Saturday, Sunday and total-weekend spread. Only genuine Cannot-work availability can block a specific date. A voluntary post-publication swap may alter ACTUAL balance, but only after both residents consent and SR gives final approval."
+                "WEEKENDS — ADMIN WATER-FILL. Residents can no longer choose to receive more weekends/Sundays. SYSTEM searches for the tightest mathematically feasible Saturday, Sunday and total-weekend spread. Only genuine Cannot-work availability can block a specific date. A voluntary post-publication swap may alter ACTUAL balance, but only after both residents consent and SP gives final approval."
             )
             sp=st.slider(tr("spread_pref"),-2,2,int(s.get("spread_preference",0)),help=tr("spread_help"))
             # `avoid_doubles` is retained in the database for backward compatibility;
@@ -4813,9 +4814,9 @@ if senior_mode:
                 try:
                     _weston_now=db.weston_beer_stats_v25110(year,month)
                     st.caption(
-                        f"1 click - 1 WESTON beer · sukaupta: {_weston_now.get('total_beers',0)}"
+                        f"1 click = 1 WESTON beer ŠR · tavo skola ŠR: {_weston_now.get('total_beers',0)}"
                         if lang=="LT" else
-                        f"1 click - 1 WESTON beer · accumulated: {_weston_now.get('total_beers',0)}"
+                        f"1 click = 1 WESTON beer owed to ŠR · your debt to ŠR: {_weston_now.get('total_beers',0)}"
                     )
                 except Exception:
                     _weston_now={"total_beers":0,"month_beers":0}
@@ -4824,9 +4825,9 @@ if senior_mode:
                     try:
                         _weston_after=db.record_weston_beer_click_v25110(year,month)
                         st.caption(
-                            f"WESTON +1. Iš viso: {_weston_after.get('total_beers',0)}."
+                            f"WESTON +1. Dabar ŠR esi skolinga: {_weston_after.get('total_beers',0)}."
                             if lang=="LT" else
-                            f"WESTON +1. Total: {_weston_after.get('total_beers',0)}."
+                            f"WESTON +1. You now owe ŠR: {_weston_after.get('total_beers',0)}."
                         )
                     except Exception:
                         st.warning(
@@ -4992,7 +4993,7 @@ if senior_mode:
                 st.markdown("#### NEĮVYKDYTI PAGEIDAVIMAI" if lang=="LT" else "#### UNMET WISHES")
                 st.dataframe(_wish["table"],use_container_width=True,hide_index=True)
 
-            # V2.5.112 admin guarantees: expose them instead of making SR inspect the grid.
+            # V2.5.112 admin guarantees: expose them instead of making SP inspect the grid.
             _dt_done=int(g.get("dream_team_centro_weeks",0) or 0)
             _dt_target=int(g.get("dream_team_centro_target_weeks",0) or 0)
             _wcap=g.get("admin_weekend_spread_cap_used")
@@ -5004,9 +5005,9 @@ if senior_mode:
             _gb.metric(("Mažiausias įmanomas savaitgalio spread" if lang=="LT" else "Tightest feasible weekend spread"),_wcap if _wcap is not None else "—")
             _gc.metric(("AUTO dublių spread" if lang=="LT" else "AUTO backup spread"),_bspread)
             if _dt_target and _dt_done<_dt_target:
-                st.warning("Dream Team (SR + ŠR + GE) nepavyko sutalpinti į CENTRO RO kiekvieną savaitę nepažeidžiant aukštesnių taisyklių; žemiau rodomas maksimalus pasiektas kiekis." if lang=="LT" else "Dream Team (SR + ŠR + GE) could not be placed together at CENTRO RO every week without violating higher-ranked rules; the maximum achieved count is shown above.")
+                st.warning("Dream Team (SP + ŠR + GE) nepavyko sutalpinti į CENTRO RO kiekvieną savaitę nepažeidžiant aukštesnių taisyklių; žemiau rodomas maksimalus pasiektas kiekis." if lang=="LT" else "Dream Team (SP + ŠR + GE) could not be placed together at CENTRO RO every week without violating higher-ranked rules; the maximum achieved count is shown above.")
             else:
-                st.success("Dream Team SR + ŠR + GE: CENTRO RO bent kartą kiekvieną savaitę — ĮVYKDYTA." if lang=="LT" else "Dream Team SR + ŠR + GE: together at CENTRO RO at least once every week — MET.")
+                st.success("Dream Team SP + ŠR + GE: CENTRO RO bent kartą kiekvieną savaitę — ĮVYKDYTA." if lang=="LT" else "Dream Team SP + ŠR + GE: together at CENTRO RO at least once every week — MET.")
             st.caption(
                 (f"AUTO dubliai sukurti visoms svarbioms pozicijoms kartu su SYSTEM juodraščiu. Iš viso {sum(_bvals)} pareigų; rezidentų skaičiai: " + ", ".join(f"{i}={_bp.get(i,0)}" for i in sorted(_bp)))
                 if lang=="LT" else
@@ -5102,9 +5103,9 @@ with tabs[pos]:
         st.markdown("## GRAFIKO TVIRTINIMAS" if lang=="LT" else "## SCHEDULE CONTROL")
         if is_researcher_account:
             st.info(
-                "Kontingencinis valdymas aktyvus Išplėstiniame režime. Veiksmai atliekami ir audituojami kaip ŠR; SR paskyra niekada neperimama."
+                "Kontingencinis valdymas aktyvus Išplėstiniame režime. Veiksmai atliekami ir audituojami kaip ŠR; SP paskyra niekada neperimama."
                 if lang=="LT" else
-                "Contingency control is active in Advanced mode. Actions are performed and audited as ŠR; the SR account is never impersonated."
+                "Contingency control is active in Advanced mode. Actions are performed and audited as ŠR; the SP account is never impersonated."
             )
 
         state=str(lifecycle.get("state") or ("working" if payload else "draft"))
@@ -5162,9 +5163,9 @@ with tabs[pos]:
             elif state=="working":
                 _workflow_card(
                     "SYSTEM UŽŠALDYTAS — ACTUAL REDAGUOJAMAS" if lang=="LT" else "SYSTEM FROZEN — ACTUAL EDITABLE",
-                    "SYSTEM išsaugotas tyrimui. SR arba ŠR gali koreguoti ACTUAL iki FINAL; rezidentams preliminarus grafikas dar nebūtinai paskelbtas."
+                    "SYSTEM išsaugotas tyrimui. SP arba ŠR gali koreguoti ACTUAL iki FINAL; rezidentams preliminarus grafikas dar nebūtinai paskelbtas."
                     if lang=="LT" else
-                    "SYSTEM is preserved for research. SR or ŠR may correct ACTUAL until FINAL; the preliminary schedule does not have to be published to residents.",
+                    "SYSTEM is preserved for research. SP or ŠR may correct ACTUAL until FINAL; the preliminary schedule does not have to be published to residents.",
                     "draft"
                 )
             elif state=="swap_open":
@@ -5176,9 +5177,9 @@ with tabs[pos]:
             elif state=="swap_closed":
                 _workflow_card(
                     "REZIDENTŲ APSIKEITIMAI UŽDARYTI" if lang=="LT" else "RESIDENT SWAPS CLOSED",
-                    "Naujų rezidentų prašymų kurti negalima. SR/ŠR rankinis ACTUAL koregavimas lieka aktyvus iki FINAL."
+                    "Naujų rezidentų prašymų kurti negalima. SP/ŠR rankinis ACTUAL koregavimas lieka aktyvus iki FINAL."
                     if lang=="LT" else
-                    "Residents cannot create new requests. SR/ŠR manual ACTUAL correction remains available until FINAL.",
+                    "Residents cannot create new requests. SP/ŠR manual ACTUAL correction remains available until FINAL.",
                     "swap_closed"
                 )
 
@@ -5461,14 +5462,19 @@ if advanced_mode:
             base=None; current=None; g=None; system_live=None; actual_live=None
 
         if base is not None:
-            if active_user==SENIOR_INITIALS:
+            if active_user in (SENIOR_INITIALS,WESTON_CREDITOR_INITIALS):
                 try:
                     _weston_personal=db.weston_beer_stats_v25110(year,month)
                     st.markdown("### WESTON beer ledger")
                     _wb1,_wb2=st.columns(2)
-                    _wb1.metric(("WESTON alaus sukaupta" if lang=="LT" else "WESTON beers accumulated"),int(_weston_personal.get("total_beers",0)))
-                    _wb2.metric(("Pasirinktą mėnesį" if lang=="LT" else "Selected month"),int(_weston_personal.get("month_beers",0)))
-                    st.caption("1 GENERUOTI / PERKURTI paspaudimas = 1 WESTON beer. Rosita, matematikos neapgausi." if lang=="LT" else "1 GENERATE / REGENERATE click = 1 WESTON beer. Rosita, mathematics keeps receipts.")
+                    if active_user==SENIOR_INITIALS:
+                        _wb1.metric(("Tavo WESTON skola ŠR" if lang=="LT" else "Your WESTON debt to ŠR"),int(_weston_personal.get("total_beers",0)))
+                        _wb2.metric(("Šio mėnesio skola" if lang=="LT" else "Debt this month"),int(_weston_personal.get("month_beers",0)))
+                        st.caption("1 GENERUOTI / PERKURTI paspaudimas = +1 WESTON, kurį esi skolinga ŠR. Rosita, matematikos neapgausi." if lang=="LT" else "1 GENERATE / REGENERATE click = +1 WESTON you owe ŠR. Rosita, mathematics keeps receipts.")
+                    else:
+                        _wb1.metric(("SP tau skolinga WESTON" if lang=="LT" else "WESTONs SP owes you"),int(_weston_personal.get("total_beers",0)))
+                        _wb2.metric(("Šį mėnesį uždirbai" if lang=="LT" else "Earned this month"),int(_weston_personal.get("month_beers",0)))
+                        st.caption("Kiekvienas SP GENERUOTI / PERKURTI paspaudimas = +1 WESTON tau. Skola ir tavo laimėjimas skaičiuojami iš to paties nekintamo ledgerio." if lang=="LT" else "Every SP GENERATE / REGENERATE click = +1 WESTON owed to you. Her debt and your gain are the same persistent ledger.")
                 except Exception:
                     pass
             if advanced_mode:
@@ -5631,6 +5637,24 @@ if advanced_mode:
             system_live=live_fairness_snapshot(year,month,base,include_completed_covers=False)
             actual_live=live_fairness_snapshot(year,month,current,include_completed_covers=True)
             sg=system_live["global"]; ag=actual_live["global"]
+
+            # V2.5.114 — one persistent WESTON ledger, mirrored as debt for SP
+            # and receivable/gain for ŠR so both sides see the same running total.
+            if active_user in (SENIOR_INITIALS,WESTON_CREDITOR_INITIALS):
+                try:
+                    _weston_mirror=db.weston_beer_stats_v25110(year,month)
+                    st.markdown("### WESTON")
+                    _wm1,_wm2=st.columns(2)
+                    if active_user==SENIOR_INITIALS:
+                        _wm1.metric(("Skola ŠR — iš viso" if lang=="LT" else "Debt to ŠR — lifetime"),int(_weston_mirror.get("total_beers",0)))
+                        _wm2.metric(("Skola ŠR — šį mėnesį" if lang=="LT" else "Debt to ŠR — this month"),int(_weston_mirror.get("month_beers",0)))
+                        st.caption("SP: kiekvienas tavo GENERUOTI / PERKURTI paspaudimas prideda +1 WESTON skolą ŠR." if lang=="LT" else "SP: every GENERATE / REGENERATE click adds +1 WESTON owed to ŠR.")
+                    else:
+                        _wm1.metric(("SP tau skolinga — iš viso" if lang=="LT" else "SP owes you — lifetime"),int(_weston_mirror.get("total_beers",0)))
+                        _wm2.metric(("Tavo WESTON prieaugis — šį mėnesį" if lang=="LT" else "Your WESTON gain — this month"),int(_weston_mirror.get("month_beers",0)))
+                        st.caption("ŠR: SP paspaudžia GENERUOTI / PERKURTI → tau +1 WESTON. Tas pats skaičius rodomas SP kaip skola." if lang=="LT" else "ŠR: SP presses GENERATE / REGENERATE → +1 WESTON owed to you. The same number is shown to SP as debt.")
+                except Exception:
+                    pass
 
             st.markdown(f"### {tr('fairness_hierarchy')}")
             st.caption(tr("fairness_hierarchy_intro"))
@@ -6496,9 +6520,9 @@ with tabs[pos]:
                                 db.accept_backup_swap_participant_v25111(r["id"])
                                 st.session_state["_swap_response_flash"]=(
                                     "success",
-                                    ("Abu rezidentai sutiko dėl dublio swapo. Jis DAR NEPRITAIKYTAS — laukia SR galutinio patvirtinimo."
+                                    ("Abu rezidentai sutiko dėl dublio swapo. Jis DAR NEPRITAIKYTAS — laukia SP galutinio patvirtinimo."
                                      if lang=="LT" else
-                                     "Both residents consented to the backup swap. It is NOT applied yet — awaiting SR final approval.")
+                                     "Both residents consented to the backup swap. It is NOT applied yet — awaiting SP final approval.")
                                 )
                                 st.rerun()
                             except Exception:
@@ -6517,7 +6541,7 @@ with tabs[pos]:
         if is_seniune_account:
             _sr_backup_waiting=[r for r in breqs if r.get("status")=="pending" and r.get("participant_accepted_at") and not r.get("senior_decision")]
             if _sr_backup_waiting:
-                st.markdown("#### SR GALUTINIS DUBLIŲ SWAPŲ PATVIRTINIMAS" if lang=="LT" else "#### SR FINAL BACKUP-SWAP APPROVAL")
+                st.markdown("#### SP GALUTINIS DUBLIŲ SWAPŲ PATVIRTINIMAS" if lang=="LT" else "#### SP FINAL BACKUP-SWAP APPROVAL")
                 st.caption("Abu rezidentai jau sutiko. ACTUAL dar nepakeistas. Tik tavo APPROVE pritaiko swapą." if lang=="LT" else "Both residents already consented. ACTUAL is still unchanged. Only your APPROVE applies the swap.")
                 for r in _sr_backup_waiting:
                     with st.container(border=True):
@@ -6525,19 +6549,19 @@ with tabs[pos]:
                         _render_swap_people_line(r["requester"],r["target"],"↔")
                         ac,dc=st.columns(2)
                         with ac:
-                            if st.button("SR APPROVE + APPLY",key=f"sr_backup_approve_{r['id']}",use_container_width=True,type="primary"):
+                            if st.button("SP APPROVE + APPLY",key=f"sr_backup_approve_{r['id']}",use_container_width=True,type="primary"):
                                 try:
                                     db.approve_backup_swap_by_sr_v25111(r["id"])
                                     persist_actual_satisfaction(year,month)
                                     refresh_calendar_subscription_feeds([r["requester"],r["target"]])
-                                    st.session_state["_swap_response_flash"]=("success","SR patvirtino dublio swapą — ACTUAL atnaujintas." if lang=="LT" else "SR approved the backup swap — ACTUAL updated.")
+                                    st.session_state["_swap_response_flash"]=("success","SP patvirtino dublio swapą — ACTUAL atnaujintas." if lang=="LT" else "SP approved the backup swap — ACTUAL updated.")
                                     st.rerun()
                                 except Exception as exc: st.error(str(exc))
                         with dc:
-                            if st.button("SR DECLINE",key=f"sr_backup_decline_{r['id']}",use_container_width=True):
+                            if st.button("SP DECLINE",key=f"sr_backup_decline_{r['id']}",use_container_width=True):
                                 try:
                                     db.reject_backup_swap_by_sr_v25111(r["id"])
-                                    st.session_state["_swap_response_flash"]=("success","SR atmetė dublio swapą." if lang=="LT" else "SR declined the backup swap.")
+                                    st.session_state["_swap_response_flash"]=("success","SP atmetė dublio swapą." if lang=="LT" else "SP declined the backup swap.")
                                     st.rerun()
                                 except Exception as exc: st.error(str(exc))
 
@@ -6584,11 +6608,11 @@ with tabs[pos]:
                 with _sra:
                     _sr_apply=st.button(tr("finalize_swap"),key=f"finalize_{r['id']}",use_container_width=True,type="primary")
                 with _srd:
-                    _sr_decline=st.button("SR — DECLINE",key=f"decline_{r['id']}",use_container_width=True)
+                    _sr_decline=st.button("SP — DECLINE",key=f"decline_{r['id']}",use_container_width=True)
                 if _sr_decline:
                     try:
                         db.mark_normal_swap_sr_decision_v25111(r["id"],"declined")
-                        st.session_state["_swap_response_flash"]=("success","SR atmetė swapą — ACTUAL nepakeistas." if lang=="LT" else "SR declined the swap — ACTUAL unchanged.")
+                        st.session_state["_swap_response_flash"]=("success","SP atmetė swapą — ACTUAL nepakeistas." if lang=="LT" else "SP declined the swap — ACTUAL unchanged.")
                         st.rerun()
                     except Exception as exc: st.error(str(exc))
                 if _sr_apply:
@@ -7186,6 +7210,15 @@ with tabs[pos]:
     else:
         result=refresh_result_payload(currentp,year,month)
         st.markdown(badge(active_user),unsafe_allow_html=True)
+        if active_user in (SENIOR_INITIALS,WESTON_CREDITOR_INITIALS):
+            try:
+                _weston_calendar=db.weston_beer_stats_v25110(year,month)
+                if active_user==SENIOR_INITIALS:
+                    st.metric(("WESTON skola ŠR" if lang=="LT" else "WESTON debt to ŠR"),int(_weston_calendar.get("total_beers",0)),help=("Kiekvienas SP Generate/Rebuild paspaudimas = +1." if lang=="LT" else "Every SP Generate/Rebuild click = +1."))
+                else:
+                    st.metric(("WESTON, kuriuos SP tau skolinga" if lang=="LT" else "WESTONs SP owes you"),int(_weston_calendar.get("total_beers",0)),help=("Tas pats persistent skaičius, kurį SP mato kaip skolą." if lang=="LT" else "The same persistent total SP sees as debt."))
+            except Exception:
+                pass
         st.dataframe(personal_schedule_df(year,month,result,active_user),use_container_width=True,hide_index=True)
         st.markdown(f"### {tr('backups')}")
         st.dataframe(backup_grid(year,month,result,active_user),use_container_width=True)
@@ -7656,6 +7689,7 @@ def research_people_from_excel(uploaded,y,m,return_audit=False):
 
     ndays=calendar.monthrange(y,m)[1]
     exact_initials={p["initials"].casefold():p["initials"] for p in DEFAULT_PEOPLE}
+    exact_initials.update({"sk":"SŠ","sr":"SP"})  # V2.5.113 historical-import compatibility
     known_names={_research_norm(p["name"]):p["initials"] for p in DEFAULT_PEOPLE}
     set_fields={
         "unavailable","unavailable_am","unavailable_pm","vacation","justified_absence","long_duty",
@@ -8101,6 +8135,7 @@ def research_assignments_from_excel(uploaded,y,m,return_audit=False):
     duplicates=[]
     conflicts=[]
     exact_initials={p["initials"].casefold():p["initials"] for p in DEFAULT_PEOPLE}
+    exact_initials.update({"sk":"SŠ","sr":"SP"})  # V2.5.113 historical-import compatibility
     known_names={_research_norm(p["name"]):p["initials"] for p in DEFAULT_PEOPLE}
 
     for table in tables:
