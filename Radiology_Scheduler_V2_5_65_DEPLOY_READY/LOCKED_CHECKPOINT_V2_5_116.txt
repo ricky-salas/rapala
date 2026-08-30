@@ -1,0 +1,8 @@
+V2.5.116 DRAFT BACKUP OVERSIGHT
+
+LOCKED lifecycle rule:
+- One GENERATE click produces the normal SYSTEM draft plus its theoretical backup snapshot.
+- SP must be able to inspect the complete backup plan in Sudarymas before publication.
+- Pre-publication backup snapshot is oversight-only and non-operational.
+- Operational backup_assignments are created/synchronized only when the SYSTEM schedule is published/confirmed.
+- V2.5.115 semantic boundary remains: planned/activated standby is not work; only COMPLETED cover is ACTUAL work.

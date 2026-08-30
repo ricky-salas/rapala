@@ -153,3 +153,6 @@ Each SP **GENERATE / REGENERATE** click adds +1 to the existing persistent WESTO
 ### V2.5.115 backup-layer check
 
 Planned backups must be ignored as work in the request audit; the system now enforces this technically. If a resident has only theoretical standby on a requested-off date and no normal work shift, the request must remain HONORED. Backup-layer issues are shown separately and cannot change the normal schedule HARD/SOFT score.
+
+### V2.5.116 — Backup oversight before publication
+After GENERATE, do not go straight to publication. In the same Generation window review **THEORETICAL BACKUP PLAN — SENIOR REVIEW**: confirm mandatory standby coverage, look for odd concentration on one resident, and inspect concrete dates/positions. This is a theoretical layer and does not change normal-schedule wish satisfaction.

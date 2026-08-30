@@ -240,3 +240,6 @@ SP paspaudus **GENERUOTI / PERKURTI**, esamas persistent WESTON ledgeris padidė
 ### V2.5.115 dublių sluoksnio patikra
 
 Pageidavimų audite planinių dublių ignoruokite kaip darbo pamainas — sistema juos dabar techniškai atskiria. Jei „Noriu laisvos“ dieną žmogus turi tik teorinį dublį ir neturi normalios darbo pamainos, pageidavimas turi būti rodomas kaip ĮVYKDYTAS. Dublio layerio problemos rodomos atskirai ir negali keisti normalaus grafiko HARD ar SOFT score.
+
+### V2.5.116 — Dublių oversight prieš paskelbimą
+Po GENERUOTI neik tiesiai į paskelbimą. Tame pačiame Sudarymas lange peržiūrėk **TEORINIS DUBLIŲ PLANAS — SENIŪNĖS PATIKRA**: ar visi privalomi standby postai uždengti, ar nėra keistų koncentracijų vienam žmogui ir ar konkrečios datos / pozicijos atrodo logiškai. Tai teorinis sluoksnis ir normalaus grafiko pageidavimų nekeičia.

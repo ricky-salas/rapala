@@ -914,3 +914,9 @@ Kai griežtas struktūrinis 0–1 fairness koridorius nesuderinamas su privalomu
 ## V2.5.115 — dubliai yra atskiras teorinis sluoksnis
 
 Planuotas dublis / pavadavimas nėra darbo pamaina. Jis nekeičia „Negaliu dirbti“, „Noriu laisvos“, „Pageidauju dirbti“, darbo krūvio, poilsio, savaitgalių ar postų water-fill ir pageidavimų procento. Vien tik dublio aktyvavimas taip pat dar nėra realus darbas. Tik kai realus pavadavimas pažymimas **COMPLETED**, jis gali patekti į ACTUAL darbo ir retrospektyvų pageidavimų auditą. Normalus grafikas ir teorinis dublių planas rodomi atskirai.
+
+## V2.5.116 — Dublių patikra dar Sudarymo lange
+
+Paspaudus **GENERUOTI / PERKURTI JUODRAŠTĮ**, kartu su normaliu SYSTEM juodraščiu iškart sugeneruojamas atskiras teorinis dublių / standby planas. Seniūnė jį mato tame pačiame **Sudarymas** lange dar prieš paskelbdama grafiką: rodoma rezidentų × dienų matrica, visas dengiamos pamainos sąrašas, dublių skaičių spread ir galimos neuždengtos privalomos standby vietos.
+
+Šis planas iki paskelbimo yra tik juodraščio snapshotas. Jis **nėra darbas**, nekeičia pageidavimų, workload, poilsio ar fairness ir dar nėra operacinis `backup_assignments` įrašas. Tik paskelbus SYSTEM grafiką peržiūrėtas planas tampa operaciniu dublių planu.

@@ -1,0 +1,45 @@
+V2.5.116 TEST REPORT — DRAFT BACKUP OVERSIGHT
+
+PASS 1 — Python compile
+- app.py
+- db.py
+- scheduler_engine.py
+- solver_runner.py
+- test_v25116_draft_backup_oversight.py
+Result: PASS
+
+PASS 2 — September normal-schedule / theoretical-backup semantic regression
+- Existing V2.5.115 September regression rerun.
+- Solver returns a valid September SYSTEM candidate.
+- Theoretical standby on requested-off dates does not create wish misses.
+- Planned and activated-only standby remains excluded from work/request realization.
+- Only COMPLETED real-life cover enters ACTUAL work semantics.
+Result: PASS
+
+PASS 3 — Same-click draft backup generation
+Static code-path verification confirms Generate / Regenerate performs:
+1. normal SYSTEM solve + normal-only revalidation;
+2. plan_backups(...);
+3. result.backup_snapshot freeze;
+4. save_draft(...).
+Result: PASS
+
+PASS 4 — Senior pre-publication oversight in Sudarymas
+The saved DRAFT now renders before publication:
+- resident x day theoretical backup matrix;
+- full shift-by-shift backup table;
+- total AUTO backup count and resident spread;
+- explicit missing-standby errors when present;
+- explicit COMPLETE state when mandatory standby coverage is complete.
+Result: PASS
+
+PASS 5 — No pre-publication operational mixing
+The Generate button branch contains no db.sync_backups / sync_backup_plan call.
+Draft backup data remains inside backup_snapshot only. This preserves the V2.5.115 rule that theoretical standby is not operational work before publication.
+Result: PASS
+
+MIGRATION
+No Supabase migration required for V2.5.116.
+
+CONCLUSION
+V2.5.116 satisfies the requested workflow: one Generate click creates the normal schedule and theoretical dubliai together, and SP can inspect the complete dubliai plan in Sudarymas before deciding whether to publish.

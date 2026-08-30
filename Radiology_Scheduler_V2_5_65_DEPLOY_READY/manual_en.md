@@ -672,3 +672,9 @@ In the ŠR research window `AVAILABLE GPT + HUMAN vs MY ENGINE`, choose **LIVE A
 ## V2.5.115 — backups are a separate theoretical layer
 
 A planned backup/standby duty is not a work shift. It does not change Cannot-work, Requested-off, Prefer-to-work, workload, rest, weekend/workplace water-fill, or SYSTEM request satisfaction. Merely activating a standby still does not make it real work. Only a real cover marked **COMPLETED** may enter ACTUAL work and retrospective request realization. The normal schedule and theoretical backup plan are shown separately.
+
+## V2.5.116 — Backup review already in Generation
+
+Pressing **GENERATE / REGENERATE DRAFT** now creates the separate theoretical backup/standby plan together with the normal SYSTEM draft. The senior sees it in the same **Generation** window before publication: resident × day matrix, complete covered-shift list, resident backup spread, and any uncovered mandatory standby positions.
+
+Until publication this remains a draft snapshot only. It is **not work**, does not change wishes, workload, rest or fairness, and is not yet an operational `backup_assignments` row. Only after SYSTEM publication does the reviewed plan become operational.
