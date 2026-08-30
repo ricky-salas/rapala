@@ -1,0 +1,11 @@
+V2.5.97 CHECKPOINT — USER FEEDBACK / OPERATIONAL COVERAGE
+
+LOCKED FOR THIS BUILD
+1. Base = V2.5.96 monthly SYSTEM baseline + live ACTUAL fairness, no future catch-up.
+2. Centro UG 120 has AM + PM. Legacy slot IDs are preserved exactly; new PM rows are append-only.
+3. Saturday and Sunday are independent critical SYSTEM water-fill categories, raw spread <=1 each.
+4. Mammography is optional-last when exact workload requires gaps.
+5. Mandatory named backup: weekend SPS RO, Centro120 AM, Onko RO FULL, weekday SPS RO AM, retained SPS UG. CENTRO RO = best-effort.
+6. Neutral total double pool is established first. Active workstyle may redistribute that fixed pool; it may widen double spread but may not manufacture extra doubles.
+7. Operator-only ACTUAL non-working markers: sick leave, qualification/training, wellness. SYSTEM remains frozen.
+8. Same-preference scarcity/tie constitution is deferred, not silently invented.

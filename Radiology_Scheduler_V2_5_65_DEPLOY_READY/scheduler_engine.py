@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.91"
+ENGINE_API_VERSION = "2.5.101"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -34,9 +34,12 @@ DEFAULT_RULE_PROFILE = {
     "onko_first_exposure_required": False,
     "weekend_unique_required": True,
     "weekend_max_assignments_per_resident": 1,
-    "backup_weekends": True,
+    "backup_weekends": False,  # compatibility-only: generic weekend backup scope retired in V2.5.98
     "backup_sps_ro": True,
     "backup_sps_ug": True,
+    "backup_centro120_am": True,
+    "backup_onko_ro": True,
+    "backup_centro_ro_best_effort": True,
     "post_guardrail_tolerance": 0,
     "general_guardrail_tolerance": 1,
     "monthly_post_spread_weight": 1200.0,
@@ -69,6 +72,9 @@ _BOOL_RULES = {
     "backup_weekends",
     "backup_sps_ro",
     "backup_sps_ug",
+    "backup_centro120_am",
+    "backup_onko_ro",
+    "backup_centro_ro_best_effort",
 }
 _INT_RULES = {
     "deadline_day",
@@ -117,6 +123,8 @@ def validate_rule_profile(raw: Optional[dict] = None) -> Tuple[dict, List[str]]:
     # and is forcibly disabled here.
     out["onko_first_exposure_required"] = False
     out["onko_even_required"] = True
+    # V2.5.98: backup coverage is position-based, never generic weekend-based.
+    out["backup_weekends"] = False
 
     if out["target_shift_hours"] <= 0:
         errors.append("target_shift_hours must be > 0")
@@ -126,7 +134,7 @@ def validate_rule_profile(raw: Optional[dict] = None) -> Tuple[dict, List[str]]:
         errors.append("min_rest_hours cannot exceed 24h")
     if out["weekend_unique_required"] and out["weekend_max_assignments_per_resident"] > 1:
         errors.append("weekend_unique_required requires weekend_max_assignments_per_resident = 1")
-    if not (out["backup_weekends"] or out["backup_sps_ro"] or out["backup_sps_ug"]):
+    if not any(out[k] for k in ("backup_weekends","backup_sps_ro","backup_sps_ug","backup_centro120_am","backup_onko_ro","backup_centro_ro_best_effort")):
         errors.append("At least one backup scope must remain enabled")
     return out, errors
 
@@ -233,22 +241,22 @@ class SolveResult:
 
 
 DEFAULT_PEOPLE = [
-    {"initials": "A.P.", "name": "Aistė Pileckienė", "target_adjustment": 0, "color": "#E76F51"},
-    {"initials": "A.S.", "name": "Arminas Sveboda", "target_adjustment": 0, "color": "#2A9D8F"},
-    {"initials": "D.G.", "name": "Deivydas Giedrimas", "target_adjustment": 0, "color": "#457B9D"},
-    {"initials": "E.G.", "name": "Ernestas Gertas", "target_adjustment": 0, "color": "#F4A261"},
-    {"initials": "E.K.", "name": "Elena Khatskeleva", "target_adjustment": 0, "color": "#8E7DBE"},
-    {"initials": "E.S.", "name": "Eglė Stanisauskytė", "target_adjustment": 0, "color": "#6A994E"},
-    {"initials": "G.M.", "name": "Gabrielė Maleckaitė", "target_adjustment": 0, "color": "#D1495B"},
-    {"initials": "I.M.", "name": "Ignas Mažonavičius", "target_adjustment": 0, "color": "#9C6644"},
-    {"initials": "J.G.", "name": "Justinas Grumblys", "target_adjustment": 0, "color": "#3A86FF"},
-    {"initials": "K.S.", "name": "Kipras Strašinskas", "target_adjustment": 0, "color": "#8338EC"},
-    {"initials": "L.V.", "name": "Laura Volkovskaja", "target_adjustment": 0, "color": "#D45087"},
-    {"initials": "R.M.", "name": "Reda Montvilaitė", "target_adjustment": 0, "color": "#00A896"},
-    {"initials": "R.S.", "name": "Rosita Steponavičiūtė", "target_adjustment": -2, "color": "#E9C46A"},
-    {"initials": "R.Š.", "name": "Rapolas Šalaševičius", "target_adjustment": 0, "color": "#43AA8B"},
-    {"initials": "S.D.", "name": "Sofija Dulkė", "target_adjustment": 0, "color": "#577590"},
-    {"initials": "V.S.", "name": "Vytautė Stankevičiūtė", "target_adjustment": 0, "color": "#F9844A"},
+    {"initials": "PV", "name": "Pileckienė Aistė", "target_adjustment": 0, "color": "#E76F51"},
+    {"initials": "SA", "name": "Sveboda Arminas", "target_adjustment": 0, "color": "#2A9D8F"},
+    {"initials": "GD", "name": "Giedrimas Deivydas", "target_adjustment": 0, "color": "#457B9D"},
+    {"initials": "GE", "name": "Gertas Ernestas", "target_adjustment": 0, "color": "#F4A261"},
+    {"initials": "KE", "name": "Khatskeleva Elena", "target_adjustment": 0, "color": "#8E7DBE"},
+    {"initials": "SE", "name": "Stanišauskytė Eglė", "target_adjustment": 0, "color": "#6A994E"},
+    {"initials": "MG", "name": "Maleckaitė Gabrielė", "target_adjustment": 0, "color": "#D1495B"},
+    {"initials": "MŽ", "name": "Mažonavičius Ignas", "target_adjustment": 0, "color": "#9C6644"},
+    {"initials": "GB", "name": "Grumblys Justinas", "target_adjustment": 0, "color": "#3A86FF"},
+    {"initials": "SK", "name": "Stašinskas Kipras", "target_adjustment": 0, "color": "#8338EC"},
+    {"initials": "VL", "name": "Volkovskaja Laura", "target_adjustment": 0, "color": "#D45087"},
+    {"initials": "MR", "name": "Montvilaitė Reda", "target_adjustment": 0, "color": "#00A896"},
+    {"initials": "SR", "name": "Steponavičiūtė Rosita", "target_adjustment": -2, "color": "#E9C46A"},
+    {"initials": "ŠR", "name": "Šalaševičius Rapolas", "target_adjustment": 0, "color": "#43AA8B"},
+    {"initials": "DU", "name": "Dulkė Sofija Ana", "target_adjustment": 0, "color": "#577590"},
+    {"initials": "SN", "name": "Stankevičiūtė Vytautė", "target_adjustment": 0, "color": "#F9844A"},
 ]
 
 
@@ -703,6 +711,10 @@ NONCRITICAL_SPREAD_LAST_RESORT_CEILING = 3
 # but may not widen the monthly resident-to-resident double spread beyond 2.
 DOUBLE_SPREAD_MAX = 2
 
+# Internal allocation priority. Not part of resident preference scoring/UI.
+_PRIORITY_COLOCATION_GROUP = ("SR", "GE", "ŠR")
+_PRIORITY_COLOCATION_MAX_PER_MONTH = 4
+
 # V2.5.53 WEEKLY LOAD / RECOVERY CONSTITUTION.
 # These are safety/fatigue guardrails, not user-selectable SOFT preferences.
 # The Rule Profile may tighten them, but cannot weaken them.
@@ -721,16 +733,34 @@ SWAP_MAX_HOURS_PER_DAY = 12.0
 SWAP_WEEKLY_REST_PROXY_HOURS = 35.0
 
 def backup_required_slot(slot: Slot) -> bool:
-    """Mandatory backup scope from the active versioned Rule Profile."""
+    """Mandatory named-backup scope for publication readiness.
+
+    V2.5.98 is position-based rather than weekend-based. SPS RO and SPS UG
+    require cover on every day/block in which those positions exist. Centro 120
+    requires cover for AM only; Onko RO requires one backup for the full 9h shift.
+    A future night shift therefore inherits SPS RO/SPS UG coverage automatically
+    without adding a separate weekday/weekend rule.
+    """
     if slot.blocked:
         return False
-    if slot.weekday >= 5:
-        return bool(rule_value("backup_weekends"))
+    if slot.department == "Onko RO centre":
+        return bool(rule_value("backup_onko_ro"))
+    if slot.department.startswith("Centro UG 120") and slot.block == "AM":
+        return bool(rule_value("backup_centro120_am"))
     if slot.department.startswith("SPS RO"):
         return bool(rule_value("backup_sps_ro"))
     if slot.department.startswith("SPS UG"):
         return bool(rule_value("backup_sps_ug"))
     return False
+
+
+def backup_best_effort_slot(slot: Slot) -> bool:
+    """Non-blocking backup objective: cover CENTRO RO as much as capacity allows."""
+    return bool(
+        (not slot.blocked)
+        and slot.department.startswith("CENTRO RO")
+        and rule_value("backup_centro_ro_best_effort")
+    )
 
 
 def rotation_category(slot: Slot) -> str:
@@ -834,7 +864,7 @@ def make_slots(year: int, month: int) -> List[Slot]:
     Weekdays:
       CENTRO RO 4x AM + 4x PM
       Onko RO centre FULL, workload 1.5
-      Centro UG 120kab AM
+      Centro UG 120kab AM + PM (PM appended after legacy rows to preserve historical slot IDs)
       SPS RO d.d. AM
       SPS UG 1035kab AM + PM
       ADC 144kab AM + PM
@@ -869,6 +899,7 @@ def make_slots(year: int, month: int) -> List[Slot]:
 
     holiday_days=public_holiday_days_in_month(year,month)
     weekday_holidays=[]
+    centro120_pm_days=[]
     for d in range(1, ndays + 1):
         wd = date(year, month, d).weekday()
         if wd < 5:
@@ -885,6 +916,10 @@ def make_slots(year: int, month: int) -> List[Slot]:
                 add(d, wd, f"CENTRO RO {k}", "PM", blocked=holiday_closed)
             add(d, wd, "Onko RO centre", "FULL", workload2=3, mandatory=(not holiday_closed and not odd_weekdays), blocked=holiday_closed)
             add(d, wd, "Centro UG 120kab", "AM", blocked=holiday_closed)
+            # V2.5.97: remember the new PM shift but append it only after every
+            # pre-existing slot. Historical published JSON uses numeric slot IDs,
+            # so inserting it here would corrupt old schedules.
+            centro120_pm_days.append((d,wd,holiday_closed))
             add(d, wd, "SPS RO d.d.", "AM", mandatory=(not holiday_closed), blocked=holiday_closed)
             add(d, wd, "SPS UG 1035kab", "AM", mandatory=(not holiday_closed), blocked=holiday_closed)
             add(d, wd, "SPS UG 1035kab", "PM", mandatory=(not holiday_closed), blocked=holiday_closed)
@@ -906,6 +941,10 @@ def make_slots(year: int, month: int) -> List[Slot]:
     for d,wd in weekday_holidays:
         add(d, wd, "SPS RO budėjimai", "AM", mandatory=True)
         add(d, wd, "SPS RO budėjimai", "PM", mandatory=True)
+
+    # V2.5.97 NEW CAPACITY — append-only identity rule.
+    for d,wd,holiday_closed in centro120_pm_days:
+        add(d, wd, "Centro UG 120kab", "PM", blocked=bool(holiday_closed))
     return slots
 
 
@@ -1448,13 +1487,19 @@ def _v2564_choose_fixed_gaps(year, month, slots, gap_meta, seconds=5.0):
     if not optional_days:
         return fixed
     options=[s for s in slots if s.day in optional_days and not s.blocked and not s.mandatory and s.department!="Onko RO centre"]
-    mb=_V2564FastMB(); g={s.idx:mb.var(cost=(((s.day+1)*17+(s.idx+1)*7)%53)*1e-5) for s in options}
+    # V2.5.97: Mammography is the least-required cabinet. When optional capacity
+    # must be left empty, consume Mammography gaps first; only then water-fill
+    # unavoidable gaps across the remaining ordinary posts.
+    def _gap_cost(sl):
+        tiny=(((sl.day+1)*17+(sl.idx+1)*7)%53)*1e-5
+        return (-1000.0 if rotation_category(sl)=="Mamografijos" else 0.0) + tiny
+    mb=_V2564FastMB(); g={s.idx:mb.var(cost=_gap_cost(s)) for s in options}
     for d in sorted(optional_days):
         co={g[s.idx]:1.0 for s in options if s.day==d}
         need=int(optional_counts.get(d,1))
         if len(co)<need: return None
         mb.constraint(co,float(need),float(need))
-    cats=sorted({rotation_category(s) for s in options})
+    cats=sorted({rotation_category(s) for s in options if rotation_category(s)!="Mamografijos"})
     expr={cat:{g[s.idx]:1.0 for s in options if rotation_category(s)==cat} for cat in cats}
     for ai,c1 in enumerate(cats):
         for c2 in cats[ai+1:]:
@@ -1551,15 +1596,23 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             for d in range(1,ndays+1):
                 co[full[(i,d)]]=1.0; co[full[(j,d)]]=co.get(full[(j,d)],0.0)-1.0
             mb.constraint(co,-2.0,2.0)
-    # V2.5.71 structural double fairness: monthly AM+PM double-day counts must
-    # remain similar across residents regardless of 6h/12h preference.
+    # V2.5.97 WORKSTYLE OVERRIDE. Neutral SYSTEM construction still starts with
+    # double spread <=2. In the later work-style pass ONLY, active 6h/12h wishes
+    # may widen that neutral corridor when HARD/rest/workload remain valid.
+    # Slack is frozen to zero for the neutral solve and opened only for the style pass.
+    double_style_slacks=[]
     for i in range(n):
         for j in range(i+1,n):
+            sv=mb.var(0.0,0.0,False,cost=0.15)
+            double_style_slacks.append(sv)
             co={}
             for d in range(1,ndays+1):
                 co[dbl[(i,d)]]=1.0
                 co[dbl[(j,d)]]=co.get(dbl[(j,d)],0.0)-1.0
-            mb.constraint(co,-float(DOUBLE_SPREAD_MAX),float(DOUBLE_SPREAD_MAX))
+            co[sv]=co.get(sv,0.0)-1.0
+            mb.constraint(co,-np.inf,float(DOUBLE_SPREAD_MAX))
+            co2={v:-c for v,c in co.items() if v!=sv}; co2[sv]=-1.0
+            mb.constraint(co2,-np.inf,float(DOUBLE_SPREAD_MAX))
 
     # V2.5.77 ABSOLUTE SYSTEM FRIDAY WATER-FILL.
     # Friday burden is a structural generation rule, just like the all-post
@@ -1581,6 +1634,32 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             co[full[(pi,d)]]=co.get(full[(pi,d)],0.0)+1.0
         mb.constraint(co,float(friday_lo),float(friday_hi))
 
+    # V2.5.97 mandatory backup-capacity reservation for the two-phase solver.
+    # A required backup must be a distinct ABSOLUTE-HARD-safe resident who is free
+    # for the covered time block. For Onko FULL this deliberately reserves one
+    # completely work-free resident that day.
+    _required_backup_slots=[sl for sl in slots if backup_required_slot(sl) and not sl.blocked and sl.idx not in fixed_gaps]
+    _required_by_day_block={}
+    for sl in _required_backup_slots:
+        _required_by_day_block.setdefault((sl.day,sl.block),[]).append(sl)
+    for (d,block),_rows in _required_by_day_block.items():
+        candidates=[pi for pi,p in enumerate(people) if not absolute_unavailable_for_block(p,d,block)]
+        if not candidates:
+            return None
+        if block=="FULL":
+            busy={work[(pi,d)]:1.0 for pi in candidates}
+        elif block=="AM":
+            busy={}
+            for pi in candidates:
+                busy[am[(pi,d)]]=busy.get(am[(pi,d)],0.0)+1.0
+                busy[full[(pi,d)]]=busy.get(full[(pi,d)],0.0)+1.0
+        else:
+            busy={}
+            for pi in candidates:
+                busy[pm[(pi,d)]]=busy.get(pm[(pi,d)],0.0)+1.0
+                busy[full[(pi,d)]]=busy.get(full[(pi,d)],0.0)+1.0
+        mb.constraint(busy,-np.inf,float(len(candidates)-1))
+
     max_days7=min(int(rule_value("max_workdays_rolling7")),int(FATIGUE_MAX_WORKDAYS_ROLLING7))
     max_hours7=min(float(rule_value("max_hours_rolling7")),float(FATIGUE_ROLLING7_HARD_CEILING_HOURS))
     for pi,p in enumerate(people):
@@ -1601,6 +1680,23 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     total_weekend=sum(2 for _d in weekend_days)
     wlo=total_weekend//max(1,n); whi=int(math.ceil(total_weekend/max(1,n)))
     anchors=sorted({d if date(year,month,d).weekday()==5 else d-1 for d in weekend_days})
+
+    # V2.5.97: Saturday and Sunday are distinct compensation/burden classes.
+    # Water-fill them independently at SYSTEM generation. The old combined
+    # weekend corridor is kept as an additional guardrail for backwards metrics.
+    saturday_days=[d for d in weekend_days if date(year,month,d).weekday()==5]
+    sunday_days=[d for d in weekend_days if date(year,month,d).weekday()==6]
+    for _label,_days in (("Saturday",saturday_days),("Sunday",sunday_days)):
+        _total=2*len(_days)
+        _lo=_total//max(1,n); _hi=int(math.ceil(float(_total)/float(max(1,n))))
+        for pi,p in enumerate(people):
+            _co={}
+            for d in _days:
+                _co[am[(pi,d)]]=_co.get(am[(pi,d)],0.0)+1.0
+                _co[pm[(pi,d)]]=_co.get(pm[(pi,d)],0.0)+1.0
+                _co[full[(pi,d)]]=_co.get(full[(pi,d)],0.0)+1.0
+            if _co:
+                mb.constraint(_co,float(_lo),float(_hi))
 
     def _weekend_volunteer_block(p,d,block):
         if d in p.preferred:
@@ -1739,6 +1835,41 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         for d in p.preferred: add_hit(pi,d,None,-pref_w)
         for d in p.preferred_am: add_hit(pi,d,"AM",-pref_w)
         for d in p.preferred_pm: add_hit(pi,d,"PM",-pref_w)
+    # Internal high-priority co-location target: maximize distinct calendar weeks
+    # with one shared CENTRO RO AM/PM block, capped monthly. This is deliberately
+    # outside resident request/satisfaction accounting.
+    priority_colocation_week_vars=[]
+    priority_colocation_block_vars={}
+    _priority_idx=[]
+    _ini_to_pi={p.initials:pi for pi,p in enumerate(people)}
+    if all(ini in _ini_to_pi for ini in _PRIORITY_COLOCATION_GROUP):
+        _priority_idx=[_ini_to_pi[ini] for ini in _PRIORITY_COLOCATION_GROUP]
+        _by_week={}
+        for d in range(1,ndays+1):
+            dt=date(year,month,d)
+            wk=dt-timedelta(days=dt.weekday())
+            for block in ("AM","PM"):
+                centro_rows=[sl for sl in slots if sl.day==d and sl.block==block and not sl.blocked and sl.idx not in fixed_gaps and sl.department.startswith("CENTRO RO ")]
+                if len(centro_rows)<len(_priority_idx):
+                    continue
+                cv=mb.var(0.0,1.0,True,cost=0.0)
+                priority_colocation_block_vars[(d,block)]=cv
+                for pi in _priority_idx:
+                    av=am[(pi,d)] if block=="AM" else pm[(pi,d)]
+                    mb.constraint({cv:1.0,av:-1.0},-np.inf,0.0)
+                _by_week.setdefault(wk,[]).append(cv)
+        for wk,cvars in sorted(_by_week.items()):
+            wv=mb.var(0.0,1.0,True,cost=0.0)
+            priority_colocation_week_vars.append(wv)
+            co={wv:-1.0}
+            for cv in cvars:
+                co[cv]=co.get(cv,0.0)+1.0
+                mb.constraint({cv:1.0,wv:-1.0},-np.inf,0.0)
+            mb.constraint(co,0.0,np.inf)
+            mb.constraint({cv:1.0 for cv in cvars},-np.inf,1.0)
+        if priority_colocation_week_vars:
+            mb.constraint({wv:1.0 for wv in priority_colocation_week_vars},-np.inf,float(_PRIORITY_COLOCATION_MAX_PER_MONTH))
+
     # V2.5.88/90 staged work-pattern solve.
     # Normal months preserve the original two-pass behavior.
     # In a baseline volunteer month:
@@ -1749,46 +1880,57 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     #   5) apply symmetric 6h/mixed/12h workstyle.
     base_costs=list(mb.c)
     weekend_volunteer_locks={}
-    if weekend_volunteer_waterfill is not None:
+    priority_stage=bool(priority_colocation_week_vars) or (weekend_volunteer_waterfill is not None)
+    if priority_stage:
+        # First preserve the best Resident-HARD outcome.
         rh_costs=[0.0 for _ in mb.c]
         for vals in rh_by_person.values():
             for lv in vals:
                 rh_costs[lv]+=1000000.0
         rh_costs[rhmax]+=10000.0
         mb.c=rh_costs
-        rh_res=mb.solve(max(6.0,float(seconds)*0.22))
+        rh_res=mb.solve(max(6.0,float(seconds)*0.18))
         if rh_res.x is None:
             return None
         rh_total=float(sum(float(rh_res.x[v]) for vals in rh_by_person.values() for v in vals))
         rh_max_val=float(rh_res.x[rhmax])
         if any(rh_by_person.values()):
-            mb.constraint(
-                {v:1.0 for vals in rh_by_person.values() for v in vals},
-                -np.inf,rh_total+1e-6
-            )
+            mb.constraint({v:1.0 for vals in rh_by_person.values() for v in vals},-np.inf,rh_total+1e-6)
         mb.constraint({rhmax:1.0},-np.inf,rh_max_val+1e-6)
 
-        wv=weekend_volunteer_waterfill
-        volunteer_costs=[0.0 for _ in mb.c]
-        volunteer_costs[wv["min"]]=-(float(wv["total_cap"])+1.0)
-        volunteer_costs[wv["total"]]=-1.0
-        volunteer_costs[wv["max"]]=1.0/max(10.0,float(wv["total_cap"])+1.0)
-        mb.c=volunteer_costs
-        wv_res=mb.solve(max(6.0,float(seconds)*0.26))
-        if wv_res.x is not None:
-            floor=max(0.0,float(wv_res.x[wv["min"]]))
-            total=max(0.0,float(wv_res.x[wv["total"]]))
-            ceiling=max(0.0,float(wv_res.x[wv["max"]]))
-            mb.constraint({wv["min"]:1.0},floor-1e-6,np.inf)
-            mb.constraint({wv["total"]:1.0},total-1e-6,np.inf)
-            mb.constraint({wv["max"]:1.0},-np.inf,ceiling+1e-6)
-            weekend_volunteer_locks={
-                "min":round(floor,6),"total":round(total,6),"max":round(ceiling,6),
-                "active":len(wv["active"]),"requested_assignment_slots":int(wv["total_cap"]),
-            }
+        # Then maximize the internal co-location objective before ordinary SOFT/workstyle.
+        if priority_colocation_week_vars:
+            coloc_costs=[0.0 for _ in mb.c]
+            for wv in priority_colocation_week_vars:
+                coloc_costs[wv]=-1.0
+            mb.c=coloc_costs
+            cr=mb.solve(max(6.0,float(seconds)*0.22))
+            if cr.x is not None:
+                ctotal=int(round(sum(float(cr.x[wv]) for wv in priority_colocation_week_vars)))
+                mb.constraint({wv:1.0 for wv in priority_colocation_week_vars},float(ctotal),float(ctotal))
+
+        if weekend_volunteer_waterfill is not None:
+            wv=weekend_volunteer_waterfill
+            volunteer_costs=[0.0 for _ in mb.c]
+            volunteer_costs[wv["min"]]=-(float(wv["total_cap"])+1.0)
+            volunteer_costs[wv["total"]]=-1.0
+            volunteer_costs[wv["max"]]=1.0/max(10.0,float(wv["total_cap"])+1.0)
+            mb.c=volunteer_costs
+            wv_res=mb.solve(max(6.0,float(seconds)*0.20))
+            if wv_res.x is not None:
+                floor=max(0.0,float(wv_res.x[wv["min"]]))
+                total=max(0.0,float(wv_res.x[wv["total"]]))
+                ceiling=max(0.0,float(wv_res.x[wv["max"]]))
+                mb.constraint({wv["min"]:1.0},floor-1e-6,np.inf)
+                mb.constraint({wv["total"]:1.0},total-1e-6,np.inf)
+                mb.constraint({wv["max"]:1.0},-np.inf,ceiling+1e-6)
+                weekend_volunteer_locks={
+                    "min":round(floor,6),"total":round(total,6),"max":round(ceiling,6),
+                    "active":len(wv["active"]),"requested_assignment_slots":int(wv["total_cap"]),
+                }
 
         mb.c=list(base_costs)
-        neutral_res=mb.solve(max(8.0,float(seconds)*0.34))
+        neutral_res=mb.solve(max(8.0,float(seconds)*0.36))
     else:
         neutral_res=mb.solve(max(8.0,float(seconds)*0.58))
 
@@ -1818,6 +1960,11 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
                 a,b=mixed_dev_vars[pi]; mb.c[a]+=9.0; mb.c[b]+=9.0
 
     if workstyle_applied:
+        # Preferences may now override DOUBLE equality, but only after the neutral
+        # total double pool is frozen. A small slack cost preserves water-fill among
+        # equally requesting residents instead of creating random inequality.
+        for sv in double_style_slacks:
+            mb.ub[sv]=float(ndays)
         styled_fraction=0.18 if weekend_volunteer_waterfill is not None else 0.42
         styled_res=mb.solve(max(6.0,float(seconds)*styled_fraction))
         res=styled_res if styled_res.x is not None else neutral_res
@@ -1902,6 +2049,26 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
     byid={s.idx:s for s in normal}
 
     baseline_weekend_volunteer_mode=bool(pattern.get("baseline_weekend_volunteer_mode",False))
+    _priority_idx=[]
+    _ini_to_pi={p.initials:pi for pi,p in enumerate(people)}
+    if all(ini in _ini_to_pi for ini in _PRIORITY_COLOCATION_GROUP):
+        _priority_idx=[_ini_to_pi[ini] for ini in _PRIORITY_COLOCATION_GROUP]
+    _priority_blocks=[]
+    if _priority_idx:
+        _week_candidates={}
+        for d in range(1,ndays+1):
+            dt=date(year,month,d); wk=dt-timedelta(days=dt.weekday())
+            for block in ("AM","PM"):
+                if not all(bool(pattern[block.lower()][(pi,d)]) for pi in _priority_idx):
+                    continue
+                centro_rows=[sl for sl in normal if sl.day==d and sl.block==block and sl.department.startswith("CENTRO RO ")]
+                if len(centro_rows)>=len(_priority_idx):
+                    _week_candidates.setdefault(wk,[]).append((d,block))
+        for wk in sorted(_week_candidates):
+            if len(_priority_blocks)>=_PRIORITY_COLOCATION_MAX_PER_MONTH:
+                break
+            _priority_blocks.append(sorted(_week_candidates[wk],key=lambda z:(z[0],0 if z[1]=="AM" else 1))[0])
+
     volunteer_weekend_sps_const={}
     for pi,p in enumerate(people):
         c=0
@@ -1954,6 +2121,14 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
                         hit=mb.var(0.0,1.0,False,cost=-0.30)
                         co=dict(crit); co[hit]=-1.0
                         mb.constraint(co,0.0,np.inf)
+
+        # Materialize the high-priority shared blocks chosen by phase 1.
+        for d,block in _priority_blocks:
+            for pi in _priority_idx:
+                co={v:1.0 for (ppi,sid),v in x.items() if ppi==pi and byid[sid].day==d and byid[sid].block==block and byid[sid].department.startswith("CENTRO RO ")}
+                if not co:
+                    return None, type("_NoRes",(),{"x":None,"status":2,"message":"priority Centro RO block unavailable"})()
+                mb.constraint(co,1.0,1.0)
 
         cats=[c for c in ROTATION_CATEGORIES if c!="Onko RO"]
         expr={}
@@ -2063,7 +2238,8 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
     critical_spreads=dict(g.get("critical_structural_spreads") or {
         "SPS RO":int(rotation_spreads.get("SPS RO",999)),
         "SPS UG":int(rotation_spreads.get("SPS UG",999)),
-        "WEEKENDS":int(g.get("weekend_monthly_spread_raw",999) or 0),
+        "SATURDAYS":int(g.get("saturday_monthly_spread",999) or 0),
+        "SUNDAYS":int(g.get("sunday_monthly_spread",999) or 0),
         "FRIDAYS":int(g.get("friday_structural_spread_raw",999) or 0),
     })
     noncritical={cat:int(rotation_spreads.get(cat,0) or 0) for cat in NONCRITICAL_ROTATION_CATEGORIES}
@@ -2102,7 +2278,9 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "onko_monthly_spread_ceiling":2,
         "onko_consecutive_days_forbidden":True,
         "neutral_total_doubles_lock":int(pattern.get("neutral_total_doubles_lock",0) or 0),
-        "double_monthly_spread_ceiling":int(DOUBLE_SPREAD_MAX),
+        "double_neutral_baseline_spread_ceiling":int(DOUBLE_SPREAD_MAX),
+        "double_monthly_spread_ceiling":None,
+        "double_workstyle_override_allowed":True,
         "double_pattern_counts":pattern.get("double_counts",{}),
         "double_pattern_spread":int(pattern.get("double_spread",0) or 0),
         "workstyle_input_source":"FROZEN_SYSTEM_REQUEST_SNAPSHOT",
@@ -2111,7 +2289,7 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "prefer12_cohort_min":pattern.get("prefer12_cohort_min"),
         "prefer12_cohort_max":pattern.get("prefer12_cohort_max"),
         "workstyle_style_solve_proven":bool(pattern.get("workstyle_style_solve_proven",False)),
-        "workstyle_priority_policy":"FAIRNESS_FIRST_THEN_SYMMETRIC_6H_MIXED_12H_SOFT",
+        "workstyle_priority_policy":"NEUTRAL_DOUBLE_POOL_THEN_ACTIVE_WORKSTYLE_MAXIMIZATION",
         "friday_structural_waterfill_required":True,
         "friday_structural_spread_ceiling":1,
         "friday_pattern_counts":pattern.get("friday_counts",{}),
@@ -2119,21 +2297,21 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "friday_pattern_floor":int(pattern.get("friday_floor",0) or 0),
         "friday_pattern_ceil":int(pattern.get("friday_ceil",0) or 0),
         "friday_post_coupling":"Phase 1 water-fills Friday work blocks; Phase 2 then jointly water-fills all non-Onko post labels on those fixed blocks.",
-        "double_priority":"SPS RO / SPS UG first when assigning posts to an already-needed AM+PM double; Sunday duties are SPS RO; Onko RO is a separate 9h FULL day, not a double.",
+        "double_priority":"Neutral solve fixes the minimum/structurally appropriate total double pool; active 6h/12h workstyle then redistributes that fixed pool. SPS RO / SPS UG are preferred when assigning labels to an already-needed AM+PM double. Onko RO is a separate 9h FULL day, not a double.",
         "baseline_weekend_volunteer_mode":bool(pattern.get("baseline_weekend_volunteer_mode",False)),
         "baseline_weekend_volunteers":list(pattern.get("baseline_weekend_volunteers") or []),
         "baseline_weekend_volunteer_locks":dict(pattern.get("baseline_weekend_volunteer_locks") or {}),
         "weekend_volunteer_counts":dict(pattern.get("weekend_volunteer_counts") or {}),
         "weekend_raw_counts":dict(pattern.get("weekend_raw_counts") or {}),
         "weekend_fair_counts":dict(pattern.get("weekend_fair_counts") or {}),
-        "weekend_volunteer_policy":"SYSTEM generation always uses raw weekend/SPS-RO water-fill. Preferences cannot break the baseline; only post-publication ACTUAL swaps/overrides may do so.",
+        "weekend_volunteer_policy":"SYSTEM generation water-fills Saturday and Sunday separately (plus SPS RO/SPS UG). Preferences do not break these critical corridors; post-publication ACTUAL swaps/overrides may do so.",
     })
     msg=(
         "OK — exact-workload fairness-first two-phase schedule. Mėnesio krūvio targetas kiekvienam rezidentui išlaikytas tiksliai; Onko skiriamas poromis ir ne dvi kalendorines dienas iš eilės; "
         + (
             f"pirmo mėnesio savaitgalio savanoriai panaudoti, o LIKUSIO nesavanoriško SPS RO / savaitgalių + SPS UG / penktadienių fairness skirtumas ≤ {critical_cap}; "
             if pattern.get("baseline_weekend_volunteer_mode") else
-            f"SPS RO / SPS UG / savaitgalių / penktadienių skirtumas ≤ {critical_cap}; "
+            f"SPS RO / SPS UG / šeštadienių / sekmadienių / penktadienių skirtumas ≤ {critical_cap}; "
         )
         + f"kitų ne-Onko postų struktūrinis water-fill skirtumas ≤ {noncritical_cap}."
     )
@@ -2364,6 +2542,37 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
                     co[x[(pi, left.idx)]] = co.get(x[(pi, left.idx)], 0) + 1
                     co[x[(pi, right.idx)]] = co.get(x[(pi, right.idx)], 0) - 1
                 mb.constraint(co, 0, np.inf, f"Centro occupancy order {d} {block} {left.idx}")
+
+    priority_colocation_week_vars=[]
+    _priority_idx=[]
+    _ini_to_pi={p.initials:pi for pi,p in enumerate(people)}
+    if all(ini in _ini_to_pi for ini in _PRIORITY_COLOCATION_GROUP):
+        _priority_idx=[_ini_to_pi[ini] for ini in _PRIORITY_COLOCATION_GROUP]
+        _by_week={}
+        for d in range(1, calendar.monthrange(year,month)[1]+1):
+            dt=date(year,month,d); wk=dt-timedelta(days=dt.weekday())
+            for block in ("AM","PM"):
+                centro=[sl for sl in slots if sl.day==d and sl.block==block and not sl.blocked and sl.idx not in fixed_gap_ids and sl.department.startswith("CENTRO RO ")]
+                if len(centro)<len(_priority_idx):
+                    continue
+                cv=mb.var(f"priority_coloc[{d},{block}]",cost=0.0,lb=0,ub=1,integer=True)
+                for pi in _priority_idx:
+                    co={cv:1.0}
+                    for sl in centro:
+                        co[x[(pi,sl.idx)]]=co.get(x[(pi,sl.idx)],0.0)-1.0
+                    mb.constraint(co,-np.inf,0.0,f"priority coloc eligibility {people[pi].initials} {d} {block}")
+                _by_week.setdefault(wk,[]).append(cv)
+        for wk,cvars in sorted(_by_week.items()):
+            wv=mb.var(f"priority_coloc_week[{wk.isoformat()}]",cost=0.0,lb=0,ub=1,integer=True)
+            priority_colocation_week_vars.append(wv)
+            co={wv:-1.0}
+            for cv in cvars:
+                co[cv]=co.get(cv,0.0)+1.0
+                mb.constraint({cv:1.0,wv:-1.0},-np.inf,0.0,f"priority coloc block implies week {wk} {cv}")
+            mb.constraint(co,0.0,np.inf,f"priority coloc week hit {wk}")
+            mb.constraint({cv:1.0 for cv in cvars},-np.inf,1.0,f"priority coloc max one block week {wk}")
+        if priority_colocation_week_vars:
+            mb.constraint({wv:1.0 for wv in priority_colocation_week_vars},-np.inf,float(_PRIORITY_COLOCATION_MAX_PER_MONTH),"priority coloc monthly cap")
 
     # Exact workload targets (x2 so 1.5 Onko remains integer).
     for pi, p in enumerate(people):
@@ -3502,10 +3711,9 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
         weight=70.0,
         ub=ndays
     )
-    # V2.5.71 ABSOLUTE structural double-distribution corridor. Personal work-style
-    # preferences may decide who gets the available doubles only inside spread<=2.
+    # V2.5.97: double equality is the neutral baseline, not an absolute blocker.
+    # Active work-style wishes may widen it after HARD/coverage/rest constraints.
     dzmax,dzmin=double_spread_pair
-    mb.constraint({dzmax:1.0,dzmin:-1.0},-np.inf,float(DOUBLE_SPREAD_MAX),"V2571 monthly double spread <=2")
     add_spread_minimizer(
         "monthly_weekday_day_fairness",
         weekday_day_count,
@@ -3665,6 +3873,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     rh_min_limit=max(4.0,total_budget*0.10)
     rh_fair_limit=max(6.0,total_budget*0.12)
     weekend_volunteer_limit=max(4.0,total_budget*0.06)
+    priority_colocation_limit=max(4.0,total_budget*0.05)
     temporal_limit=max(4.0,total_budget*0.07)
     weekly_load_limit=max(5.0,total_budget*0.09)
     holiday_limit=max(4.0,total_budget*0.06)
@@ -3897,6 +4106,18 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     feasibility_res=rh_history_res if rh_history_res.x is not None else current_fair_res
     resident_hard_cumulative_spread_lock=int(math.ceil(max(0.0,float(feasibility_res.x[rh_cumulative_max])-float(feasibility_res.x[rh_cumulative_min]))-1e-7))
     mb.constraint({rh_cumulative_max:1.0,rh_cumulative_min:-1.0},-np.inf,float(resident_hard_cumulative_spread_lock),"V2552 resident-hard historical spread lock")
+
+    if priority_colocation_week_vars:
+        _pc_costs=[0.0 for _ in mb.c]
+        for wv in priority_colocation_week_vars:
+            _pc_costs[wv]=-1.0
+        _assignment_tiebreak(_pc_costs,1000000000.0)
+        mb.c=_pc_costs
+        _pc_res=mb.solve(time_limit=priority_colocation_limit)
+        if _pc_res.x is not None:
+            feasibility_res=_pc_res
+            _pc_total=int(round(sum(float(_pc_res.x[wv]) for wv in priority_colocation_week_vars)))
+            mb.constraint({wv:1.0 for wv in priority_colocation_week_vars},float(_pc_total),float(_pc_total),"priority coloc optimum lock")
 
     # Stage C4 — BASELINE UNPOPULAR-WEEKEND VOLUNTEERS.
     # Safety/coverage and Resident-HARD are already protected. Now explicitly
@@ -4210,7 +4431,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     post_opt_res=mb.solve(time_limit=max(6.0,post_opt_limit))
     if post_opt_res.x is not None:
         res=post_opt_res
-        solve_stage="V2553_CRITICAL_01_RH_WEEKLY_RECOVERY_SOFT_DEBT_OPT"
+        solve_stage="V2598_CRITICAL_01_RH_WEEKLY_RECOVERY_SOFT_MONTHLY_OPT"
     else:
         res=tier_res
         solve_stage="V2553_TIER_FALLBACK"
@@ -4560,6 +4781,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
     optional_categories=sorted({
         rotation_category(s) for s in slots
         if not s.blocked and not s.mandatory and s.department!="Onko RO centre"
+        and rotation_category(s)!="Mamografijos"
     })
     cat_vals=[cat_gap_counts.get(cat,0) for cat in optional_categories]
     optional_gap_category_spread=(max(cat_vals)-min(cat_vals)) if cat_vals else 0
@@ -5362,6 +5584,8 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
     monthly_friday_spread, monthly_friday_spread_raw, monthly_friday_unavoidable = volunteer_neutral_spread("fairness_friday_assignments")
     monthly_double_spread = spread_of("doubles")
     monthly_weekday_day_spread = spread_of("weekday_days")
+    saturday_monthly_spread = spread_of("saturdays")
+    sunday_monthly_spread = spread_of("sundays")
 
     # Prior published SYSTEM history + current selected month.
     cumulative_weekend_spread, cumulative_weekend_spread_raw, cumulative_weekend_unavoidable = volunteer_neutral_spread("cumulative_fair_weekend_count")
@@ -5427,15 +5651,22 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
     critical_structural_spreads={
         "SPS RO":int(_fair_sps_spread),
         "SPS UG":int(rotation_monthly_spreads.get("SPS UG",0)),
-        "WEEKENDS":int(monthly_weekend_spread_raw),
+        "SATURDAYS":int(saturday_monthly_spread),
+        "SUNDAYS":int(sunday_monthly_spread),
         "FRIDAYS":int(friday_structural_spread),
     }
     critical_structural_spreads_raw={
         "SPS RO":int(_raw_sps_spread),
         "SPS UG":int(rotation_monthly_spreads.get("SPS UG",0)),
-        "WEEKENDS":int(_raw_weekend_spread),
+        "SATURDAYS":int(saturday_monthly_spread),
+        "SUNDAYS":int(sunday_monthly_spread),
         "FRIDAYS":int(friday_structural_spread),
     }
+    if (not voluntary_swap_mode) and saturday_monthly_spread>1:
+        errors.append(f"Saturday water-fill violated: spread {saturday_monthly_spread} > 1")
+    if (not voluntary_swap_mode) and sunday_monthly_spread>1:
+        errors.append(f"Sunday water-fill violated: spread {sunday_monthly_spread} > 1")
+
     critical_worst_spread=max(list(critical_structural_spreads.values())+[0])
     critical_worst_spread_raw=max(list(critical_structural_spreads_raw.values())+[0])
     noncritical_post_spreads={cat:int(rotation_monthly_spreads.get(cat,0)) for cat in NONCRITICAL_ROTATION_CATEGORIES}
@@ -5590,6 +5821,8 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             # Backward-compatible "raw" now means the actually visible/raw worked
             # weekend count, while the new adjusted key is the fairness-gate input.
             "weekend_monthly_spread_raw": int(_raw_weekend_spread),
+            "saturday_monthly_spread": int(saturday_monthly_spread),
+            "sunday_monthly_spread": int(sunday_monthly_spread),
             "weekend_fairness_spread_adjusted_raw": int(monthly_weekend_spread_raw),
             "weekend_monthly_unavoidable_spread": monthly_weekend_unavoidable,
             "weekend_volunteer_adjustment_active": bool(_baseline_weekend_volunteer_mode),
@@ -5685,7 +5918,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             "preference_equity_quality_target_pp": 15.0,
             "preference_equity_quality_gate_passed": preference_equity_quality_gate_passed,
             "preference_fairness_model": "V2553_VERTICAL_RANK_HORIZONTAL_WEEKLY_RECOVERY_WATERFILL_GUARDRAILS",
-            "preference_vertical_order": ["ABSOLUTE_HARD","VOLUNTEER_ADJUSTED_CRITICAL_SPS_RO_SPS_UG_WEEKENDS_FRIDAYS","RESIDENT_HARD","BASELINE_UNPOPULAR_WEEKEND_VOLUNTEERS","CRITICAL_SPACING","WEEKLY_LOAD_RECOVERY_WATERFILL","STRUCTURAL_BURDEN","NONCRITICAL_POST_GUARDRAIL","SOFT1","SOFT2","SOFT3","NONCRITICAL_POST_DEBT_CATCHUP"],
+            "preference_vertical_order": ["ABSOLUTE_HARD","VOLUNTEER_ADJUSTED_CRITICAL_SPS_RO_SPS_UG_WEEKENDS_FRIDAYS","RESIDENT_HARD","BASELINE_UNPOPULAR_WEEKEND_VOLUNTEERS","CRITICAL_SPACING","WEEKLY_LOAD_RECOVERY_WATERFILL","STRUCTURAL_BURDEN","NONCRITICAL_POST_GUARDRAIL","SOFT1","SOFT2","SOFT3","NONCRITICAL_POST_MONTHLY_OPTIMUM"],
             "post_fairness_model": "V2577_ALL_POST_PLUS_FRIDAY_STRUCTURAL_WATERFILL",
             "soft_waterfill_locks": {},
         },
@@ -5842,6 +6075,8 @@ def calculate_live_fairness_snapshot(
             "assignment_count":len(pslots),
             "workload":round(sum(float(sl.workload2)/2.0 for sl in pslots),1),
             "weekend_assignments":sum(1 for sl in pslots if sl.weekday>=5),
+            "saturday_assignments":sum(1 for sl in pslots if sl.weekday==5),
+            "sunday_assignments":sum(1 for sl in pslots if sl.weekday==6),
             "friday_assignments":sum(1 for sl in pslots if sl.weekday==4),
             "doubles":sum(1 for ds in by_day.values() if len(ds)==2),
             "weekday_days":sum(1 for d in by_day if date(year,month,d).weekday()<5),
@@ -5858,6 +6093,8 @@ def calculate_live_fairness_snapshot(
         return max(0.0,100.0-3.0*excess)
 
     weekend_spread=_spread(d["weekend_assignments"] for d in pdata.values())
+    saturday_spread=_spread(d["saturday_assignments"] for d in pdata.values())
+    sunday_spread=_spread(d["sunday_assignments"] for d in pdata.values())
     friday_spread=_spread(d["friday_assignments"] for d in pdata.values())
     double_spread=_spread(d["doubles"] for d in pdata.values())
     weekday_day_spread=_spread(d["weekday_days"] for d in pdata.values())
@@ -5868,7 +6105,8 @@ def calculate_live_fairness_snapshot(
     post_score=float(np.mean([_component(v,allow_one=True) for v in rotation_spreads.values()])) if rotation_spreads else 100.0
     score=(
         0.50*post_score
-        +0.15*_component(weekend_spread)
+        +0.075*_component(saturday_spread)
+        +0.075*_component(sunday_spread)
         +0.10*_component(friday_spread)
         +0.10*_component(double_spread,allow_one=True)
         +0.15*_component(weekday_day_spread,allow_one=True)
@@ -5881,6 +6119,8 @@ def calculate_live_fairness_snapshot(
             "monthly_fairness_score":round(float(score),1),
             "monthly_post_fairness_score":round(float(post_score),1),
             "weekend_monthly_spread":int(weekend_spread),
+            "saturday_monthly_spread":int(saturday_spread),
+            "sunday_monthly_spread":int(sunday_spread),
             "friday_monthly_spread":int(friday_spread),
             "double_monthly_spread":int(double_spread),
             "weekday_day_monthly_spread":int(weekday_day_spread),

@@ -179,7 +179,7 @@ def save_preference(year: int, month: int, initials: str, payload: dict):
 def save_preference_for_resident_v2595(year: int, month: int, target_initials: str, payload: dict, reason: str):
     """Lifecycle-operator manual entry for another resident (or a late self-entry).
 
-    The backend authorizes R.S./R.Š., preserves account identity, and writes an audit row.
+    The backend authorizes SR/ŠR, preserves account identity, and writes an audit row.
     """
     rows=_data(_retry_db(lambda: client().rpc("save_preferences_for_resident_v2595", {
         "p_year": int(year),
@@ -979,31 +979,6 @@ def all_rest_credit_balances() -> Dict[str,dict]:
     return out
 
 
-def list_open_work_debts(initials: Optional[str] = None) -> List[dict]:
-    def _read():
-        q=client().table("backup_work_debts").select("*").is_("settled_at","null")
-        if initials:
-            q=q.eq("initials",initials)
-        return q.order("due_at").execute()
-    return _data(_retry_db(_read))
-
-
-def work_debt_balances(initials: str) -> Dict[str,int]:
-    out={"AM":0,"PM":0,"NIGHT":0}
-    for r in list_open_work_debts(initials):
-        typ=(r.get("debt_type") or "").upper()
-        if typ in out: out[typ]+=1
-    return out
-
-
-def all_work_debt_balances() -> Dict[str,dict]:
-    out={}
-    for r in list_open_work_debts():
-        i=r["initials"]; out.setdefault(i,{"AM":0,"PM":0,"NIGHT":0})
-        typ=(r.get("debt_type") or "").upper()
-        if typ in out[i]: out[i][typ]+=1
-    return out
-
 
 def set_rest_credit_redemptions(initials: str, year: int, month: int, am_units: int, pm_units: int):
     client().rpc("set_rest_credit_redemptions_v255", {
@@ -1142,6 +1117,77 @@ def get_email_log(target_year: int, target_month: int, limit: int = 200) -> List
     return _data(client().table("email_log").select("*").eq("target_year",target_year).eq("target_month",target_month).order("id",desc=True).limit(limit).execute())
 
 
+
+# --- V2.5.100 durable notification outbox ---
+def enqueue_notification_v25100(event_key: str, event_type: str, initials: str, target_year: int, target_month: int,
+                                 to_email: str, subject: str, body: str, scheduled_for: Optional[str] = None,
+                                 ics_text: Optional[str] = None, ics_name: Optional[str] = None) -> dict:
+    row={
+        "event_key":str(event_key),"event_type":str(event_type),"initials":str(initials),
+        "target_year":int(target_year),"target_month":int(target_month),
+        "scheduled_for":scheduled_for or _now(),"to_email":str(to_email or ""),
+        "subject":str(subject),"body":str(body),"ics_text":ics_text,"ics_name":ics_name,
+        "status":"pending" if str(to_email or "").strip() else "blocked",
+        "last_error":None if str(to_email or "").strip() else "Missing notification email",
+        "updated_at":_now(),
+    }
+    existing=_data(_retry_db(lambda: client().table("notification_outbox")
+        .select("*").eq("event_key",row["event_key"]).eq("initials",row["initials"]).limit(1).execute()))
+    if existing:
+        cur=existing[0]
+        if str(cur.get("status") or "")=="sent":
+            return cur
+        # Refresh content/address and make an explicit app retry immediately available.
+        upd={k:v for k,v in row.items() if k not in ("event_key","initials")}
+        upd["status"]="pending" if row["to_email"].strip() else "blocked"
+        _retry_db(lambda: client().table("notification_outbox").update(upd).eq("id",cur["id"]).execute())
+        rows=_data(_retry_db(lambda: client().table("notification_outbox").select("*").eq("id",cur["id"]).limit(1).execute()))
+        return rows[0] if rows else {**cur,**upd}
+    rows=_data(_retry_db(lambda: client().table("notification_outbox").insert(row).execute()))
+    return rows[0] if rows else row
+
+
+def mark_notification_delivery_v25100(notification_id: int, ok: bool, detail: str = "") -> dict:
+    cur=_data(_retry_db(lambda: client().table("notification_outbox").select("attempt_count").eq("id",int(notification_id)).limit(1).execute()))
+    attempts=int((cur[0] if cur else {}).get("attempt_count",0) or 0)+1
+    upd={
+        "status":"sent" if ok else "failed",
+        "attempt_count":attempts,
+        "last_error":None if ok else str(detail or "Delivery failed"),
+        "sent_at":_now() if ok else None,
+        "updated_at":_now(),
+    }
+    rows=_data(_retry_db(lambda: client().table("notification_outbox").update(upd).eq("id",int(notification_id)).execute()))
+    return rows[0] if rows else upd
+
+
+def list_notification_outbox_v25100(target_year: int, target_month: int, limit: int = 500) -> List[dict]:
+    return _data(_retry_db(lambda: client().table("notification_outbox").select("*")
+        .eq("target_year",int(target_year)).eq("target_month",int(target_month))
+        .order("created_at",desc=True).limit(int(limit)).execute()))
+
+
+def failed_notification_outbox_v25100(target_year: int, target_month: int, limit: int = 100, event_type: Optional[str] = None) -> List[dict]:
+    def _q():
+        q=client().table("notification_outbox").select("*")
+        q=q.eq("target_year",int(target_year)).eq("target_month",int(target_month)).in_("status",["failed","blocked"])
+        if event_type:
+            q=q.eq("event_type",str(event_type))
+        return q.order("created_at",desc=False).limit(int(limit)).execute()
+    return _data(_retry_db(_q))
+
+
+def notification_summary_v25100(target_year: int, target_month: int) -> List[dict]:
+    rows=list_notification_outbox_v25100(target_year,target_month,limit=2000)
+    out={}
+    for r in rows:
+        typ=str(r.get("event_type") or "other")
+        rec=out.setdefault(typ,{"event_type":typ,"pending":0,"sent":0,"failed":0,"blocked":0,"total":0})
+        status=str(r.get("status") or "pending")
+        rec["total"]+=1
+        if status in rec: rec[status]+=1
+    return [out[k] for k in sorted(out)]
+
 def get_manual(lang: str) -> str:
     rows=_data(client().table("manual_docs").select("content").eq("lang",lang).limit(1).execute())
     return rows[0].get("content","") if rows else _default_manuals.get(lang,"")
@@ -1201,6 +1247,31 @@ def research_checkpoint_summary() -> List[dict]:
 
 def research_comments_v2510() -> List[dict]:
     return _data(client().rpc("research_comments_v2510",{}).execute())
+
+
+
+def list_schedule_day_statuses_v2597(year: int, month: int) -> List[dict]:
+    """Senior/research-operator operational day-status markers (private reason view)."""
+    return _data(_retry_db(lambda: client().table("schedule_day_statuses")
+        .select("*").eq("year",int(year)).eq("month",int(month))
+        .order("day").order("initials").execute()))
+
+
+def set_schedule_day_status_v2597(year: int, month: int, day: int, initials: str, status_kind: str, note: str="") -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("set_schedule_day_status_v2597",{
+        "p_year":int(year),"p_month":int(month),"p_day":int(day),
+        "p_initials":str(initials),"p_status_kind":str(status_kind),"p_note":str(note or ""),
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def clear_schedule_day_status_v2597(status_id: int) -> bool:
+    data=_data(_retry_db(lambda: client().rpc("clear_schedule_day_status_v2597",{
+        "p_id":int(status_id)
+    }).execute()))
+    if isinstance(data,bool): return data
+    if isinstance(data,list) and data: return bool(data[0])
+    return bool(data)
 
 
 def get_my_scheduler_research_checkpoint(year: int, month: int, checkpoint: str) -> Optional[dict]:

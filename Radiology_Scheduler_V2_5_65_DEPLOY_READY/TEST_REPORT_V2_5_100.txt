@@ -1,0 +1,59 @@
+V2.5.100 TEST REPORT — EMAIL LIFECYCLE + DURABLE OUTBOX
+
+PASS 1 — Python compile
+- app.py
+- db.py
+- scheduler_engine.py
+- notification_core.py
+- notification_worker.py
+Result: PASS
+
+PASS 2 — Solver regression isolation
+- V2.5.99 scheduler_engine.py SHA256: ac8ad66941ae99c10cf82f7165b59889edb8d4bb2ac4629c0d30024efcd284ce
+- V2.5.100 scheduler_engine.py SHA256: ac8ad66941ae99c10cf82f7165b59889edb8d4bb2ac4629c0d30024efcd284ce
+Result: byte-identical; notification release does not change solver logic.
+
+PASS 3 — Shared SMTP core (mock transport)
+- Gmail provider -> smtp.gmail.com:587 inferred.
+- STARTTLS negotiated.
+- Login performed.
+- Google App Password pasted with spaces normalized to 16-character secret.
+- SMTP NOOP preflight succeeds.
+- Real EmailMessage send path succeeds under mock transport.
+- ICS attachment path exercised.
+Result: PASS
+
+PASS 4 — October lifecycle clock
+Target month: 2026-10
+- preferences_open = 2026-09-01 08:00 Europe/Vilnius
+- exact preference cutoff = 2026-09-14 00:00 Europe/Vilnius
+Result: PASS
+
+PASS 5 — Background-worker lifecycle/dedup mock
+Cohort: 16 active residents.
+- First run on 2026-09-01 09:15 -> 16 preferences_open events.
+- Repeated same-day run -> 0 duplicate events.
+- 2026-09-08 -> 16 missing-preference reminder events.
+- After one resident submitted, 2026-09-09 -> 15 reminder events.
+- Unique event_key + initials preserved duplicate safety.
+Result: PASS
+
+PASS 6 — Durable outbox migration
+- notification_outbox table created in current Supabase project.
+- Operator SELECT/INSERT/UPDATE RLS policies created.
+- Production outbox remained empty after migration; build/test did not send resident emails.
+Result: PASS
+
+PASS 7 — Current recipient readiness snapshot
+- Active residents: 16
+- Notification email present: 15
+- Missing notification email: 1 (SN)
+Result: PRE-FLIGHT BLOCKER IDENTIFIED, not a code failure.
+
+NOT LIVE-TESTED
+- Real SMTP authentication/send cannot be tested from the build workspace because deployment SMTP/App-Password secrets are intentionally not present in source code.
+- After deploy, Senior UI CHECK CHANNEL + SEND TEST TO ME is the required live preflight.
+- Background automation additionally requires GitHub Actions secrets, including SUPABASE_SERVICE_ROLE_KEY kept only in the Actions secret store.
+
+MIGRATION
+- SUPABASE_MIGRATION_V2_5_100_NOTIFICATION_OUTBOX.sql applied successfully to project gqdlwhjgwqmuoolybusy.
