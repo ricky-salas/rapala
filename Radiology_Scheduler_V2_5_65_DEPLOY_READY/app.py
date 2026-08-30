@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 from email.message import EmailMessage
 
 import pandas as pd
+import numpy as np
 import streamlit as st
 import xlsxwriter
 from pypdf import PdfReader
@@ -49,8 +50,8 @@ import db
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.107 HARD WISHES + EXPLICIT AUDIT"
-EXPECTED_ENGINE_API_VERSION = "2.5.107"
+APP_VERSION = "2.5.108 LIVE WISH COMPARISON"
+EXPECTED_ENGINE_API_VERSION = "2.5.108"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "SR"
 RESEARCHER_INITIALS = "ŠR"
@@ -8101,7 +8102,13 @@ def _research_people_snapshot(people):
             "prior_double_count":p.prior_double_count,
             "prior_weekday_day_count":p.prior_weekday_day_count,
             "prior_rotation_counts":dict(p.prior_rotation_counts or {}),
+            "prior_consecutive_weekend_streak":int(getattr(p,"prior_consecutive_weekend_streak",0) or 0),
             "prior_last_day_onko":bool(getattr(p,"prior_last_day_onko",False)),
+            "prior_resident_hard_loss_count":int(getattr(p,"prior_resident_hard_loss_count",0) or 0),
+            "request_items":_research_json_safe(list(getattr(p,"request_items",[]) or [])),
+            "rest_credit_am_to_use":int(getattr(p,"rest_credit_am_to_use",0) or 0),
+            "rest_credit_pm_to_use":int(getattr(p,"rest_credit_pm_to_use",0) or 0),
+            "note":str(getattr(p,"note","") or ""),
         })
     return _research_json_safe(rows)
 
@@ -8137,7 +8144,13 @@ def _research_people_from_snapshot(rows):
             prior_double_count=int(r.get("prior_double_count") or 0),
             prior_weekday_day_count=int(r.get("prior_weekday_day_count") or 0),
             prior_rotation_counts={str(k):int(v) for k,v in (r.get("prior_rotation_counts") or {}).items()},
+            prior_consecutive_weekend_streak=int(r.get("prior_consecutive_weekend_streak") or 0),
             prior_last_day_onko=bool(r.get("prior_last_day_onko",False)),
+            prior_resident_hard_loss_count=int(r.get("prior_resident_hard_loss_count") or 0),
+            request_items=list(r.get("request_items") or []),
+            rest_credit_am_to_use=int(r.get("rest_credit_am_to_use") or 0),
+            rest_credit_pm_to_use=int(r.get("rest_credit_pm_to_use") or 0),
+            note=str(r.get("note") or ""),
         ))
     return people
 
@@ -8415,6 +8428,86 @@ def _research_run_log_df(runs):
     return pd.DataFrame(rows)
 
 
+def _research_result_wish_totals(result):
+    """Comparable request totals from one validated result."""
+    out={"active":0,"honored":0,"missed":0,"hard":0,"hard_missed":0,"exact_soft":0,"exact_soft_missed":0}
+    for initials,d in ((result.stats or {}).get("people",{}) or {}).items():
+        for r in (d.get("request_detail_rows") or []):
+            if not r.get("included_in_score"):
+                continue
+            out["active"]+=1
+            ok=bool(r.get("fulfilled"))
+            out["honored"]+=int(ok); out["missed"]+=int(not ok)
+            if r.get("kind")=="resident_hard":
+                out["hard"]+=1; out["hard_missed"]+=int(not ok)
+            if r.get("kind") in ("soft_free","preferred"):
+                out["exact_soft"]+=1; out["exact_soft_missed"]+=int(not ok)
+    out["percent"]=(None if out["active"]==0 else round(100.0*out["honored"]/out["active"],1))
+    return out
+
+
+def _research_wish_summary_comparison_df(comparator,engine_result,people):
+    """Per-resident wish fulfilment using the SAME frozen input snapshot."""
+    rows=[]
+    cp=(comparator.stats or {}).get("people",{}) or {}
+    ep=(engine_result.stats or {}).get("people",{}) or {}
+    for p in people:
+        c=cp.get(p.initials,{}) or {}; e=ep.get(p.initials,{}) or {}
+        cdet=[r for r in (c.get("request_detail_rows") or []) if r.get("included_in_score")]
+        edet=[r for r in (e.get("request_detail_rows") or []) if r.get("included_in_score")]
+        active=max(len(cdet),len(edet))
+        c_ok=sum(1 for r in cdet if r.get("fulfilled")); e_ok=sum(1 for r in edet if r.get("fulfilled"))
+        rows.append({
+            "Resident":p.initials,
+            "Name":p.name,
+            "Active wishes":active,
+            "GPT+Human honored":c_ok,
+            "GPT+Human missed":max(0,len(cdet)-c_ok),
+            "GPT+Human satisfaction %":(None if not cdet else round(100*c_ok/len(cdet),1)),
+            "GPT+Human cannot-work violations":int(c.get("resident_hard_losses",0) or 0),
+            "Engine honored":e_ok,
+            "Engine missed":max(0,len(edet)-e_ok),
+            "Engine satisfaction %":(None if not edet else round(100*e_ok/len(edet),1)),
+            "Engine cannot-work violations":int(e.get("resident_hard_losses",0) or 0),
+        })
+    return pd.DataFrame(rows)
+
+
+def _research_wish_request_comparison_df(comparator,engine_result,people):
+    """Request-by-request paired outcomes; request_id is stable under one frozen snapshot."""
+    rows=[]
+    cp=(comparator.stats or {}).get("people",{}) or {}
+    ep=(engine_result.stats or {}).get("people",{}) or {}
+    for p in people:
+        crows={str(r.get("request_id")):r for r in (cp.get(p.initials,{}).get("request_detail_rows") or []) if r.get("included_in_score")}
+        erows={str(r.get("request_id")):r for r in (ep.get(p.initials,{}).get("request_detail_rows") or []) if r.get("included_in_score")}
+        keys=list(dict.fromkeys(list(crows)+list(erows)))
+        for key in keys:
+            c=crows.get(key) or {}; e=erows.get(key) or {}
+            base=c or e
+            c_ok=(None if not c else bool(c.get("fulfilled")))
+            e_ok=(None if not e else bool(e.get("fulfilled")))
+            if c_ok is True and e_ok is True: verdict="Both honored"
+            elif c_ok is False and e_ok is True: verdict="ENGINE only"
+            elif c_ok is True and e_ok is False: verdict="GPT+HUMAN only"
+            elif c_ok is False and e_ok is False: verdict="Both missed"
+            else: verdict="Audit mismatch"
+            rows.append({
+                "Resident":p.initials,
+                "Name":p.name,
+                "Request ID":key,
+                "Priority":base.get("priority"),
+                "Request":base.get("type"),
+                "Date":base.get("date") or "—",
+                "Block":base.get("block") or "—",
+                "Requested value":base.get("requested_value"),
+                "GPT+Human":("HONORED" if c_ok is True else "MISSED" if c_ok is False else "MISSING"),
+                "Engine Run 1":("HONORED" if e_ok is True else "MISSED" if e_ok is False else "MISSING"),
+                "Outcome":verdict,
+            })
+    return pd.DataFrame(rows)
+
+
 def research_locked_comparison_xlsx(y,m,case,people,comparator,runs,questionnaires=None):
     bio=BytesIO()
     valid_runs=[r for r in runs if bool(r.get("success")) and int(r.get("hard_errors") or 0)==0]
@@ -8431,6 +8524,7 @@ def research_locked_comparison_xlsx(y,m,case,people,comparator,runs,questionnair
             ["Best-of-5 selector","ABSOLUTE-HARD-valid → zero RESIDENT-HARD violations → lower post imbalance → max-min SOFT → monthly fairness → diversity"],
             ["Max engine runs",case.get("engine_max_runs",5)],
             ["Locked input hash",case.get("input_hash")],
+            ["Wish comparison rule","Both schedules are validated against the exact same frozen input snapshot"],
             ["Locked GPT+Human schedule hash",case.get("comparator_schedule_hash")],
             ["Engine version at lock",case.get("app_version_at_lock")],
             ["Rule Profile at lock",case.get("rule_profile_version_at_lock")],
@@ -8461,6 +8555,12 @@ def research_locked_comparison_xlsx(y,m,case,people,comparator,runs,questionnair
                 w,index=False,sheet_name="comparison_run1"
             )
             schedule_list_df(y,m,first_result).to_excel(w,index=False,sheet_name="engine_run1")
+            _research_wish_summary_comparison_df(comparator,first_result,people).to_excel(
+                w,index=False,sheet_name="wish_summary_run1"
+            )
+            _research_wish_request_comparison_df(comparator,first_result,people).to_excel(
+                w,index=False,sheet_name="wish_request_compare"
+            )
         if best:
             best_result=_research_result_from_run(best,people,y,m)
             _research_metric_rows(comparator,best_result,f"MY ENGINE — BEST RUN {best['run_no']}").to_excel(
@@ -8535,9 +8635,20 @@ def research_locked_comparison_xlsx(y,m,case,people,comparator,runs,questionnair
         # Whole-workbook import audit / provenance.
         import_audit_rows=[]
         for item in case.get("import_warnings") or []:
-            if not isinstance(item,dict) or item.get("type")!="WHOLE_WORKBOOK_IMPORT_AUDIT_V2544":
+            if not isinstance(item,dict) or item.get("type") not in ("WHOLE_WORKBOOK_IMPORT_AUDIT_V2544","LIVE_APP_SAME_INPUT_AUDIT_V25108"):
                 continue
-            for kind in ("preferences","schedule"):
+            if item.get("type")=="LIVE_APP_SAME_INPUT_AUDIT_V25108":
+                pa=item.get("preferences") or {}
+                import_audit_rows.append({
+                    "Kind":"preferences",
+                    "Workbook SHA-256":pa.get("snapshot_hash",""),
+                    "Sheet":"LIVE APP DB",
+                    "Status":"frozen_live_snapshot",
+                    "Header row":"",
+                    "Rows":pa.get("resident_count",""),
+                    "Reason":item.get("selected_cycle","")+" · SAME snapshot used for both schedules",
+                })
+            for kind in (("schedule",) if item.get("type")=="LIVE_APP_SAME_INPUT_AUDIT_V25108" else ("preferences","schedule")):
                 audit=item.get(kind) or {}
                 wb_hash=audit.get("workbook_hash")
                 for sh in audit.get("sheets",[]) or []:
@@ -9636,19 +9747,30 @@ def render_available_gpt_vs_engine_research():
         )
 
         st.warning(
-            "Naudok tik tuo metu realiai žinotus inputus. Nežinomų istorinių pageidavimų neatkurk iš galutinio grafiko — palik N/A."
+            "Naudok tik realiai žinotus inputus. 2026-09 palyginimui rekomenduojama imti LIVE APP WISHES: "
+            "užrakinimo momentu sistema nukopijuos dabartinius rugsėjo pageidavimus/HARD ir tą PATĮ frozen snapshot naudos abiem grafikams."
         )
+        input_source=st.radio(
+            "Wishes / HARD input source",
+            ["LIVE APP WISHES / HARD — same selected month", "UPLOAD HISTORICAL INPUT WORKBOOK"],
+            horizontal=True,key=f"research_input_source_{ry}_{rm}"
+        )
+        use_live_inputs=input_source.startswith("LIVE APP")
         u1,u2=st.columns(2)
-        pref_file=u1.file_uploader(
-            "1. Historical preferences / HARD constraints",
-            type=["xlsx","xls"],key=f"research_lock_pref_{ry}_{rm}"
-        )
+        if use_live_inputs:
+            u1.success("1. LIVE APP WISHES selected — no wishes Excel needed")
+            pref_file=None
+        else:
+            pref_file=u1.file_uploader(
+                "1. Historical preferences / HARD constraints",
+                type=["xlsx","xls"],key=f"research_lock_pref_{ry}_{rm}"
+            )
         sched_file=u2.file_uploader(
-            "2. AVAILABLE GPT + HUMAN final schedule",
+            "2. REAL / AVAILABLE GPT + HUMAN final schedule",
             type=["xlsx","xls"],key=f"research_lock_sched_{ry}_{rm}"
         )
 
-        # V2.5.44 whole-workbook preflight. Nothing is locked yet.
+        # V2.5.108 preflight. Live DB wishes OR whole-workbook historical wishes are frozen before comparison.
         import_preflight_ok=False
         preflight_people=None
         preflight_assignments=None
@@ -9656,15 +9778,34 @@ def render_available_gpt_vs_engine_research():
         pref_audit=None
         sched_audit=None
 
-        if pref_file is not None or sched_file is not None:
-            st.markdown("### WHOLE-WORKBOOK IMPORT PREVIEW")
+        if use_live_inputs or pref_file is not None or sched_file is not None:
+            st.markdown("### SAME-INPUT COMPARISON PREFLIGHT")
             st.caption(
-                "Importeris skenuoja VISUS Excel worksheet'us, ieško suderinamų lentelių pagal headerius/content, "
-                "atpažįsta headerį ir žemiau title eilučių, ignoruoja empty/helper sheets ir saugo sheet + source-row provenance."
+                "Svarbiausia taisyklė: REAL / GPT+HUMAN ir MY ENGINE vertinami pagal IDENTIŠKĄ užšaldytą pageidavimų snapshot. "
+                "Schedule Excel importer still scans every worksheet and preserves provenance."
             )
 
         try:
-            if pref_file is not None:
+            if use_live_inputs:
+                preflight_people=load_people(ry,rm)
+                pref_audit={
+                    "source_type":"LIVE_APP_DB",
+                    "selected_cycle":f"{ry}-{rm:02d}",
+                    "snapshot_hash":_research_input_hash(ry,rm,preflight_people),
+                    "resident_count":len(preflight_people),
+                    "used_sheet_count":0,
+                    "sheet_count":0,
+                    "sheets":[],
+                }
+                st.success(
+                    f"LIVE APP WISHES loaded: {len(preflight_people)} residents · snapshot {_research_input_hash(ry,rm,preflight_people)[:12]}…"
+                )
+                st.dataframe(_research_input_preferences_df(preflight_people,ry,rm),use_container_width=True,hide_index=True,height=420)
+                st.info(
+                    "These exact wishes/HARD will be frozen on LOCK and applied to BOTH schedules. "
+                    "The hand-made schedule does not get its own easier/different wish set."
+                )
+            elif pref_file is not None:
                 preflight_people,pref_audit,pref_warn=research_people_from_excel(
                     pref_file,ry,rm,return_audit=True
                 )
@@ -9675,11 +9816,11 @@ def render_available_gpt_vs_engine_research():
                 )
                 preflight_warnings.extend(sched_warn or [])
 
-            if pref_file is not None and sched_file is not None:
+            if preflight_people is not None and sched_file is not None and preflight_assignments is not None:
                 import_preflight_ok=True
                 same_workbook=(
-                    pref_audit.get("workbook_hash")==sched_audit.get("workbook_hash")
-                    if pref_audit and sched_audit else False
+                    (not use_live_inputs) and pref_audit and sched_audit
+                    and pref_audit.get("workbook_hash")==sched_audit.get("workbook_hash")
                 )
                 if same_workbook:
                     st.success(
@@ -9688,8 +9829,8 @@ def render_available_gpt_vs_engine_research():
                     )
 
                 p1,p2,p3,p4=st.columns(4)
-                p1.metric("Workbook sheets",pref_audit.get("sheet_count") if pref_audit else "—")
-                p2.metric("Prefs/HARD sheets used",pref_audit.get("used_sheet_count") if pref_audit else "—")
+                p1.metric("Wish input",("LIVE APP DB" if use_live_inputs else "Excel workbook"))
+                p2.metric("Residents frozen",len(preflight_people) if preflight_people is not None else "—")
                 p3.metric("Schedule sheets used",sched_audit.get("used_sheet_count") if sched_audit else "—")
                 p4.metric("Schedule assignments read",sched_audit.get("assignment_count") if sched_audit else "—")
 
@@ -9706,8 +9847,16 @@ def render_available_gpt_vs_engine_research():
 
                 left_a,right_a=st.columns(2)
                 with left_a:
-                    st.markdown("**Preferences / HARD worksheet scan**")
-                    st.dataframe(_audit_sheet_df(pref_audit),use_container_width=True,hide_index=True)
+                    st.markdown("**Wishes / HARD source audit**")
+                    if use_live_inputs:
+                        st.dataframe(pd.DataFrame([{
+                            "Source":"LIVE APP DB",
+                            "Cycle":f"{ry}-{rm:02d}",
+                            "Snapshot hash":pref_audit.get("snapshot_hash"),
+                            "Residents":pref_audit.get("resident_count"),
+                        }]),use_container_width=True,hide_index=True)
+                    else:
+                        st.dataframe(_audit_sheet_df(pref_audit),use_container_width=True,hide_index=True)
                 with right_a:
                     st.markdown("**Schedule worksheet scan**")
                     st.dataframe(_audit_sheet_df(sched_audit),use_container_width=True,hide_index=True)
@@ -9723,11 +9872,11 @@ def render_available_gpt_vs_engine_research():
                             st.write("• "+str(w))
 
                 st.success(
-                    "WHOLE-WORKBOOK PREFLIGHT — PASSED. Official lock will use exactly this parsed snapshot."
+                    "SAME-INPUT PREFLIGHT — PASSED. Official lock will freeze exactly these wishes/HARD and use them for BOTH schedules."
                 )
         except Exception as import_exc:
             import_preflight_ok=False
-            st.error("WHOLE-WORKBOOK PREFLIGHT — BLOCKED")
+            st.error("SAME-INPUT PREFLIGHT — BLOCKED")
             st.error(str(import_exc))
 
         st.markdown("### GPT+human proceso klausimynai")
@@ -9812,7 +9961,7 @@ def render_available_gpt_vs_engine_research():
         if st.button(
             "LOCK CASE + RUN 1 (FIRST SHOT)",
             type="primary",use_container_width=True,
-            disabled=(not confirm or not pref_file or not sched_file or version_mismatch or not import_preflight_ok),
+            disabled=(not confirm or not sched_file or version_mismatch or not import_preflight_ok),
             key=f"lock_run1_{ry}_{rm}"
         ):
             try:
@@ -9822,14 +9971,16 @@ def render_available_gpt_vs_engine_research():
                 assignments=preflight_assignments
                 warnings=list(preflight_warnings or [])
                 warnings.append(_research_json_safe({
-                    "type":"WHOLE_WORKBOOK_IMPORT_AUDIT_V2544",
+                    "type":("LIVE_APP_SAME_INPUT_AUDIT_V25108" if use_live_inputs else "WHOLE_WORKBOOK_IMPORT_AUDIT_V2544"),
                     "selected_cycle":f"{ry}-{rm:02d}",
+                    "input_source":("LIVE_APP_DB" if use_live_inputs else "UPLOADED_WORKBOOK"),
                     "preferences":pref_audit,
                     "schedule":sched_audit,
                     "same_workbook":(
-                        bool(pref_audit and sched_audit)
+                        (not use_live_inputs) and bool(pref_audit and sched_audit)
                         and pref_audit.get("workbook_hash")==sched_audit.get("workbook_hash")
                     ),
+                    "same_frozen_snapshot_for_both_schedules":True,
                 }))
                 snapshot=_research_people_snapshot(people)
                 input_hash=_research_input_hash(ry,rm,people)
@@ -10152,6 +10303,31 @@ def render_available_gpt_vs_engine_research():
             with right:
                 st.markdown("**MY ENGINE — IMMUTABLE RUN 1 / FIRST SHOT**")
                 st.dataframe(schedule_list_df(ry,rm,run1_result),use_container_width=True,hide_index=True,height=480)
+
+            st.markdown("### SAME FROZEN WISHES — DIRECT OUTCOME COMPARISON")
+            st.caption(
+                "This is the apples-to-apples analysis: BOTH schedules are revalidated against the exact same frozen resident wishes/HARD snapshot. "
+                "No wishes are inferred from the hand-made schedule."
+            )
+            _ct=_research_result_wish_totals(comparator); _et=_research_result_wish_totals(run1_result)
+            w1,w2,w3,w4=st.columns(4)
+            w1.metric("Active frozen wishes",_ct["active"])
+            w2.metric("GPT+Human honored",f"{_ct['honored']}/{_ct['active']}" if _ct['active'] else "N/A")
+            w3.metric("Engine honored",f"{_et['honored']}/{_et['active']}" if _et['active'] else "N/A")
+            w4.metric("Cannot-work violations GPT / Engine",f"{_ct['hard_missed']} / {_et['hard_missed']}")
+            st.dataframe(
+                _research_wish_summary_comparison_df(comparator,run1_result,people),
+                use_container_width=True,hide_index=True,height=520
+            )
+            _wishcmp=_research_wish_request_comparison_df(comparator,run1_result,people)
+            _diff=_wishcmp[_wishcmp["Outcome"]!="Both honored"] if not _wishcmp.empty else _wishcmp
+            if _diff.empty:
+                st.success("ALL FROZEN WISHES WERE HONORED BY BOTH SCHEDULES.")
+            else:
+                st.markdown("**Missed / different wish outcomes**")
+                st.dataframe(_diff,use_container_width=True,hide_index=True,height=520)
+            with st.expander("Show every frozen wish request",expanded=False):
+                st.dataframe(_wishcmp,use_container_width=True,hide_index=True,height=620)
         else:
             st.error(
                 f"PRIMARY FIRST SHOT FAILED after {float(first.get('elapsed_seconds') or 0):.2f}s. "

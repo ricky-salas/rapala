@@ -894,3 +894,8 @@ SYSTEM generavime kiekvienas aktyvus **„Negaliu dirbti“** įrašas yra priva
 Po kiekvieno sėkmingo generavimo `Sudarymas` iš karto rodo **Aktyvūs pageidavimai / Įvykdyta / Neįvykdyta / Negaliu dirbti pažeidimai**. Jei visi aktyvūs pageidavimai įvykdyti, rodoma žalia žinutė **„VISI AKTYVŪS PAGEIDAVIMAI ĮVYKDYTI“**. Jei bent vienas SOFT pageidavimas neįvykdytas, šalia rodoma konkreti **NEĮVYKDYTI PAGEIDAVIMAI** lentelė su žmogumi, prašymu ir faktiniu SYSTEM rezultatu. Bet koks `Negaliu dirbti` pažeidimas yra kritinė klaida ir toks SYSTEM juodraštis negali būti publikuojamas.
 
 Kai griežtas struktūrinis 0–1 fairness koridorius nesuderinamas su privalomu 0-HARD sluoksniu, V2.5.107 pirmiau saugo visus HARD blokus. Fallback tada bounded-feasibility būdu bando išlaikyti visus konkrečių datų SOFT prašymus ir work-style tikslus; tik žemesnio rango sluoksniai gali būti atlaisvinami. Kas liko neįvykdyta, niekada neslepiama — tai matoma audito lentelėje.
+
+
+## V2.5.108 — LIVE pageidavimų palyginimas
+
+ŠR tyrimo lange `AVAILABLE GPT + HUMAN vs MY ENGINE` galima pasirinkti **LIVE APP WISHES / HARD**. Šis režimas paima pasirinkto mėnesio realius pageidavimus tiesiai iš programos duomenų bazės, prieš užrakinimą parodo jų suvestinę ir sukuria nekintamą snapshot. **Tas pats snapshot naudojamas abiem grafikams**: rankiniam / GPT+human ir MY ENGINE. Galutinis rankinis grafikas niekada nenaudojamas pageidavimams atkurti. Po Run 1 rodoma tiesioginė kiekvieno pageidavimo išpildymo lentelė.

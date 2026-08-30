@@ -1,0 +1,13 @@
+LOCKED CHECKPOINT — V2.5.108 LIVE WISH COMPARISON
+
+Baseline: V2.5.107 HARD WISHES + EXPLICIT AUDIT.
+
+New locked behavior:
+1. Research comparator can use LIVE APP WISHES/HARD for selected month.
+2. Exact input snapshot is frozen and used identically for hand-made/GPT+Human and engine schedules.
+3. Whole-workbook numpy NameError fixed.
+4. Direct request-level wish comparison is shown and exported.
+5. No research conclusion may infer wishes from the final hand-made schedule.
+6. Historical workbook mode remains for months where live DB wishes are not the true historical input.
+
+No DB migration.

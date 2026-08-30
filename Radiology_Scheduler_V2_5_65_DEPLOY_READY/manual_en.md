@@ -652,3 +652,8 @@ During SYSTEM generation every active **Unavailable / Resident-HARD** block is a
 After every successful generation, `Generation` immediately shows **Active wishes / Honored / Missed / Cannot-work violations**. If every active wish is met, the app shows **“ALL ACTIVE WISHES MET”**. If any SOFT wish is missed, an explicit **UNMET WISHES** table shows the resident, request, and actual SYSTEM result. Any Cannot-work violation is a critical error and such a SYSTEM draft cannot be published.
 
 If the strict structural 0–1 fairness corridor is incompatible with the mandatory zero-HARD layer, V2.5.107 protects every HARD block first. Its bounded-feasibility fallback then tries to preserve all exact date/block SOFT wishes and work-style targets; only lower-ranked layers may be relaxed. Anything not achieved is always surfaced in the audit table rather than hidden behind an average percentage.
+
+
+## V2.5.108 — LIVE wish comparison
+
+In the ŠR research window `AVAILABLE GPT + HUMAN vs MY ENGINE`, choose **LIVE APP WISHES / HARD** when the selected month's real requests exist in the app database. The app previews and freezes that exact input snapshot at case lock. **The same frozen snapshot is used for both schedules**: the real/manual GPT+human schedule and MY ENGINE. Wishes are never reconstructed from the final hand-made schedule. After Run 1, the app shows a direct request-by-request fulfilment comparison.

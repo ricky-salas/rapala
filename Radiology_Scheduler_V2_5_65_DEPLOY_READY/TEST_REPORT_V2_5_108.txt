@@ -1,0 +1,52 @@
+V2.5.108 TEST REPORT — LIVE WISH COMPARISON
+
+PASS 1 — Python compile
+- app.py
+- scheduler_engine.py
+- db.py
+- solver_runner.py
+Result: PASS
+
+PASS 2 — Whole-workbook crash regression
+- app.py now imports numpy as np.
+- _research_grid_day_value(np.int64(9), 2026, 9) returns 9.
+Result: PASS
+
+PASS 3 — Frozen live request snapshot round-trip
+- request_items preserved
+- rest-credit AM/PM choices preserved
+- note preserved
+- prior consecutive-weekend safety tail preserved
+Result: PASS
+
+PASS 4 — September 2026 engine regression
+- Engine API: 2.5.108
+- solver worker completed successfully
+- HARD errors: 0
+- RESIDENT HARD losses: 0
+- preference satisfaction: 100.0%
+- monthly fairness: 89.8%
+- MG has zero unhonored requests
+Result: PASS
+
+PASS 5 — Same-wish comparison helper regression
+Using the real September engine validation ledger as both comparator and engine input:
+- active frozen wishes: 77
+- honored: 77
+- missed: 0
+- Resident-HARD request units: 50
+- Resident-HARD misses: 0
+- request-by-request rows: 77
+- every paired outcome: Both honored
+Result: PASS
+
+PASS 6 — Research UI design
+- Live app wishes mode requires only the real/manual schedule workbook.
+- Uploaded historical wishes mode remains available for truly historical months.
+- Lock button requires successful same-input preflight.
+- UI explicitly states that both schedules use the same frozen wishes/HARD snapshot.
+- Direct per-resident and request-level wish comparison is rendered after Run 1.
+Result: PASS by static/code-path inspection.
+
+MIGRATION
+No Supabase migration required.
