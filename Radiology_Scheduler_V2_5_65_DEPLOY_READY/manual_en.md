@@ -1,3 +1,15 @@
+# V2.5.104 — PREFERENCE-AWARE WATER-FILL + ONKO-0 → MAMMOGRAPHY
+
+> **This section refines the V2.5.96/V2.5.103 SYSTEM water-fill constitution and supersedes older wording that said an explicit weekend preference could never widen raw SYSTEM weekend spread.**
+
+- **An explicit weekend “Prefer to work” request is a voluntary unpopular-burden choice.** If a resident specifically requests a Saturday/Sunday date, including a recurring long-term request, the generator tries to honor it before forcing the same unpopular burden onto neutral / prefer-not-to-work residents, provided ABSOLUTE HARD, rest, coverage and exact monthly workload remain valid.
+- **Water-fill remains active.** The 0–1 fairness corridor applies to the REMAINING NON-VOLUNTARY Saturday, Sunday and weekend SPS RO burden. Voluntary requests may therefore make RAW SYSTEM weekend/SPS-RO exposure exceed 1; raw exposure is still reported separately.
+- **SPS UG remains a raw structural critical category.** The weekend volunteer exception does not relax SPS UG water-fill.
+- **One resident still has at most one weekend duty within a specific Saturday+Sunday pair.** Volunteering changes fairness accounting, not weekend uniqueness.
+- **After publication, bilateral swaps and other permitted ACTUAL changes may widen raw exposure further.** SYSTEM remains frozen for audit and creates no next-month catch-up.
+- **Mammography remains the last-priority optional cabinet.** Once the optional-gap layer has decided how many Mammography slots remain open, residents with **0 Onko RO** that month receive first-exposure priority for at least one of those remaining Mammography slots when feasible. This is a current-month breadth preference inside the proven post-spread corridor and cannot widen that corridor.
+- No new database migration is required for V2.5.104.
+
 # V2.5.100 — EMAIL LIFECYCLE + DURABLE OUTBOX
 
 - One system sender delivers operational schedule notifications to all active residents.

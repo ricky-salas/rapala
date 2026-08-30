@@ -1,0 +1,42 @@
+V2.5.104 TEST REPORT — PREFERENCE-AWARE WEEKEND WATER-FILL + ONKO-ZERO MAMMOGRAPHY
+====================================================================================
+
+1. Python compile
+- app.py: PASS
+- db.py: PASS
+- scheduler_engine.py: PASS
+- notification_core.py: PASS
+- notification_worker.py: PASS
+
+2. Explicit weekend Pageidauju dirbti regression (2026-09)
+- 16-resident synthetic roster matching the live initials.
+- VL explicit whole-day Sunday requests: 6, 13, 20 September.
+- Solve result: PASS, HARD errors = 0.
+- VL requested dates honored: 3/3 (100%).
+- VL raw Sunday assignments = 4; volunteered Sunday assignments = 3; fairness Sunday burden = 1.
+- Group adjusted Sunday fairness spread = 1 while raw Sunday spread = 4.
+- SPS RO adjusted critical spread = 1; SPS UG spread = 1.
+Interpretation: willing requested weekend work may widen RAW SYSTEM exposure, while the remaining non-voluntary burden stays water-filled.
+
+3. Weekend uniqueness regression
+- Volunteering changes fairness accounting only.
+- Raw max-one-duty-per-resident within each Saturday+Sunday weekend pair remains enforced: PASS.
+
+4. Onko-zero -> Mammography priority
+- Mammography optional-gap-last logic unchanged.
+- 2026-09 test: five residents had 0 Onko RO; all five received at least one remaining Mammography assignment: PASS.
+- 2026-10 neutral test: five residents had 0 Onko RO but only four remaining Mammography first-exposure opportunities; four of five received one, i.e. maximum feasible breadth: PASS.
+- Noncritical post spread remained 1 in both tests: PASS.
+
+5. Cumulative regression
+- 2026-10 with PV = Mostly 12 h: HARD errors = 0; PV work-style score = 100%, 13 double days.
+- Existing internal SR + GE + ŠR Centro RO co-location objective still achieved 4 distinct weeks in the test month.
+- Critical adjusted spreads remained SPS RO 1 / SPS UG 1 / Saturday 1 / Sunday 1 / Friday 1.
+
+6. Version pairing
+- APP_VERSION: 2.5.104 PREFERENCE-AWARE WATER-FILL + ONKO-ZERO MAMMO: PASS
+- EXPECTED_ENGINE_API_VERSION: 2.5.104: PASS
+- ENGINE_API_VERSION: 2.5.104: PASS
+
+7. Database
+- No V2.5.104 schema/data migration required.

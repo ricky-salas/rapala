@@ -1,0 +1,13 @@
+V2.5.104 LOCKED CHECKPOINT — PREFERENCE-AWARE SYSTEM WATER-FILL + ONKO-ZERO MAMMOGRAPHY PRIORITY
+
+This release is cumulative on V2.5.103 and preserves all prior V2.5.96–V2.5.103 functionality except the specifically corrected weekend-preference interpretation below.
+
+1. Every month still starts from a clean SYSTEM baseline; prior-month fairness history is audit-only and never solver catch-up input.
+2. Explicit month-specific or recurring weekend “Prefer to work / Pageidauju dirbti” requests are voluntary unpopular-burden choices.
+3. Voluntary requested Saturday/Sunday assignments are removed from SYSTEM fairness burden accounting for Saturday, Sunday, combined weekends and the corresponding weekend SPS RO exposure.
+4. The REMAINING non-voluntary Saturday/Sunday/SPS-RO burden is water-filled at spread <=1 whenever feasible. Raw SYSTEM exposure may be wider because a resident willingly requested those duties.
+5. SPS UG remains raw structural critical water-fill. Weekend uniqueness remains raw: max one duty per resident within a Saturday+Sunday weekend pair.
+6. Post-publication bilateral swaps/allowed ACTUAL changes may widen raw exposure further. SYSTEM remains immutable; no future catch-up/debt is created.
+7. Mammography remains the last optional cabinet in gap selection. After the remaining Mammography volume is fixed, residents with zero Onko RO that month receive first-exposure priority for Mammography inside the already-proven structural post corridor.
+8. This Mammography preference may choose among feasible post allocations but must not widen the certified post-spread corridor.
+9. No V2.5.104 Supabase migration is required.
