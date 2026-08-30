@@ -5275,6 +5275,9 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                       validation_mode: str = "generation") -> Dict[str, dict]:
     errors: List[str] = []
     structural_warnings: List[str] = []
+    # V2.5.115: theoretical backup/standby validation is a separate layer.
+    # It must never turn a valid NORMAL schedule or a resident preference into a miss.
+    backup_layer_errors: List[str] = []
     validation_mode=str(validation_mode or "generation")
     post_publication_mode=(
         validation_mode.startswith("voluntary_swap")
@@ -5782,10 +5785,12 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                 if any(v>cap for v in counts.values()):
                     structural_warnings.append(f"Weekend {sat}-{sun}: resident weekend-pair target exceeded")
 
-    # Optional backup obligations are part of the resident's ACTUAL availability.
-    # A RESIDENT-HARD or `Noriu laisvos` block is not truly honored if the person
-    # is scheduled as the named backup during that same block. SYSTEM uses the
-    # publication-time backup snapshot; ACTUAL may pass the live backup table.
+    # V2.5.115 THEORETICAL BACKUP LAYER.
+    # Planned or activated-only backup duties are STANDBY, not work. They have zero
+    # effect on SYSTEM/DRAFT workload, rest, water-fill or request satisfaction.
+    # Only a row marked COMPLETED represents real-life cover and may affect ACTUAL
+    # request realization; real-work fairness ownership is handled separately by
+    # effective_actual_assignments().
     slot_by_idx={s.idx:s for s in slots}
     backup_rows=[]
     for raw in (backup_assignments or []):
@@ -5804,6 +5809,8 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             "backup":backup,
             "covered_person":str(raw.get("covered_person") or assignments.get(sid) or ""),
             "day":sl.day,"block":sl.block,"department":sl.department,
+            "activated_at":raw.get("activated_at"),
+            "completed_at":raw.get("completed_at"),
         })
 
     # Backup obligations may never violate ABSOLUTE HARD or overlap the same
@@ -5812,17 +5819,17 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
     for br in backup_rows:
         bp=next((p for p in people if p.initials==br["backup"]),None)
         if bp is None:
-            errors.append(f"Backup slot {br['covered_slot']}: unknown backup resident {br['backup']}")
+            backup_layer_errors.append(f"Backup slot {br['covered_slot']}: unknown backup resident {br['backup']}")
             continue
         if br["backup"]==br["covered_person"]:
-            errors.append(f"Backup slot {br['covered_slot']}: resident cannot back up own assignment")
+            backup_layer_errors.append(f"Backup slot {br['covered_slot']}: resident cannot back up own assignment")
         if absolute_unavailable_for_block(bp,br["day"],br["block"]):
-            errors.append(f"{br['backup']}: backup during ABSOLUTE HARD on day {br['day']} {br['block']}")
+            backup_layer_errors.append(f"{br['backup']}: backup during ABSOLUTE HARD on day {br['day']} {br['block']}")
         if (not post_publication_mode) and resident_hard_unavailable_for_block(bp,br["day"],br["block"]):
-            errors.append(f"{br['backup']}: backup during mandatory RESIDENT HARD on day {br['day']} {br['block']}")
+            backup_layer_errors.append(f"{br['backup']}: backup during mandatory RESIDENT HARD on day {br['day']} {br['block']}")
         normal_here=[sl for sl in slots if sl.day==br["day"] and assignments.get(sl.idx)==br["backup"]]
         if any(blocks_overlap(sl.block,br["block"]) for sl in normal_here):
-            errors.append(f"{br['backup']}: backup overlaps normal assignment on day {br['day']} {br['block']}")
+            backup_layer_errors.append(f"{br['backup']}: backup overlaps normal assignment on day {br['day']} {br['block']}")
 
     # V2.5.49 RESIDENT REQUEST SATISFACTION LEDGER.
     # Every structured resident-facing table is represented, but pure legal/physical
@@ -6005,12 +6012,14 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                 return []
             return [s for s in pslots if s.day==int(day) and (block=="FULL" or blocks_overlap(s.block,block))]
 
-        def overlapping_backups(day,block):
+        def overlapping_completed_covers(day,block):
+            """Real ACTUAL cover only; theoretical standby is deliberately ignored."""
             if day is None:
                 return []
             return [
                 br for br in backup_rows
-                if br.get("backup")==p.initials and int(br.get("day"))==int(day)
+                if br.get("completed_at")
+                and br.get("backup")==p.initials and int(br.get("day"))==int(day)
                 and (block=="FULL" or blocks_overlap(str(br.get("block")),block))
             ]
 
@@ -6032,7 +6041,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
 
             if kind=="resident_hard":
                 assigned_here=overlapping(day,block)
-                backup_here=overlapping_backups(day,block)
+                backup_here=overlapping_completed_covers(day,block)
                 fulfilled=not bool(assigned_here or backup_here)
                 score_value=100.0 if fulfilled else 0.0
                 category="resident_hard"
@@ -6040,7 +6049,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                 resident_hard_honored+=int(fulfilled)
             elif kind=="soft_free":
                 assigned_here=overlapping(day,block)
-                backup_here=overlapping_backups(day,block)
+                backup_here=overlapping_completed_covers(day,block)
                 fulfilled=not bool(assigned_here or backup_here)
                 score_value=100.0 if fulfilled else 0.0
                 category="soft1"
@@ -6114,9 +6123,14 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                     f"{sl.department} ({sl.block})" for sl in sorted(assigned_here,key=lambda z:(z.day,z.idx))
                 )
             if backup_here:
-                station_parts.extend(
-                    f"DUBLIS → {br.get('department')} ({br.get('block')})" for br in backup_here
-                )
+                if kind=="backup_claim":
+                    station_parts.extend(
+                        f"TEORINIS DUBLIS → {br.get('department')} ({br.get('block')})" for br in backup_here
+                    )
+                else:
+                    station_parts.extend(
+                        f"REALIAI PAVADAVO → {br.get('department')} ({br.get('block')})" for br in backup_here
+                    )
             station_text="; ".join(station_parts) if station_parts else "—"
             if kind in ("shift_length_preference","avoid_doubles") and workstyle_proof:
                 station_text=(
@@ -6447,17 +6461,24 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
     resident_hard_cumulative_spread=(max(rh_cumulative)-min(rh_cumulative)) if rh_cumulative else 0
     resident_hard_backup_conflicts=sum(
         1 for v in pdata.values() for r in (v.get("resident_hard_conflicts") or [])
-        if "DUBLIS" in str(r.get("station") or "")
+        if "REALIAI PAVADAVO" in str(r.get("station") or "")
     )
     soft_backup_misses=sum(
         1 for v in pdata.values() for r in (v.get("soft_request_misses") or [])
-        if "DUBLIS" in str(r.get("station") or "")
+        if "REALIAI PAVADAVO" in str(r.get("station") or "")
     )
 
     return {
         "global": {
             "hard_errors": len(errors),
             "errors": errors,
+            "backup_layer_hard_errors": len(backup_layer_errors),
+            "backup_layer_errors": list(backup_layer_errors),
+            "backup_layer_valid": (len(backup_layer_errors)==0),
+            "backup_layer_semantics": "THEORETICAL_STANDBY_UNTIL_COMPLETED",
+            "planned_backups_affect_request_score": False,
+            "activated_backups_affect_request_score": False,
+            "completed_backups_affect_actual_request_score": True,
             "structural_warnings": structural_warnings,
             "structural_warning_count": int(len(structural_warnings)),
             "exact_workload_targets_required": True,

@@ -1,0 +1,58 @@
+V2.5.115 TEST REPORT — THEORETICAL BACKUP LAYER
+
+PASS 1 — Python compile
+- app.py
+- scheduler_engine.py
+- db.py
+- solver_runner.py
+Result: PASS
+
+PASS 2 — Real September 2026 normal-schedule regression
+- HARD errors: 0
+- Dream Team SP + ŠR + GE at CENTRO RO: 5/5 represented weeks
+- ADMIN raw weekend corridor used: 4
+- Scored active wishes: 77
+- Honored by NORMAL schedule: 71
+- Missed: 6
+- All 6 misses are weekend Prefer-to-work requests constrained by higher-priority ADMIN raw weekend water-fill
+- Cannot-work violations: 0
+Result: PASS
+
+PASS 3 — Reproduction of the V2.5.114 false-miss bug
+Injected theoretical planned backups on requested-off dates matching the screenshot pattern:
+- GE 2026-09-10
+- GE 2026-09-11
+- KE 2026-09-25
+- SP 2026-09-01
+Expected: these standbys do NOT count as work.
+Observed: all four Requested-off wishes remain HONORED.
+Total remains 71/77 honored, 6/77 missed, not 67/77 and 10/77.
+Result: PASS
+
+PASS 4 — Activation semantics
+Activated-only standby was tested on a requested-off date.
+Expected: activation alone is not real work.
+Observed: request remains HONORED.
+Result: PASS
+
+PASS 5 — Completed real-life cover semantics
+The same backup was then marked COMPLETED.
+Expected: completed cover becomes ACTUAL work and may change retrospective ACTUAL request realization.
+Observed: requested-off item becomes ACTUAL missed with station text REALIAI PAVADAVO.
+Result: PASS
+
+PASS 6 — Layer separation
+- Planned backups affect request score: FALSE
+- Activated-only backups affect request score: FALSE
+- Completed backups may affect ACTUAL request score: TRUE
+- Normal schedule hard_errors exclude theoretical backup-layer errors.
+- Personal normal-work table no longer mixes backup duties into work rows.
+- Theoretical backup grid remains visible in its own section.
+Result: PASS
+
+PASS 7 — WESTON mirror preserved
+- SP debt / ŠR receivable mirror strings and persistent ledger calls remain wired.
+Result: PASS
+
+DATABASE
+- No Supabase schema migration required for V2.5.115.

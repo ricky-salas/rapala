@@ -910,3 +910,7 @@ Kai griežtas struktūrinis 0–1 fairness koridorius nesuderinamas su privalomu
 - Užrakinus **FINAL**, administracijai skirta spalvota Excel versija lieka pagrindinis failas, o šalia pateikiamas ir FINAL CSV.
 - Excel faile išlaikomas grafiko tinklelis, rezidentų spalvos, Suvestinė ir Dublių lapas. Streamlit lentelės viršutiniame dešiniajame kampe esantis „Download as CSV“ nėra vienintelis eksportas.
 
+
+## V2.5.115 — dubliai yra atskiras teorinis sluoksnis
+
+Planuotas dublis / pavadavimas nėra darbo pamaina. Jis nekeičia „Negaliu dirbti“, „Noriu laisvos“, „Pageidauju dirbti“, darbo krūvio, poilsio, savaitgalių ar postų water-fill ir pageidavimų procento. Vien tik dublio aktyvavimas taip pat dar nėra realus darbas. Tik kai realus pavadavimas pažymimas **COMPLETED**, jis gali patekti į ACTUAL darbo ir retrospektyvų pageidavimų auditą. Normalus grafikas ir teorinis dublių planas rodomi atskirai.

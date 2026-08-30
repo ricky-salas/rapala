@@ -668,3 +668,7 @@ In the ŠR research window `AVAILABLE GPT + HUMAN vs MY ENGINE`, choose **LIVE A
 - After **FINAL** is locked, the formatted administration Excel remains the primary file and a FINAL CSV is available beside it.
 - The Excel workbook preserves the schedule grid, resident colors, Summary sheet, and Backups sheet. Streamlit's built-in top-right “Download as CSV” is therefore no longer the only export route.
 
+
+## V2.5.115 — backups are a separate theoretical layer
+
+A planned backup/standby duty is not a work shift. It does not change Cannot-work, Requested-off, Prefer-to-work, workload, rest, weekend/workplace water-fill, or SYSTEM request satisfaction. Merely activating a standby still does not make it real work. Only a real cover marked **COMPLETED** may enter ACTUAL work and retrospective request realization. The normal schedule and theoretical backup plan are shown separately.

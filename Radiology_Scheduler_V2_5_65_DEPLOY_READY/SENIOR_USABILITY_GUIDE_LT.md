@@ -236,3 +236,7 @@ Sudaryme ir Grafiko tvirtinime nebereikia naudotis vien tik lentelės viršuje e
 ## V2.5.114 — WESTON skolos veidrodis
 
 SP paspaudus **GENERUOTI / PERKURTI**, esamas persistent WESTON ledgeris padidėja +1. Tas pats skaičius SP statistikoje rodomas kaip **skola ŠR**, o ŠR statistikoje — kaip **WESTON, kuriuos SP jam skolinga**. Tai nėra du atskiri skaitikliai: abi pusės visada mato tą patį lifetime ir pasirinkto mėnesio ledgerį.
+
+### V2.5.115 dublių sluoksnio patikra
+
+Pageidavimų audite planinių dublių ignoruokite kaip darbo pamainas — sistema juos dabar techniškai atskiria. Jei „Noriu laisvos“ dieną žmogus turi tik teorinį dublį ir neturi normalios darbo pamainos, pageidavimas turi būti rodomas kaip ĮVYKDYTAS. Dublio layerio problemos rodomos atskirai ir negali keisti normalaus grafiko HARD ar SOFT score.

@@ -50,7 +50,7 @@ import db
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.114 WESTON DEBT MIRROR"
+APP_VERSION = "2.5.115 THEORETICAL BACKUP LAYER"
 EXPECTED_ENGINE_API_VERSION = "2.5.112"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "SP"
@@ -387,7 +387,7 @@ lang = st.sidebar.radio("Kalba / Language", ["LT","EN"], horizontal=True, key="l
 # V2.5.112 FINAL ADMIN POLICY OVERRIDES — these intentionally supersede older
 # V2.5.104 volunteer-weekend wording retained in historical source comments.
 TR["LT"].update({
-    "fairness_hierarchy_intro":"TRUE ABSOLUTE / sauga → 0 „Negaliu dirbti“ pažeidimų → mažiausias matematiškai įmanomas RAW šeštadienių, sekmadienių ir bendro savaitgalio water-fill → SPS RO / SPS UG ir kitų postų water-fill → Dream Team SP+ŠR+GE CENTRO RO kartą per savaitę → AUTO dublių/pavadavimų water-fill → SOFT pageidavimai. Savaitgalio noras SYSTEM paskirstymo nekeičia; ACTUAL swapas gali pakeisti tik po abiejų rezidentų + SP patvirtinimo.",
+    "fairness_hierarchy_intro":"NORMALUS SYSTEM grafikas: TRUE ABSOLUTE / sauga → 0 „Negaliu dirbti“ pažeidimų → mažiausias matematiškai įmanomas RAW šeštadienių, sekmadienių ir bendro savaitgalio water-fill → SPS RO / SPS UG ir kitų postų water-fill → Dream Team SP+ŠR+GE CENTRO RO kartą per savaitę → SOFT pageidavimai. TIK PO TO, jau nekeisdamas normalaus grafiko, kuriamas atskiras teorinis AUTO dublių/pavadavimo standby sluoksnis. Savaitgalio noras SYSTEM paskirstymo nekeičia; ACTUAL swapas gali pakeisti tik po abiejų rezidentų + SP patvirtinimo.",
     "fairness_100_note":"100% yra diagnostinis idealios pusiausvyros rodiklis. SYSTEM savaitgalių skirstymas remiasi RAW administraciniu water-fill, o ne rezidentų noru dirbti daugiau savaitgalių. Jei 0–1 matematiškai neįmanoma dėl HARD prieinamumo ir tikslaus krūvio, rodomas mažiausias įrodytas įmanomas spread.",
     "fairness_monthly_goal":"SYSTEM pirmiausia ieško mažiausio įmanomo RAW šeštadienių, sekmadienių ir bendro savaitgalio spread. SPS RO / SPS UG ir visi kiti postai taip pat water-fill'inami kuo lygiau, bet 0 „Negaliu dirbti“ pažeidimų lieka aukščiau fairness. Dream Team savaitinis CENTRO RO tikslas yra aukštas administracinis prioritetas postų paskirstymo fazėje.",
     "voluntary_unpopular_goal":"Savaitgalio darbo noras yra tik informacinis / audito SOFT signalas ir SYSTEM savaitgalių water-fill nekeičia.",
@@ -397,7 +397,7 @@ TR["LT"].update({
     "backup_swap_help":"Po publikavimo galima siūlyti dublio apsikeitimą. Jis pritaikomas tik po abiejų rezidentų sutikimo, HARD patikros ir SP galutinio APPROVE; SP gali ir DECLINE.",
 })
 TR["EN"].update({
-    "fairness_hierarchy_intro":"TRUE ABSOLUTE / safety → zero Cannot-work violations → tightest mathematically feasible RAW Saturday, Sunday and total-weekend water-fill → SPS RO / SPS UG and all-post water-fill → Dream Team SP+ŠR+GE at CENTRO RO once per week → AUTO backup-duty water-fill → SOFT wishes. Weekend preference cannot change SYSTEM allocation; ACTUAL swaps require both residents plus SP final approval.",
+    "fairness_hierarchy_intro":"NORMAL SYSTEM schedule: TRUE ABSOLUTE / safety → zero Cannot-work violations → tightest mathematically feasible RAW Saturday, Sunday and total-weekend water-fill → SPS RO / SPS UG and all-post water-fill → Dream Team SP+ŠR+GE at CENTRO RO once per week → SOFT wishes. ONLY AFTER the normal schedule is frozen, a separate theoretical AUTO backup/standby layer is built without changing it. Weekend preference cannot change SYSTEM allocation; ACTUAL swaps require both residents plus SP final approval.",
     "fairness_100_note":"100% is a diagnostic ideal-balance score. SYSTEM weekend allocation uses RAW administrative water-fill, not resident willingness to take extra weekends. If 0–1 is mathematically impossible because of HARD availability and exact workload, the tightest proven feasible spread is shown.",
     "fairness_monthly_goal":"SYSTEM first searches for the tightest feasible RAW Saturday, Sunday and total-weekend spread. SPS RO / SPS UG and every other workplace are also water-filled as evenly as possible, while zero Cannot-work violations remain above fairness. Weekly Dream Team CENTRO RO co-location is a high administrative priority in the workplace-placement phase.",
     "voluntary_unpopular_goal":"Weekend willingness is informational/audit-only and does not change SYSTEM weekend water-fill.",
@@ -1240,12 +1240,16 @@ def refresh_result_payload(payload, y, m, use_actual_backups=True):
     if not payload:
         return None
     stored=deserialize_result(payload)
-    backup_override=None
+    # V2.5.115 — theoretical backup duties are a separate standby layer.
+    # SYSTEM/DRAFT request satisfaction is computed from NORMAL work only.
+    # ACTUAL may pass live backup rows so a COMPLETED real-life cover can be
+    # reflected as actual work; planned/activated-only standby still never counts.
+    backup_override=[]
     if use_actual_backups:
         try:
             backup_override=db.list_backups(y,m)
         except Exception:
-            backup_override=stored.backup_snapshot
+            backup_override=stored.backup_snapshot or []
     try:
         refreshed=revalidate_loaded_result(
             y,m,people_for_stored_result(stored,y,m),stored,
@@ -1280,7 +1284,7 @@ def persist_actual_satisfaction(y,m,payload=None):
 
     The original request set remains frozen inside the schedule payload. This helper
     only recalculates the CURRENT/ACTUAL realization against that original set and
-    the live backup table, so later retrospective month review can read the final
+    the live backup table; only COMPLETED covers can change ACTUAL work, so later retrospective month review can read the final
     satisfaction percentages without touching the immutable SYSTEM baseline.
     """
     payload=payload or db.load_schedule(y,m,"current")
@@ -1918,6 +1922,10 @@ def resident_wishes_audit_df(result):
         if workstyle is None:
             workstyle=components.get("avoid_doubles")
         rotation_counts=d.get("rotation_counts") or {}
+        theoretical_backup_count=sum(
+            1 for br in (getattr(result,"backup_snapshot",None) or [])
+            if str(br.get("actual_backup") or br.get("planned_backup") or "")==initials
+        )
 
         def ratio(items):
             if not items:
@@ -1948,7 +1956,8 @@ def resident_wishes_audit_df(result):
             ("Workstyle %" if lang=="LT" else "Workstyle %"):("—" if workstyle is None else round(float(workstyle),1)),
             ("Šeštadieniai" if lang=="LT" else "Saturdays"):int(d.get("saturdays",0) or 0),
             ("Sekmadieniai" if lang=="LT" else "Sundays"):int(d.get("sundays",0) or 0),
-            ("Dubliai" if lang=="LT" else "Doubles"):int(d.get("doubles",0) or 0),
+            ("12h dienos (AM+PM)" if lang=="LT" else "12h workdays (AM+PM)"):int(d.get("doubles",0) or 0),
+            ("Teoriniai AUTO dubliai" if lang=="LT" else "Theoretical AUTO backups"):int(theoretical_backup_count),
             "Onko RO":int(rotation_counts.get("Onko RO",0) or 0),
             "SPS RO":int(rotation_counts.get("SPS RO",0) or 0),
             "SPS UG":int(rotation_counts.get("SPS UG",0) or 0),
@@ -2042,6 +2051,11 @@ def render_resident_wishes_audit(
                 "Settings changed later are not added retroactively. Workstyle rows show concrete 6 h / 12 h / Onko counts."
             )
 
+        st.info(
+            "V2.5.115: DUBLIAI = ATSKIRAS TEORINIS STANDBY SLUOKSNIS. Planuotas ar tik aktyvuotas dublis NĖRA darbo pamaina ir NIEKADA nemažina „Noriu laisvos“, „Negaliu dirbti“ ar kitų SYSTEM pageidavimų score. Tik COMPLETED realus pavadavimas gali atsirasti ACTUAL darbo audite."
+            if lang=="LT" else
+            "V2.5.115: BACKUPS are a separate theoretical standby layer. A planned or merely activated backup is NOT a work shift and NEVER reduces SYSTEM request satisfaction. Only a COMPLETED real-life cover may appear in ACTUAL work audit."
+        )
         audit_df=resident_wishes_audit_df(result)
         if audit_df.empty:
             st.caption("Nėra rezidentų audito duomenų." if lang=="LT" else "No resident audit data.")
@@ -2145,7 +2159,7 @@ def _plain_request_sentence(r, initials=""):
             if r.get("kind")=="preferred":
                 return f"{who}{date_txt} {block}: „{typ}“ — ĮVYKDYTA, nes grafike yra tinkama darbo pamaina ({station})."
             if r.get("kind") in ("resident_hard","soft_free"):
-                return f"{who}{date_txt} {block}: „{typ}“ — ĮVYKDYTA, nes šiame bloke nėra persidengiančios darbo pamainos ar dublio."
+                return f"{who}{date_txt} {block}: „{typ}“ — ĮVYKDYTA, nes šiame bloke nėra persidengiančios normalios darbo pamainos."
             return f"{who}{date_txt} {block}: „{typ}“ — ĮVYKDYTA."
         if r.get("kind") in ("resident_hard","soft_free"):
             return f"{who}{date_txt} {block}: „{typ}“ — NEĮVYKDYTA, nes grafike šiame bloke yra paskyrimas: {station}."
@@ -2169,7 +2183,7 @@ def _plain_request_sentence(r, initials=""):
 
             return f"{who}{date_txt} {block}: '{typ}' — HONORED because the schedule contains an eligible assignment ({station})."
         if r.get("kind") in ("resident_hard","soft_free"):
-            return f"{who}{date_txt} {block}: '{typ}' — HONORED because no overlapping work/backup exists in that block."
+            return f"{who}{date_txt} {block}: '{typ}' — HONORED because no overlapping normal work shift exists in that block."
         return f"{who}{date_txt} {block}: '{typ}' — HONORED."
     if r.get("kind") in ("resident_hard","soft_free"):
         return f"{who}{date_txt} {block}: '{typ}' — NOT HONORED because the schedule contains: {station}."
@@ -2442,42 +2456,29 @@ def backup_grid(y,m,result,initials):
 
 
 def personal_schedule_df(y,m,result,initials):
-    """One personal ledger containing both normal work and named backup duties."""
+    """Personal NORMAL-WORK ledger only.
+
+    V2.5.115 deliberately does not mix theoretical backup/standby duties into the
+    resident's actual work table. Backups are rendered immediately below in their
+    own dedicated backup layer/grid and only become real work after COMPLETED cover.
+    """
     hours={"AM":"08:00–14:00","PM":"14:00–20:00","FULL":"08:00–17:00"}; rows=[]
-    slots=make_slots(y,m); slot_map={s.idx:s for s in slots}
-    kind_col=("Tipas" if lang=="LT" else "Type")
-    for s in slots:
-        if result.assignments.get(s.idx)==initials:
-            rows.append({
-                kind_col:("DARBO PAMAINA" if lang=="LT" else "WORK SHIFT"),
-                tr("date"):f"{y}-{m:02d}-{s.day:02d}",tr("day"):WEEKDAY_FULL[lang][s.weekday],
-                tr("time"):hours.get(s.block,block_label(s.block)),tr("department"):s.department,
-                tr("shift"):block_label(s.block),
-                ("Dengiamas rezidentas" if lang=="LT" else "Covered resident"):"",
-            })
-    for r in _backup_rows_for_result(y,m,result):
-        eff=r.get("actual_backup") or r.get("planned_backup")
-        if eff!=initials:
+    slots=make_slots(y,m)
+    for sl in slots:
+        if result.assignments.get(sl.idx)!=initials:
             continue
-        try: sid=int(r.get("covered_slot"))
-        except Exception: continue
-        s=slot_map.get(sid)
-        if s is None: continue
-        covered=result.assignments.get(sid,"")
         rows.append({
-            kind_col:("DUBLIS / PAVADUOJANTIS" if lang=="LT" else "BACKUP DUTY"),
-            tr("date"):f"{y}-{m:02d}-{s.day:02d}",tr("day"):WEEKDAY_FULL[lang][s.weekday],
-            tr("time"):hours.get(s.block,block_label(s.block)),tr("department"):s.department,
-            tr("shift"):block_label(s.block),
-            ("Dengiamas rezidentas" if lang=="LT" else "Covered resident"):covered,
+            tr("date"):f"{y}-{m:02d}-{sl.day:02d}",
+            tr("day"):WEEKDAY_FULL[lang][sl.weekday],
+            tr("time"):hours.get(sl.block,block_label(sl.block)),
+            tr("department"):sl.department,
+            tr("shift"):block_label(sl.block),
         })
     if not rows:
         return pd.DataFrame(rows)
     df=pd.DataFrame(rows)
-    order={"WORK SHIFT":0,"DARBO PAMAINA":0,"BACKUP DUTY":1,"DUBLIS / PAVADUOJANTIS":1}
     df["__sort_date"]=pd.to_datetime(df[tr("date")],errors="coerce")
-    df["__sort_kind"]=df[kind_col].map(order).fillna(9)
-    df=df.sort_values(["__sort_date","__sort_kind",tr("time")],kind="stable").drop(columns=["__sort_date","__sort_kind"])
+    df=df.sort_values(["__sort_date",tr("time")],kind="stable").drop(columns=["__sort_date"])
     return df.reset_index(drop=True)
 
 
@@ -3347,7 +3348,8 @@ def publish_system_baseline_for_swap_window(y,m):
     if expected_targets!=draft_result.targets or (draft_result.request_snapshot and current_snapshot!=draft_result.request_snapshot):
         return {"ok":False,"error":tr("draft_outdated")}
     frozen_people=people_from_request_snapshot(draft_result.request_snapshot) or current_people
-    revalidated=validate_schedule(y,m,current_people,make_slots(y,m),draft_result.assignments,expected_targets,satisfaction_people=frozen_people,backup_assignments=draft_result.backup_snapshot)
+    # V2.5.115: validate the NORMAL schedule independently of theoretical backups.
+    revalidated=validate_schedule(y,m,current_people,make_slots(y,m),draft_result.assignments,expected_targets,satisfaction_people=frozen_people,backup_assignments=[])
     if revalidated["global"].get("hard_errors",0):
         return {"ok":False,"error":tr("draft_outdated"),"rows":revalidated["global"].get("errors",[])}
     draft_result.targets=expected_targets
@@ -3355,7 +3357,11 @@ def publish_system_baseline_for_swap_window(y,m):
     if backup_errors:
         return {"ok":False,"error":tr("backup_capacity_block"),"rows":backup_errors}
     draft_result.backup_snapshot=[dict(x) for x in desired]
-    draft_result=revalidate_loaded_result(y,m,current_people,draft_result,backup_assignments=draft_result.backup_snapshot)
+    draft_result=revalidate_loaded_result(y,m,current_people,draft_result,backup_assignments=[])
+    _pgg=draft_result.stats.setdefault("global",{})
+    _pgg["theoretical_backup_layer"]=True
+    _pgg["theoretical_backup_layer_errors"]=[]
+    _pgg["theoretical_backup_layer_complete"]=True
     if draft_result.stats.get("global",{}).get("hard_errors",0):
         return {"ok":False,"error":tr("draft_outdated"),"rows":draft_result.stats["global"].get("errors",[])}
     db.save_draft(y,m,serialize_result(draft_result))
@@ -4853,45 +4859,52 @@ if senior_mode:
                     except Exception:
                         pass
                     if result.ok:
-                        # V2.5.112: backup duties are generated at the SAME moment as
-                        # the SYSTEM draft, not delayed until publication. This makes
-                        # draft statistics, Excel and personal schedules truthful.
-                        desired,backup_errors=plan_backups(year,month,result)
-                        if backup_errors:
-                            st.error(tr("backup_capacity_block"))
-                            st.dataframe(pd.DataFrame(backup_errors),use_container_width=True,hide_index=True)
+                        # V2.5.115: first freeze/revalidate the NORMAL schedule by itself.
+                        # The theoretical backup plan is built only afterwards as a separate
+                        # standby layer and can never change wish scores or normal-schedule HARD.
+                        result=revalidate_loaded_result(
+                            year,month,people_for_stored_result(result,year,month),result,
+                            backup_assignments=[]
+                        )
+                        if result.stats.get("global",{}).get("hard_errors",0):
+                            st.error(tr("draft_outdated"))
+                            _berr=result.stats.get("global",{}).get("errors",[])
+                            if _berr: st.dataframe(pd.DataFrame(_berr),use_container_width=True,hide_index=True)
                         else:
+                            desired,backup_errors=plan_backups(year,month,result)
                             result.backup_snapshot=[dict(x) for x in desired]
-                            result=revalidate_loaded_result(
-                                year,month,people_for_stored_result(result,year,month),result,
-                                backup_assignments=result.backup_snapshot
-                            )
-                            if result.stats.get("global",{}).get("hard_errors",0):
-                                st.error(tr("draft_outdated"))
-                                _berr=result.stats.get("global",{}).get("errors",[])
-                                if _berr: st.dataframe(pd.DataFrame(_berr),use_container_width=True,hide_index=True)
-                            else:
-                                db.save_draft(year,month,serialize_result(result))
-                                st.success(tr("draft_saved"))
-                                _bc=backup_counts(year,month,result)[0]
-                                _vals=list(_bc.values())
-                                st.caption(
-                                    (f"AUTO dubliai/pavadavimai sukurti kartu su juodraščiu: {sum(_vals)} pareigų · rezidentų spread {max(_vals)-min(_vals) if _vals else 0}."
-                                     if lang=="LT" else
-                                     f"AUTO backup duties were built with the draft: {sum(_vals)} duties · resident spread {max(_vals)-min(_vals) if _vals else 0}.")
+                            _gg=result.stats.setdefault("global",{})
+                            _gg["theoretical_backup_layer"]=True
+                            _gg["theoretical_backup_layer_errors"]=list(backup_errors)
+                            _gg["theoretical_backup_layer_complete"]=(len(backup_errors)==0)
+                            db.save_draft(year,month,serialize_result(result))
+                            st.success(tr("draft_saved"))
+                            if backup_errors:
+                                st.warning(
+                                    "NORMALUS grafikas išsaugotas ir jo pageidavimų auditas lieka validus. Atskirame teorinių dublių sluoksnyje dar trūksta kelių standby paskyrimų; tai nėra darbo grafiko ar pageidavimų pažeidimas."
+                                    if lang=="LT" else
+                                    "The NORMAL schedule was saved and its request audit remains valid. The separate theoretical backup layer still has standby gaps; these are not work-schedule or preference violations."
                                 )
-                                norm=(result.stats or {}).get("global",{}).get("preference_normalization",[])
-                                if norm:
-                                    st.caption(
-                                        f"Preference pre-check: {len(norm)} redundant / impossible / engine-covered SOFT signalai "
-                                        "nebuvo antrą kartą įtraukti į optimizerį."
-                                    )
-                                if "fallback" in (result.message or "").lower():
-                                    st.warning(
-                                        "Globalus fairness MILP nespėjo pilnai užsibaigti, bet sistema prieš išsaugodama pritaikė local fairness repair loop. "
-                                        "Grafikas yra HARD-valid; „PERTIKRINTI / GERINTI“ gali bandyti jį dar pagerinti."
-                                    )
-                                st.rerun()
+                                st.dataframe(pd.DataFrame(backup_errors),use_container_width=True,hide_index=True)
+                            _bc=backup_counts(year,month,result)[0]
+                            _vals=list(_bc.values())
+                            st.caption(
+                                (f"TEORINIS AUTO dublių sluoksnis: {sum(_vals)} standby pareigų · rezidentų spread {max(_vals)-min(_vals) if _vals else 0}. Jos NĖRA darbo pamainos."
+                                 if lang=="LT" else
+                                 f"THEORETICAL AUTO backup layer: {sum(_vals)} standby duties · resident spread {max(_vals)-min(_vals) if _vals else 0}. They are NOT work shifts.")
+                            )
+                            norm=(result.stats or {}).get("global",{}).get("preference_normalization",[])
+                            if norm:
+                                st.caption(
+                                    f"Preference pre-check: {len(norm)} redundant / impossible / engine-covered SOFT signalai "
+                                    "nebuvo antrą kartą įtraukti į optimizerį."
+                                )
+                            if "fallback" in (result.message or "").lower():
+                                st.warning(
+                                    "Globalus fairness MILP nespėjo pilnai užsibaigti, bet sistema prieš išsaugodama pritaikė local fairness repair loop. "
+                                    "Grafikas yra HARD-valid; „PERTIKRINTI / GERINTI“ gali bandyti jį dar pagerinti."
+                                )
+                            st.rerun()
                     else:
                         _msg=result.message if getattr(result,"message",None) else tr("no_solution")
                         if ("PREFERENCE-AWARE GENERATION DID NOT FINISH" in str(_msg) or "ISOLATED GENERATION" in str(_msg)):
@@ -4919,28 +4932,31 @@ if senior_mode:
                 if not candidate.ok:
                     st.warning("Esamas validus juodraštis paliktas nepakeistas. Naujo geresnio kandidato rasti nepavyko: "+str(candidate.message))
                 else:
+                    candidate=revalidate_loaded_result(year,month,people_for_stored_result(candidate,year,month),candidate,backup_assignments=[])
                     _cand_backups,_cand_backup_errors=plan_backups(year,month,candidate)
-                    if _cand_backup_errors:
-                        st.warning("Naujas kandidatas paliktas nepriimtas, nes nepavyko sukurti privalomo dublio/pavadavimo plano." if lang=="LT" else "The new candidate was not accepted because a mandatory backup plan could not be built.")
-                        st.dataframe(pd.DataFrame(_cand_backup_errors),use_container_width=True,hide_index=True)
-                        _cand_backup_ok=False
-                    else:
-                        candidate.backup_snapshot=[dict(x) for x in _cand_backups]
-                        candidate=revalidate_loaded_result(year,month,people_for_stored_result(candidate,year,month),candidate,backup_assignments=candidate.backup_snapshot)
-                        _cand_backup_ok=not bool(candidate.stats.get("global",{}).get("hard_errors",0))
+                    candidate.backup_snapshot=[dict(x) for x in _cand_backups]
+                    _cgg=candidate.stats.setdefault("global",{})
+                    _cgg["theoretical_backup_layer"]=True
+                    _cgg["theoretical_backup_layer_errors"]=list(_cand_backup_errors)
+                    _cgg["theoretical_backup_layer_complete"]=(len(_cand_backup_errors)==0)
                     old_q=_draft_quality_tuple(current_draft)
-                    new_q=_draft_quality_tuple(candidate) if _cand_backup_ok else old_q
-                    if _cand_backup_ok and new_q < old_q:
+                    new_q=_draft_quality_tuple(candidate)
+                    if new_q < old_q:
                         db.save_draft(year,month,serialize_result(candidate))
                         st.success(
-                            "Rastas geresnis grafikas ir juodraštis pakeistas. "
-                            "Prioritetas: privalomos saugos taisyklės → 0 „Negaliu dirbti“ pažeidimų → kuo lygesnės darbo vietos → pageidavimai."
+                            "Rastas geresnis NORMALUS grafikas ir juodraštis pakeistas. "
+                            "Teorinis dublių sluoksnis vertinamas atskirai ir niekada nekeičia pageidavimų score."
+                            if lang=="LT" else
+                            "A better NORMAL schedule was found and saved. The theoretical backup layer is evaluated separately and never changes request scores."
                         )
+                        if _cand_backup_errors:
+                            st.warning("Atskirame standby dublių sluoksnyje liko neuždengtų vietų." if lang=="LT" else "The separate standby backup layer still has uncovered duties.")
                         st.rerun()
                     else:
                         st.success(
-                            "Pertikrinta. Naujas kandidatas nebuvo geresnis pagal užfiksuotą hierarchiją, "
-                            "todėl esamas juodraštis paliktas."
+                            "Pertikrinta. Naujas normalus grafikas nebuvo geresnis pagal užfiksuotą hierarchiją, todėl esamas juodraštis paliktas."
+                            if lang=="LT" else
+                            "Rechecked. The new normal schedule was not better under the locked hierarchy, so the existing draft was kept."
                         )
 
         with c2:
@@ -7219,8 +7235,19 @@ with tabs[pos]:
                     st.metric(("WESTON, kuriuos SP tau skolinga" if lang=="LT" else "WESTONs SP owes you"),int(_weston_calendar.get("total_beers",0)),help=("Tas pats persistent skaičius, kurį SP mato kaip skolą." if lang=="LT" else "The same persistent total SP sees as debt."))
             except Exception:
                 pass
+        st.markdown("### Mano normalios darbo pamainos" if lang=="LT" else "### My normal work shifts")
+        st.caption(
+            "Tai vienintelis darbo grafiko sluoksnis. Teoriniai dubliai čia NĖRA skaičiuojami kaip darbas."
+            if lang=="LT" else
+            "This is the actual work-schedule layer. Theoretical backup duties are NOT counted as work here."
+        )
         st.dataframe(personal_schedule_df(year,month,result,active_user),use_container_width=True,hide_index=True)
-        st.markdown(f"### {tr('backups')}")
+        st.markdown("### Teorinis dublių / pavadavimo sluoksnis" if lang=="LT" else "### Theoretical backup / standby layer")
+        st.caption(
+            "Dublis yra tik standby planas: jis nekeičia pageidavimų, darbo krūvio, poilsio, water-fill ar normalios pamainos statistikos. Tik pažymėtas COMPLETED realus pavadavimas tampa ACTUAL darbu."
+            if lang=="LT" else
+            "A backup is standby only: it does not change preferences, workload, rest, water-fill or normal-shift statistics. Only a COMPLETED real-life cover becomes ACTUAL work."
+        )
         st.dataframe(backup_grid(year,month,result,active_user),use_container_width=True)
         ics_bytes=build_ics(year,month,result,active_user)
         st.download_button(tr("download_ics"),ics_bytes,file_name=f"{safe_filename(active_user)}_{year}_{month:02d}.ics",mime="text/calendar",type="primary")

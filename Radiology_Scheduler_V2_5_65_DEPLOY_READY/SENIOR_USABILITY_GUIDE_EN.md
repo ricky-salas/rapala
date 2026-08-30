@@ -149,3 +149,7 @@ Generation and Schedule control no longer rely only on the dataframe toolbar CSV
 ## V2.5.114 — WESTON debt mirror
 
 Each SP **GENERATE / REGENERATE** click adds +1 to the existing persistent WESTON ledger. SP sees that same number as **debt owed to ŠR**, while ŠR sees it as **WESTONs SP owes him**. These are not separate counters: both views always use the same lifetime and selected-month ledger.
+
+### V2.5.115 backup-layer check
+
+Planned backups must be ignored as work in the request audit; the system now enforces this technically. If a resident has only theoretical standby on a requested-off date and no normal work shift, the request must remain HONORED. Backup-layer issues are shown separately and cannot change the normal schedule HARD/SOFT score.
