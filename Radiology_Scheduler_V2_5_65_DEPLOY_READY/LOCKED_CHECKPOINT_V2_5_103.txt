@@ -1,0 +1,12 @@
+V2.5.103 LOCKED CHECKPOINT — SYSTEM WATER-FILL + ACTUAL SWAPS
+
+This release is cumulative on V2.5.102 and preserves all V2.5.96–V2.5.102 functionality.
+
+1. Water-fill is a SYSTEM-generation / publication-baseline constraint.
+2. Saturday and Sunday are separate SYSTEM fairness categories and should remain at the locked structural corridor (normally raw spread 0–1 when feasible).
+3. Resident Settings, recurring SOFT preferences, and month-specific SOFT preferences may choose among otherwise equivalent SYSTEM allocations but may not deliberately widen the SYSTEM corridor.
+4. After publication, permitted bilateral voluntary swaps may widen ACTUAL Saturday/Sunday or other fairness spreads.
+5. SYSTEM remains immutable for audit/research; ACTUAL is recalculated from real current assignments.
+6. ACTUAL divergence after swaps/repairs never creates next-month catch-up or fairness debt.
+7. V2.5.103 is wording/contract hardening only; no solver-allocation or database-schema change is introduced.
+8. No V2.5.103 Supabase migration is required.

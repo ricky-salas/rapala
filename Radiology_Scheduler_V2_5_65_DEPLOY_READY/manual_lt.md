@@ -104,7 +104,7 @@ Patvirtinus ir užrakinus grafiką, sistema paruošia pranešimą visiems grupė
 
 ### Nustatymai
 
-Nustatymai aprašo įprastą žmogaus darbo pobūdį ir galioja tol, kol pats žmogus juos pakeičia: darbo dienų kryptis, savaitgalių kryptis, grafiko išsklaidymas / sutelkimas, dvigubų pamainų vengimas, pranešimai, priminimų pradžios diena ir el. paštas.
+Nustatymai aprašo įprastą žmogaus darbo pobūdį ir galioja tol, kol pats žmogus juos pakeičia: darbo dienų kryptis, savaitgalių kryptis, grafiko išsklaidymas / sutelkimas, pageidaujama 6/12 val. darbo dienos trukmė, pranešimai, priminimų pradžios diena ir el. paštas. Jie automatiškai taikomi visiems būsimiems dar neužšaldytiems mėnesiams ir nėra pildomi iš naujo kas mėnesį.
 
 ### Trumpalaikiai mėnesio pageidavimai
 
@@ -120,7 +120,7 @@ Konkrečiam mėnesiui galima pažymėti:
 
 Jeigu žmogus reguliariai turi tą patį savaitinį režimą, galima nustatyti taisyklę pagal **savaitės dienos pavadinimą**, o ne konkrečią mėnesio datą. Pavyzdžiui: kiekvieną antradienį pageidauju dirbti, kiekvieną ketvirtadienį noriu laisvos arba kiekvieną pirmadienio rytą tikrai negaliu dirbti.
 
-Ilgalaikė taisyklė automatiškai pritaikoma kiekvienam naujam mėnesiui, kol žmogus ją pakeičia arba išjungia. Konkretaus mėnesio minkštas pageidavimas turi pirmenybę prieš priešingą ilgalaikį minkštą pageidavimą. Ilgalaikė **kieta** taisyklė išlieka kieta ir negali būti apeita vien mėnesio minkštu pageidavimu.
+Ilgalaikė taisyklė automatiškai pritaikoma kiekvienam naujam mėnesiui, kol žmogus ją pakeičia arba išjungia. Ji redaguojama tame pačiame **Pageidavimų** lange po konkretaus mėnesio forma. Konkretaus mėnesio minkštas pageidavimas turi pirmenybę prieš priešingą ilgalaikį minkštą pageidavimą. Ilgalaikė **kieta** taisyklė išlieka kieta ir negali būti apeita vien mėnesio minkštu pageidavimu.
 
 ## 5. Taisyklių prioritetas
 
@@ -651,7 +651,7 @@ Pageidavimai optimizuojami dviem kryptimis. **Vertikaliai** galioja griežtas pr
 | RESIDENT HARD | „Negaliu dirbti“ — data, AM, PM, pasikartojantis | Pirma siekiama 0 praradimų; jei neįmanoma, minimalus bendras praradimas ir horizontalus water-filling |
 | SOFT-1 | „Noriu laisvos“, struktūruotas dublių / atsistatymo vengimas | Pirmiausia saugomas asmeninis laikas ir poilsis |
 | SOFT-2 | „Pageidauju dirbti“ — konkreti data / AM / PM | Teigiamas paskyrimas į norimą laiką |
-| SOFT-3 | Išsklaidytas ar koncentruotas mėnuo | Bendra mėnesio forma; generic savaitgalio/darbo dienų kryptis V2.5.52+ nebeskaičiuojama kaip SOFT |
+| SOFT-3 | Ilgalaikis darbo pobūdis | Darbo dienų / savaitgalių kryptis, išsklaidymas / koncentracija ir kiti darbo stiliaus signalai. **Generuojant SYSTEM**, savaitgalio kryptis gali tik parinkti viršutinį / apatinį sluoksnį jau užrakintame šeštadienio ir sekmadienio water-fill koridoriuje; vien šis SOFT pasirinkimas jo nepraplečia. **Po publikavimo** abipusiai savanoriški swapai gali pakeisti ACTUAL šeštadienio / sekmadienio pasiskirstymą ir padidinti spread; SYSTEM baseline dėl to neperrašomas ir kito mėnesio catch-up nekuriamas. |
 
 **Horizontaliai** kiekviename range veikia progressive-filling / water-filling principas. Jei rezidentų pageidavimų kiekiai yra `2,2,2,4`, sistema pirmiausia siekia `2,2,2,2`, o tik tada bando įvykdyti likusius du ketvirto rezidento pageidavimus. Jei kiekiai `2,2,3,4`, pirmas bendras sluoksnis yra `2,2,2,2`, o likę `0,0,1,2` optimizuojami tik po to. Taigi didesnis įvestų pageidavimų kiekis nesuteikia didesnės balsavimo galios.
 
@@ -755,7 +755,7 @@ Kai tam tikro posto per mėnesį yra palyginti nedaug, bet vietų pakanka bent p
 
 ### Pageidavimų pateikimo termino priminimai
 
-`Nustatymuose` pranešimų jungiklis reiškia priminimus apie **pageidavimų pateikimo termino datą**. Šalia rodoma konkreti pasirinkto grafiko termino data, kad būtų aišku, apie ką bus siunčiami priminimai.
+`Nustatymuose` pranešimų jungiklis reiškia asmeninius priminimus apie **pageidavimų pateikimo termino datą**. Laukas „Asmeninių priminimų pradžia“ nurodo, nuo kurios ankstesnio mėnesio dienos pradėti siųsti asmeninį countdown, pvz. „Liko 4 dienos iki pageidavimų pateikimo pabaigos“. Pateikus pageidavimus priminimai tam mėnesiui sustoja.
 
 ### Mano grafikas kalendoriui
 

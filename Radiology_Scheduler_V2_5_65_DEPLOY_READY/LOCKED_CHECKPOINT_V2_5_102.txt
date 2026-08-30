@@ -1,0 +1,28 @@
+V2.5.102 LOCKED CHECKPOINT — PERSISTENT PREFERENCES + CLEANER UI
+
+This release is cumulative on V2.5.101 and preserves the V2.5.96 monthly-baseline/no-catch-up constitution and all V2.5.97–V2.5.101 functionality unless explicitly changed below.
+
+PERSISTENCE MODEL
+1. SETTINGS are resident-level persistent work-style/account settings. They automatically apply to every future schedule that is not yet frozen until the resident changes them.
+2. MONTH-SPECIFIC PREFERENCES are stored for one target year/month only. They do not copy into the next month.
+3. LONG-TERM RECURRING PREFERENCES are resident/weekday rules with no month key. They automatically expand into future months until changed or disabled.
+4. Month-specific SOFT requests may override an opposite recurring SOFT signal for that month only. Recurring RESIDENT HARD remains hard.
+5. Already-published SYSTEM baselines are never retroactively rewritten by a later Settings or recurring-preference change.
+
+WORK-STYLE
+6. Preferred workday length remains persistent.
+7. Weekday/weekend direction is restored as persistent SOFT work style.
+8. Weekend direction can select the upper/lower layer only inside the already locked Saturday/Sunday SYSTEM water-fill corridor. It cannot widen structural fairness.
+9. Strength -2/+2 is stronger than -1/+1 but remains below HARD/structural constraints.
+
+UI
+10. Deadline information is shown in Preferences, not as a frame across every app tab.
+11. Long-term recurring preferences are edited in Preferences, not Settings.
+12. Settings clearly states that work-style choices persist into future months.
+13. Preferences clearly distinguishes one-month requests from persistent recurring rules.
+14. The user-facing V3.0 badge/build line is removed.
+15. Lithuanian app title is "Rezidentų grafiko sistema".
+16. Reminder-start wording explains personal countdown email timing and gives a concrete example.
+
+DATABASE
+17. No V2.5.102 Supabase migration is required.

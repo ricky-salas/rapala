@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.101"
+ENGINE_API_VERSION = "2.5.103"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -493,18 +493,17 @@ def normalize_preferences_against_engine(
             if days:
                 audit.append({"initials":p.initials,"type":"self_conflict_neutralized","item":item,"days":sorted(days)})
 
-        # V2.5.52 SOFT whitelist / anti-gaming cleanup. Generic "fewer weekdays"
-        # and especially "fewer/more weekends" sliders can indirectly dump
-        # critical weekend burden onto peers. They are therefore deprecated as
-        # optimization signals. Residents should use exact Noriu laisvos /
-        # Pageidauju dirbti dates instead; weekend exposure itself is structural.
+        # V2.5.102 persistent directional work-style settings are preserved.
+        # Weekend direction is a SOFT tie-breaker only *inside* the already locked
+        # raw Saturday/Sunday water-fill corridor, so it cannot dump extra burden
+        # onto peers or widen SYSTEM fairness.
+        q.weekday_preference=max(-2,min(2,int(getattr(q,"weekday_preference",0) or 0)))
+        q.weekend_preference=max(-2,min(2,int(getattr(q,"weekend_preference",0) or 0)))
         if q.weekday_preference or q.weekend_preference:
             audit.append({
-                "initials":p.initials,"type":"deprecated_directional_soft_ignored",
+                "initials":p.initials,"type":"structured_directional_workstyle_preserved",
                 "item":"weekday/weekend pattern","days":[],
             })
-        q.weekday_preference=0
-        q.weekend_preference=0
 
         # V2.5.70 persistent workday-length preference. It is personal and
         # shapes AM+PM pairing only after absolute work/rest feasibility.
@@ -643,8 +642,10 @@ def _fallback_request_items(person: Person, year: int, month: int) -> List[dict]
     for d in sorted(person.preferred): add("preferred","SOFT2_POSITIVE_PLACEMENT",d,"FULL")
     for d in sorted(person.preferred_am): add("preferred","SOFT2_POSITIVE_PLACEMENT",d,"AM")
     for d in sorted(person.preferred_pm): add("preferred","SOFT2_POSITIVE_PLACEMENT",d,"PM")
-    # V2.5.52 whitelist: broad weekday/weekend pattern sliders are not scored.
-    # Weekend burden is a critical structural exposure; exact date requests remain valid.
+    # V2.5.102 persistent work-style settings are scored as SOFT3. Weekend
+    # direction can only choose inside the structural Saturday/Sunday corridor.
+    if person.weekday_preference: add("weekday_preference","SOFT3_SCHEDULE_SHAPE",source="account_settings",value=int(person.weekday_preference))
+    if person.weekend_preference: add("weekend_preference","SOFT3_SCHEDULE_SHAPE",source="account_settings",value=int(person.weekend_preference))
     if person.spread_preference: add("spread_preference","SOFT3_SCHEDULE_SHAPE",source="account_settings",value=int(person.spread_preference))
     if person.holiday_preference and public_holiday_days_in_month(year,month):
         add("holiday_preference","SOFT_HOLIDAY",source="account_settings",value=int(person.holiday_preference))
@@ -1757,6 +1758,26 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     else:
         for pi in range(n):
             mb.constraint(weekend_raw_expr[pi],wlo,whi)
+
+    # V2.5.102 PERSISTENT WORK-STYLE DIRECTION. These costs are applied in the
+    # day-pattern phase, where weekend/weekday placement is still changeable.
+    # Exact monthly SOFT wishes keep larger weights; Saturday/Sunday structural
+    # floor/ceil constraints above remain absolute. Therefore a resident who says
+    # “more weekends” is preferentially given the upper fair layer when feasible,
+    # while “fewer weekends” is preferentially given the lower layer. Strength ±2
+    # counts twice as strongly as ±1, but cannot widen the fair corridor.
+    for pi,p in enumerate(people):
+        _we=max(-2,min(2,int(getattr(p,"weekend_preference",0) or 0)))
+        if _we:
+            _w=700.0*abs(_we)
+            for v,c in weekend_raw_expr[pi].items():
+                mb.c[v] += (-_w if _we>0 else _w)*float(c)
+        _wd=max(-2,min(2,int(getattr(p,"weekday_preference",0) or 0)))
+        if _wd:
+            _w=90.0*abs(_wd)
+            for d in range(1,ndays+1):
+                if date(year,month,d).weekday()<5:
+                    mb.c[work[(pi,d)]] += (-_w if _wd>0 else _w)
 
     # Standard: max one shift per weekend. Baseline volunteer mode: max one
     # NON-voluntary shift per weekend, while explicitly volunteered blocks may sit
@@ -3208,10 +3229,10 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
                           f"cumulative rotation {p.initials} {cat}")
 
     for pi, p in enumerate(people):
-        # V2.5.52 CRITICAL WEEKEND EXPOSURE. Count ALL weekend assignments,
-        # including voluntarily preferred dates: educational exposure and fatigue
-        # still exist even when a resident volunteered. Generic weekend-pattern
-        # SOFT preferences are no longer allowed to distort this structural row.
+        # CRITICAL WEEKEND EXPOSURE. Count ALL weekend assignments, including
+        # voluntarily preferred dates: educational exposure and fatigue still exist.
+        # Persistent weekend work-style may choose the upper/lower fair layer, but
+        # it cannot change or bypass this structural raw-count row.
         wc = mb.var(
             f"weekend_count[{p.initials}]",
             cost=0.0,
@@ -3220,6 +3241,18 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
         weekend_count[pi] = wc
         co = {x[(pi, s.idx)]: 1 for s in weekend_slots}; co[wc] = -1
         mb.constraint(co, 0, 0, f"critical weekend exposure count {p.initials}")
+
+        # Persistent weekend work-style preference: one or two SOFT3 entitlement
+        # units depending on slider strength. Structural weekend fairness is solved
+        # and locked before SOFT3, so this can only decide who receives the upper
+        # or lower layer when the equal split has a remainder.
+        _we_pref=max(-2,min(2,int(getattr(p,"weekend_preference",0) or 0)))
+        _weekend_norm=max(1.0,float(len(weekend_group_anchors)))
+        for _ in range(abs(_we_pref)):
+            if _we_pref>0:
+                add_soft_tier_term("SOFT3",pi,{wc:1.0/_weekend_norm})
+            elif _we_pref<0:
+                add_soft_tier_term("SOFT3",pi,{wc:-1.0/_weekend_norm},const=1.0)
 
         cum = mb.var(
             f"cumulative_weekend[{p.initials}]",
@@ -3413,6 +3446,14 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
               if date(year, month, d).weekday() < 5}
         co[wdc] = -1
         mb.constraint(co, 0, 0, f"weekday days {p.initials}")
+
+        _wd_pref=max(-2,min(2,int(getattr(p,"weekday_preference",0) or 0)))
+        _weekday_norm=max(1.0,float(weekday_count(year,month)))
+        for _ in range(abs(_wd_pref)):
+            if _wd_pref>0:
+                add_soft_tier_term("SOFT3",pi,{wdc:1.0/_weekday_norm})
+            elif _wd_pref<0:
+                add_soft_tier_term("SOFT3",pi,{wdc:-1.0/_weekday_norm},const=1.0)
 
         cwd = mb.var(
             f"cumulative_weekday_days[{p.initials}]",
@@ -3756,7 +3797,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     # V2.5.50 VERTICAL SOFT RANKS + HORIZONTAL WATER-FILLING.
     # SOFT-1 = protect personal time/recovery (Noriu laisvos, avoid doubles).
     # SOFT-2 = positive placement (Pageidauju dirbti).
-    # SOFT-3 = overall schedule shape (weekday/weekend/dispersed/clustered).
+    # SOFT-3 = persistent work-style / overall schedule shape (weekday/weekend/dispersed/clustered).
     # Inside each row, the solver first raises the least-honored resident count,
     # then maximizes the remaining feasible total, with a small max-count tie-break.
     soft_tier_vars={}
@@ -5185,6 +5226,12 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
     _double_counts={i:int((pdata.get(i) or {}).get("doubles",0) or 0) for i in pdata}
     _group_double_min=min(_double_counts.values()) if _double_counts else 0
     _group_double_max=max(_double_counts.values()) if _double_counts else 0
+    _weekend_counts={i:int((pdata.get(i) or {}).get("weekend_assignments",0) or 0) for i in pdata}
+    _group_weekend_min=min(_weekend_counts.values()) if _weekend_counts else 0
+    _group_weekend_max=max(_weekend_counts.values()) if _weekend_counts else 0
+    _weekday_days_counts={i:int((pdata.get(i) or {}).get("weekday_days",0) or 0) for i in pdata}
+    _group_weekday_min=min(_weekday_days_counts.values()) if _weekday_days_counts else 0
+    _group_weekday_max=max(_weekday_days_counts.values()) if _weekday_days_counts else 0
     _pref12_names=[
         q.initials for q in _sat_people
         if max(0,min(3,int(getattr(q,"shift_length_preference",0) or 0)))==3
@@ -5233,6 +5280,24 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             if exact_requested else None
         )
 
+        if sp.weekday_preference != 0:
+            cur=int(d.get("weekday_days",0) or 0)
+            if _group_weekday_max==_group_weekday_min:
+                score=100.0
+            elif sp.weekday_preference>0:
+                score=100.0*(cur-_group_weekday_min)/max(1,_group_weekday_max-_group_weekday_min)
+            else:
+                score=100.0*(_group_weekday_max-cur)/max(1,_group_weekday_max-_group_weekday_min)
+            components["weekday_preference"]=round(max(0.0,min(100.0,score)),1)
+        if sp.weekend_preference != 0:
+            cur=int(d.get("weekend_assignments",0) or 0)
+            if _group_weekend_max==_group_weekend_min:
+                score=100.0
+            elif sp.weekend_preference>0:
+                score=100.0*(cur-_group_weekend_min)/max(1,_group_weekend_max-_group_weekend_min)
+            else:
+                score=100.0*(_group_weekend_max-cur)/max(1,_group_weekend_max-_group_weekend_min)
+            components["weekend_preference"]=round(max(0.0,min(100.0,score)),1)
         if sp.spread_preference != 0:
             spread01 = max(0.0, min(1.0, (d["dispersion_index"] - 0.5) / 0.5))
             score = 100.0 * spread01 if sp.spread_preference > 0 else 100.0 * (1.0 - spread01)
@@ -5302,7 +5367,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
         if sp.holiday_preference and public_holiday_days_in_month(year,month):
             hcount=sum(1 for sl in pslots if is_public_holiday(year,month,sl.day))
             components["holiday_preference"] = 100.0 if ((sp.holiday_preference>0 and hcount>0) or (sp.holiday_preference<0 and hcount==0)) else 0.0
-        directional_keys={"spread_preference","shift_length_preference","avoid_doubles","holiday_preference"}
+        directional_keys={"weekday_preference","weekend_preference","spread_preference","shift_length_preference","avoid_doubles","holiday_preference"}
         directional_values=[v for k,v in components.items() if k in directional_keys]
         d["directional_preference_score"]=(
             round(float(np.mean(directional_values)),1) if directional_values else None
@@ -5345,8 +5410,6 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             if kind=="resident_hard" and block in ("AM","PM") and day in full_rh:
                 continue
             included=bool(item.get("included_in_score", tier not in ("ABSOLUTE_HARD","INFO")))
-            if kind in ("weekday_preference","weekend_preference"):
-                included=False
             source=str(item.get("source") or "effective")
             fulfilled=True
             score_value=100.0
@@ -5375,8 +5438,6 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                 score_value=100.0 if fulfilled else 0.0
                 category="soft2"
                 soft_exact_values.append(score_value)
-            elif kind in ("weekday_preference","weekend_preference"):
-                fulfilled=True; score_value=100.0; category=None
             elif kind in directional_keys:
                 score_value=float(components.get(kind,100.0))
                 fulfilled=bool(score_value>=99.95)

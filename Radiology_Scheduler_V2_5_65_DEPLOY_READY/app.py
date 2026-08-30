@@ -45,9 +45,8 @@ import db
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.101 SOLVER MAINTENANCE"
-EXPECTED_ENGINE_API_VERSION = "2.5.101"
-DISPLAY_VERSION = "3.0"
+APP_VERSION = "2.5.103 SYSTEM WATER-FILL + ACTUAL SWAPS"
+EXPECTED_ENGINE_API_VERSION = "2.5.103"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "SR"
 RESEARCHER_INITIALS = "ŠR"
@@ -88,7 +87,7 @@ TR = {
 "resident_pin":"Asmeninis PIN","admin_pin":"Seniūnės PIN","local_resident":"Vietinis testavimo režimas: asmeniniai PIN nesukonfigūruoti.",
 "local_senior":"Vietinis testavimo režimas: seniūnės profilis atrakintas tik seniūnės paskyrai.","bad_pin":"Neteisingas PIN.",
 "login_title":"Prisijungimas","login":"PRISIJUNGTI","logout":"ATSIJUNGTI","signup":"SUKURTI PASKYRĄ","signup_title":"Pirma registracija","password":"Slaptažodis","password_repeat":"Pakartokite slaptažodį","auth_email":"El. paštas","auth_invalid":"Nepavyko prisijungti. Patikrinkite el. paštą ir slaptažodį.","signup_sent":"Paskyra sukurta. Jei el. pašto patvirtinimas įjungtas, patvirtinkite laišką ir tada prisijunkite.","signup_password_mismatch":"Slaptažodžiai nesutampa.","claim_title":"Susiekite paskyrą","resident_claim_tab":"Rezidentas","observer_claim_tab":"Skyriaus administratorė / stebėtoja","observer_claim_help":"Ši paskyra skirta skyriaus administracinei peržiūrai. Ji yra tik skaitymui: galima matyti paskelbtą ir aktualų grafiką, apsikeitimus, dublius, teisingumą ir auditą, bet negalima nieko keisti.","observer_invite_code":"Skyriaus stebėtojo kvietimo kodas","observer_claim":"AKTYVUOTI TIK PERŽIŪROS PRIEIGĄ","observer_read_only":"TIK PERŽIŪRA","observer_role":"Skyriaus stebėtojas","observer_portal":"Skyriaus grafiko stebėsena","observer_overview":"Apžvalga","observer_schedule":"Grafikai","observer_changes":"Pakeitimų žurnalas","observer_fairness":"Teisingumas","observer_backups":"Dubliai","observer_rules":"Taisyklės","observer_scope_note":"Ši paskyra negali generuoti, publikuoti, tvirtinti, keisti ar anuliuoti grafikų ir apsikeitimų.","observer_privacy_note":"Nerodomi privatūs rezidentų pageidavimai, privalomo negalėjimo datos, asmeninės pastabos, el. paštai ar paskyrų nustatymai.","observer_baseline_schedule":"Sistemos pradinis grafikas — paskelbimo momentu","observer_actual_schedule":"Faktinis grafikas — dabar","observer_change_count":"Pakeistų normalių pamainų","observer_normal_swaps":"Normalių pamainų apsikeitimai","observer_backup_swaps":"Dublių apsikeitimai","observer_pending_swaps":"Laukiantys","observer_approved_swaps":"Patvirtinti","observer_rejected_swaps":"Atmesti","observer_no_changes":"Po paskelbimo normalių pamainų pakeitimų nėra.","observer_from":"Buvo","observer_to":"Dabar","observer_change_log_help":"Sistemos pradinis grafikas lieka teisingumo apskaitai. Faktinis grafikas rodo realią situaciją po abipusių savanoriškų apsikeitimų.","observer_backup_status":"Būsena","observer_planned_backup":"Planuotas dublis","observer_actual_backup":"Faktinis dublis","observer_activated":"Aktyvuotas","observer_completed":"Realiai pavadavo","observer_no_schedule":"Šiam mėnesiui dar nėra paskelbto grafiko.","observer_access_ready":"Tik peržiūros skyriaus prieiga aktyvuota.","claim_help":"Pasirinkite tik savo inicialus ir įveskite jums skirtą vienkartinį beta kvietimo kodą.","invite_code":"Kvietimo kodas","claim":"SUSIETI PASKYRĄ","claim_failed":"Paskyros susieti nepavyko. Patikrinkite inicialus ir kvietimo kodą.","account_unlinked":"Prisijungėte, bet ši paskyra dar nesusieta su rezidentu.",
-"app_title":"Rezidentų mėnesinio grafiko sistema","app_caption":"Mėnesinio rezidentų grafiko planavimas, pageidavimai, dubliai ir kontroliuojami pakeitimai.",
+"app_title":"Rezidentų grafiko sistema","app_caption":"Rezidentų grafiko planavimas, pageidavimai, dubliai ir kontroliuojami pakeitimai.",
 "year":"Metai","month":"Mėnuo","weekdays":"Darbo dienos","base_target":"Bazinis pamainų tikslas",
 "deadline":"Pageidavimų pateikimo terminas","days_left":"Liko dienų","deadline_today":"Šiandien paskutinė diena.","deadline_passed":"Terminas praėjo prieš {n} d.",
 "deadline_future":"Iki termino liko {n} d.","deadline_note":"Kito mėnesio pageidavimai pateikiami iki ankstesnio mėnesio 14 d. 00:00 (13 d. imtinai).",
@@ -104,7 +103,7 @@ TR = {
 "shift_length_pref":"Pageidaujama darbo dienos trukmė","shift_length_help":"Ilgalaikis privatus darbo pobūdžio pasirinkimas. Sistema stengiasi formuoti darbo dienų trukmę pagal jūsų pasirinkimą, jei tai leidžia privalomos taisyklės, poilsio reikalavimai ir mėnesio darbo krūvis. Onko RO lieka atskira 9 val. pilnos dienos pamaina.","shift_length_any":"Nesvarbu","shift_length_6":"Dažniausiai 6 val.","shift_length_mixed":"Mišriai – tinka ir 6 val., ir 12 val. darbo dienos","shift_length_12":"Dažniausiai 12 val.","weekday_pref":"Darbo dienų pobūdis","weekend_pref":"Savaitgalių pobūdis","holiday_pref":"Švenčių dienos","holiday_pref_help":"Ilgalaikis pasirinkimas oficialioms Lietuvos švenčių dienoms. Sistema pirmiausia skiria šventinį darbą norintiems, po jų — neutraliems, o norinčius ilsėtis naudoja tik kai reikia. Tarp vienodai pasirinkusių žmonių šventinis darbas paskirstomas kuo tolygiau, atsižvelgiant ir į ankstesnius mėnesius.","holiday_rest":"Norėčiau ilsėtis per šventes","holiday_neutral":"Neutralu / nesvarbu","holiday_work":"Norėčiau dirbti per šventes","spread_pref":"Pamainų išdėstymas","avoid_double_shifts":"Jei įmanoma, vengti dvigubų pamainų",
 "weekday_help":"−2 = santykinai mažiau darbo dienomis, 0 = nesvarbu, +2 = santykinai daugiau.","weekend_help":"−2 = mažiau savaitgalių, 0 = nesvarbu, +2 = daugiau.",
 "spread_help":"−2 = labiau sutelktas grafikas, 0 = nesvarbu, +2 = labiau išsklaidytas.","notifications":"Pranešimai","notifications_on":"Gauti el. pašto priminimus apie pageidavimų pateikimo termino pabaigą","notification_default":"Pagal nutylėjimą pranešimai įjungti.",
-"reminder_start":"Priminimus pradėti nuo mėnesio dienos","reminder_help":"Šis nustatymas skirtas tik priminimams apie kito mėnesio pageidavimų pateikimo terminą. Jei pageidavimai dar nepateikti, priminimai gali būti siunčiami nuo pasirinktos dienos iki termino dienos.","include_backups_calendar":"Rodyti dublius mano .ics kalendoriuje","backup_email_alerts":"Gauti el. laišką, kai seniūnė aktyvuoja mano dublį","phone_optional":"Telefono numeris SMS pranešimams (pasirinktinai)","sms_future":"SMS pranešimai paruošti nustatymuose, bet beta versijoje dar nesiunčiami.","backup_sms_alerts":"Gauti SMS, kai aktyvuojamas dublis","backup_activation":"Dublio aktyvavimas","activate_backup":"KVIESTI DUBLĮ DABAR","backup_activated":"Dublis aktyvuotas.","backup_email_sent":"El. pranešimas dubliui išsiųstas.","backup_email_failed":"Dublis aktyvuotas, bet el. laiško išsiųsti nepavyko.","undo_activation":"ATŠAUKTI DUBLIO AKTYVAVIMĄ","activation_undone":"Dublio aktyvavimas atšauktas.","smtp_admin_note":"Siunčiančio pašto slaptažodis yra vienas bendras sistemos secret ir jo rezidentai neįveda.","settings_saved":"Nustatymai išsaugoti.","backup_bonus":"Dublių bonusai","bonus_balance":"Sukaupti dublių bonusai","bonus_help":"Kai realiai pavaduojate kitą rezidentą, gaunate POILSIO kreditą kaip naudą būsimam mėnesiui. Pavaduotam žmogui jokia skola nesukuriama. RYTAS, POPIETĖ ir NAKTIS apskaitomi atskirai.","use_bonus":"Šį mėnesį panaudoti bonusų","bonus_target_effect":"Per vieną mėnesį galima panaudoti daugiausia 2 dieninius poilsio kreditus iš viso. RYTO ir POPIETĖS kreditai apskaitomi atskirai; NAKTIES kreditas dabartinio PGY1 dieninio targeto nemažina.","bonus_insufficient":"Pasirinkta daugiau bonusų nei turite sukaupę.",
+"reminder_start":"Asmeninių priminimų pradžia (mėnesio diena)","reminder_help":"Parodo, nuo kurios mėnesio dienos pradėsite gauti asmeninius el. pašto priminimus apie savo artėjantį grafiką, jei dar nebūsite pateikę pageidavimų. Pvz.: „Liko 4 dienos iki pageidavimų pateikimo pabaigos.“ Priminimai sustoja, kai pageidavimai pateikiami arba terminas pasibaigia.","include_backups_calendar":"Rodyti dublius mano .ics kalendoriuje","backup_email_alerts":"Gauti el. laišką, kai seniūnė aktyvuoja mano dublį","phone_optional":"Telefono numeris SMS pranešimams (pasirinktinai)","sms_future":"SMS pranešimai paruošti nustatymuose, bet beta versijoje dar nesiunčiami.","backup_sms_alerts":"Gauti SMS, kai aktyvuojamas dublis","backup_activation":"Dublio aktyvavimas","activate_backup":"KVIESTI DUBLĮ DABAR","backup_activated":"Dublis aktyvuotas.","backup_email_sent":"El. pranešimas dubliui išsiųstas.","backup_email_failed":"Dublis aktyvuotas, bet el. laiško išsiųsti nepavyko.","undo_activation":"ATŠAUKTI DUBLIO AKTYVAVIMĄ","activation_undone":"Dublio aktyvavimas atšauktas.","smtp_admin_note":"Siunčiančio pašto slaptažodis yra vienas bendras sistemos secret ir jo rezidentai neįveda.","settings_saved":"Nustatymai išsaugoti.","backup_bonus":"Dublių bonusai","bonus_balance":"Sukaupti dublių bonusai","bonus_help":"Kai realiai pavaduojate kitą rezidentą, gaunate POILSIO kreditą kaip naudą būsimam mėnesiui. Pavaduotam žmogui jokia skola nesukuriama. RYTAS, POPIETĖ ir NAKTIS apskaitomi atskirai.","use_bonus":"Šį mėnesį panaudoti bonusų","bonus_target_effect":"Per vieną mėnesį galima panaudoti daugiausia 2 dieninius poilsio kreditus iš viso. RYTO ir POPIETĖS kreditai apskaitomi atskirai; NAKTIES kreditas dabartinio PGY1 dieninio targeto nemažina.","bonus_insufficient":"Pasirinkta daugiau bonusų nei turite sukaupę.",
 "dashboard_title":"Seniūnės mėnesio kontrolės skydas","completion":"Pageidavimų užpildymas","missing_preferences":"Dar nepateikė","missing_email":"Nenurodė el. pašto","all_complete":"Visi pageidavimus pateikė.",
 "email_ready":"El. pašto kanalo konfigūracija rasta","email_not_ready":"El. pašto kanalas dar neparuoštas. Seniūnės lange matysite vieną aiškų taisytiną punktą ir galėsite atlikti kanalo testą.",
 "send_reminders":"SIŲSTI ŠIANDIENOS PRIMINIMUS","reminders_result":"Priminimų rezultatas","no_due_reminders":"Šiandien pagal nustatymus priminimų siųsti nereikia.","email_log":"El. laiškų žurnalas",
@@ -133,11 +132,11 @@ TR = {
 "EN": {
 "language":"Language","user":"User","profile":"Profile","resident_profile":"Resident profile","senior_profile":"Senior scheduler profile","resident_pin":"Personal PIN","admin_pin":"Senior scheduler PIN","local_resident":"Local test mode: personal PINs are not configured.","local_senior":"Local test mode: senior functions are unlocked only for the senior account.","bad_pin":"Incorrect PIN.",
 "login_title":"Sign in","login":"SIGN IN","logout":"SIGN OUT","signup":"CREATE ACCOUNT","signup_title":"First registration","password":"Password","password_repeat":"Repeat password","auth_email":"Email","auth_invalid":"Sign-in failed. Check your email and password.","signup_sent":"Account created. If email confirmation is enabled, confirm the email and then sign in.","signup_password_mismatch":"Passwords do not match.","claim_title":"Link this account","resident_claim_tab":"Resident","observer_claim_tab":"Department administrator / observer","observer_claim_help":"This account is for departmental oversight only. It is read-only: it can view the published and current schedules, swaps, backups, fairness and audit history, but cannot change anything.","observer_invite_code":"Department observer invite code","observer_claim":"ACTIVATE READ-ONLY ACCESS","observer_read_only":"TIK PERŽIŪRA","observer_role":"Department observer","observer_portal":"Department schedule oversight","observer_overview":"Overview","observer_schedule":"Schedules","observer_changes":"Change log","observer_fairness":"Teisingumas","observer_backups":"Backups","observer_rules":"Rules","observer_scope_note":"This account cannot generate, publish, approve, edit or undo schedules or swaps.","observer_privacy_note":"Private resident preferences, HARD-unavailable dates, personal notes, emails and account settings are not shown.","observer_baseline_schedule":"SYSTEM baseline — at publication","observer_actual_schedule":"ACTUAL schedule — now","observer_change_count":"Changed normal assignments","observer_normal_swaps":"Normal-shift swaps","observer_backup_swaps":"Backup swaps","observer_pending_swaps":"Pending","observer_approved_swaps":"Approved","observer_rejected_swaps":"Rejected","observer_no_changes":"There are no normal-assignment changes after publication.","observer_from":"From","observer_to":"Now","observer_change_log_help":"The SYSTEM baseline remains the fairness ledger. The ACTUAL schedule shows the real situation after bilateral voluntary swaps.","observer_backup_status":"Status","observer_planned_backup":"Planned backup","observer_actual_backup":"Actual backup","observer_activated":"Activated","observer_completed":"Actually covered","observer_no_schedule":"No schedule has been published for this month yet.","observer_access_ready":"Read-only department access activated.","claim_help":"Choose only your own initials and enter the one-time beta invite code provided to you.","invite_code":"Invite code","claim":"LINK ACCOUNT","claim_failed":"Could not link the account. Check the initials and invite code.","account_unlinked":"You are signed in, but this account is not linked to a resident yet.",
-"app_title":"Resident monthly scheduling system","app_caption":"Hard rules → transparency → soft preferences → controlled changes.","year":"Year","month":"Month","weekdays":"Weekdays","base_target":"Base shift target","deadline":"Preference deadline","days_left":"Days remaining","deadline_today":"Today is the deadline.","deadline_passed":"Deadline passed {n} day(s) ago.","deadline_future":"{n} day(s) remain until the deadline.","deadline_note":"Next month's preferences are due by 00:00 on the 14th of the preceding month (the 13th is the last full day).",
+"app_title":"Resident scheduling system","app_caption":"Hard rules → transparency → soft preferences → controlled changes.","year":"Year","month":"Month","weekdays":"Weekdays","base_target":"Base shift target","deadline":"Preference deadline","days_left":"Days remaining","deadline_today":"Today is the deadline.","deadline_passed":"Deadline passed {n} day(s) ago.","deadline_future":"{n} day(s) remain until the deadline.","deadline_note":"Next month's preferences are due by 00:00 on the 14th of the preceding month (the 13th is the last full day).",
 "senior_dashboard":"Senior dashboard","preferences":"Preferences","settings":"Settings","generation":"Generation","schedule":"Schedule","summary":"Summary","transparency":"Transparency","credits_debts":"Credits","backups":"Backups","swaps":"Swaps","calendar":"Calendar","proof":"Proof","senior_guide":"Senior guide","rules":"Rules",
 "my_preferences":"My monthly preferences","hard_unavailable":"Unavailable — RESIDENT HARD","hard_help":"You may mark the whole day or only the morning / afternoon. This is the resident’s highest-priority request: the engine first searches for zero losses. Only if that is impossible is the minimum unavoidable loss distributed as evenly as possible; ABSOLUTE HARD safety rules remain unbreakable.","hard_all_day":"Whole day","hard_morning":"Morning (08:00–14:00)","hard_afternoon":"Afternoon (14:00–20:00)","hard_partial_note":"If only morning or afternoon is marked, you may still receive a normal shift or backup duty in the other time block.","hard_overlap":"The same date cannot be marked as both whole-day and partial required unavailability.","soft_free":"Would like time off — preference","soft_help":"Choose whole day, morning, or afternoon. The system tries to honor this unless a higher-priority rule prevents it.","soft_overlap":"The same date cannot be marked as both whole-day and partial requested time off.","preferred":"Prefer to work — preference","preferred_help":"Choose whole day, morning, or afternoon. Voluntary unpopular work is prioritized when labour-law and rest-safety rules allow it.","preferred_overlap":"The same date cannot be marked as both whole-day and partial preferred work.","vacation":"Approved vacation / leave days","vacation_help":"Select approved vacation days. The scheduler will not assign work or backup on those days and will proportionally reduce the monthly workload target so approved leave is not treated as a fairness deficit.","vacation_overlap":"The same day is entered as both vacation and another justified absence; keep it in only one field.","note":"Additional note","note_ph":"Example: I would prefer not to have a double shift after several consecutive days.","save":"Save","saved":"Saved.","hard_conflict":"A preferred-work request conflicts with required unavailability in the same time block.","soft_conflict":"Requested time off and preferred work cannot overlap in the same time block.",
 "all_preferences":"All resident preferences","preference_load":"Preference volume","review":"Review","normal":"Normal","visibility_flag":"The Review flag is only a visibility prompt for the senior scheduler; it is not a penalty or automatic restriction.","submitted":"Submitted","updated":"Updated","hard_dates":"Unavailable — whole day","hard_am_dates":"Unavailable — morning","hard_pm_dates":"Unavailable — afternoon","soft_dates":"Time off — whole day","soft_am_dates":"Time off — morning","soft_pm_dates":"Time off — afternoon","preferred_dates":"Prefer work — whole day","preferred_am_dates":"Prefer work — morning","preferred_pm_dates":"Prefer work — afternoon","comment":"Comment",
-"settings_title":"My account and work-style settings","short_term":"Short-term monthly preferences","legal_safety_inputs":"Labour-law / rest-safety inputs","justified_absence":"Other justified absence (sickness or another approved reason)","justified_absence_help":"Hard no-work date. The scheduler assigns no shifts that day and proportionally recalculates this month’s internal shift target. A 38h/week norm is not hard-coded.","long_duty":"Start date of a long duty (>12–24h or 24h)","long_duty_help":"Entering the start date of a real long duty blocks the entire following calendar day from normal assignments as a conservative ≥24h rest safeguard.","labour_hard_summary":"Hard safety layer: ≤12h per workday in this schedule; ≥11h between separate workdays; after a marked long/night duty the next day has no normal shifts; at least one fully free day in every rolling 7 days; ≤48 known scheduled hours in any rolling 7 days. The generator additionally targets ~40h/7d and after two consecutive 12h double days allows only PM or rest on the next day.","labour_scope_note":"The system can validate only work it knows about. Other employers or unentered duties must be assessed separately.","long_term":"Long-term recurring preferences","long_term_help":"These rules are applied automatically every month until you change them. A month-specific SOFT preference overrides an opposite recurring SOFT preference; recurring “Unavailable” remains RESIDENT HARD. The time column applies to RESIDENT HARD; recurring SOFT weekday preferences are whole-day.","weekday_name":"Weekday","recurring_rule":"Recurring rule","recurring_time":"Time","rec_none":"None","rec_hard":"Unavailable (RESIDENT HARD)","rec_soft":"Would like the day off","rec_preferred":"Prefer to work","save_long_term":"SAVE LONG-TERM PREFERENCES","long_term_saved":"Long-term preferences saved.","email":"Email","email_required":"Every account should contain a valid email address.","shift_length_pref":"Preferred workday length","shift_length_help":"Persistent private work-style preference. The system tries to shape your workday length according to this choice when mandatory rules, rest requirements, and monthly workload allow it. Onko RO remains a separate 9-hour full-day shift.","shift_length_any":"No preference","shift_length_6":"Mostly 6 hours","shift_length_mixed":"Mixed – both 6-hour and 12-hour workdays are fine","shift_length_12":"Mostly 12 hours","weekday_pref":"Weekday pattern","weekend_pref":"Weekend pattern","holiday_pref":"Public holidays","holiday_pref_help":"Long-term preference for official Lithuanian public holidays. Holiday duty is offered first to residents who prefer working holidays, then to neutral residents, while residents who prefer rest are used only when needed. Among residents with the same choice, holiday work is distributed as evenly as possible using current and prior months.","holiday_rest":"Prefer to rest on holidays","holiday_neutral":"Neutral / no preference","holiday_work":"Prefer to work on holidays","spread_pref":"Shift distribution","avoid_double_shifts":"Avoid double shifts when possible","weekday_help":"−2 = relatively fewer weekdays, 0 = neutral, +2 = relatively more.","weekend_help":"−2 = fewer weekends, 0 = neutral, +2 = more.","spread_help":"−2 = more clustered, 0 = neutral, +2 = more dispersed.","notifications":"Notifications","notifications_on":"Receive email reminders about the preference-submission deadline","notification_default":"Notifications are on by default.","reminder_start":"Start reminders on day of month","reminder_help":"This setting only controls reminders about the next-month preference deadline. If preferences are still missing, reminders may be sent from the selected day through the deadline date.","include_backups_calendar":"Include backup duties in my .ics calendar","backup_email_alerts":"Email me when the senior activates my backup duty","phone_optional":"Phone number for SMS alerts (optional)","sms_future":"SMS preferences are prepared, but SMS delivery is not enabled in this beta yet.","backup_sms_alerts":"Send me an SMS when my backup duty is activated","backup_activation":"Backup activation","activate_backup":"CALL BACKUP NOW","backup_activated":"Backup activated.","backup_email_sent":"Backup alert email sent.","backup_email_failed":"Backup activated, but the alert email could not be sent.","undo_activation":"UNDO BACKUP ACTIVATION","activation_undone":"Backup activation undone.","smtp_admin_note":"The sending-mailbox password is one shared system secret; residents never enter it.","settings_saved":"Settings saved.","backup_bonus":"Backup bonuses","bonus_balance":"Available backup bonuses","bonus_help":"When you actually cover another resident, you earn a REST credit as a future benefit. The covered resident receives no debt. MORNING, AFTERNOON and NIGHT are tracked separately.","use_bonus":"Use bonuses this month","bonus_target_effect":"At most 2 daytime rest credits in total may be used in one month. MORNING and AFTERNOON are tracked separately; NIGHT credits cannot reduce the current PGY1 daytime target.","bonus_insufficient":"You selected more bonuses than you currently have.",
+"settings_title":"My account and work-style settings","short_term":"Short-term monthly preferences","legal_safety_inputs":"Labour-law / rest-safety inputs","justified_absence":"Other justified absence (sickness or another approved reason)","justified_absence_help":"Hard no-work date. The scheduler assigns no shifts that day and proportionally recalculates this month’s internal shift target. A 38h/week norm is not hard-coded.","long_duty":"Start date of a long duty (>12–24h or 24h)","long_duty_help":"Entering the start date of a real long duty blocks the entire following calendar day from normal assignments as a conservative ≥24h rest safeguard.","labour_hard_summary":"Hard safety layer: ≤12h per workday in this schedule; ≥11h between separate workdays; after a marked long/night duty the next day has no normal shifts; at least one fully free day in every rolling 7 days; ≤48 known scheduled hours in any rolling 7 days. The generator additionally targets ~40h/7d and after two consecutive 12h double days allows only PM or rest on the next day.","labour_scope_note":"The system can validate only work it knows about. Other employers or unentered duties must be assessed separately.","long_term":"Long-term recurring preferences","long_term_help":"These rules are applied automatically every month until you change them. A month-specific SOFT preference overrides an opposite recurring SOFT preference; recurring “Unavailable” remains RESIDENT HARD. The time column applies to RESIDENT HARD; recurring SOFT weekday preferences are whole-day.","weekday_name":"Weekday","recurring_rule":"Recurring rule","recurring_time":"Time","rec_none":"None","rec_hard":"Unavailable (RESIDENT HARD)","rec_soft":"Would like the day off","rec_preferred":"Prefer to work","save_long_term":"SAVE LONG-TERM PREFERENCES","long_term_saved":"Long-term preferences saved.","email":"Email","email_required":"Every account should contain a valid email address.","shift_length_pref":"Preferred workday length","shift_length_help":"Persistent private work-style preference. The system tries to shape your workday length according to this choice when mandatory rules, rest requirements, and monthly workload allow it. Onko RO remains a separate 9-hour full-day shift.","shift_length_any":"No preference","shift_length_6":"Mostly 6 hours","shift_length_mixed":"Mixed – both 6-hour and 12-hour workdays are fine","shift_length_12":"Mostly 12 hours","weekday_pref":"Weekday pattern","weekend_pref":"Weekend pattern","holiday_pref":"Public holidays","holiday_pref_help":"Long-term preference for official Lithuanian public holidays. Holiday duty is offered first to residents who prefer working holidays, then to neutral residents, while residents who prefer rest are used only when needed. Among residents with the same choice, holiday work is distributed as evenly as possible using current and prior months.","holiday_rest":"Prefer to rest on holidays","holiday_neutral":"Neutral / no preference","holiday_work":"Prefer to work on holidays","spread_pref":"Shift distribution","avoid_double_shifts":"Avoid double shifts when possible","weekday_help":"−2 = relatively fewer weekdays, 0 = neutral, +2 = relatively more.","weekend_help":"−2 = fewer weekends, 0 = neutral, +2 = more.","spread_help":"−2 = more clustered, 0 = neutral, +2 = more dispersed.","notifications":"Notifications","notifications_on":"Receive email reminders about the preference-submission deadline","notification_default":"Notifications are on by default.","reminder_start":"Start personal reminders on day of month","reminder_help":"Choose the day of the month from which you want to receive personal email reminders about your upcoming schedule if your preferences are still missing. Example: “4 days left until preference submission closes.” Reminders stop after you submit or the deadline passes.","include_backups_calendar":"Include backup duties in my .ics calendar","backup_email_alerts":"Email me when the senior activates my backup duty","phone_optional":"Phone number for SMS alerts (optional)","sms_future":"SMS preferences are prepared, but SMS delivery is not enabled in this beta yet.","backup_sms_alerts":"Send me an SMS when my backup duty is activated","backup_activation":"Backup activation","activate_backup":"CALL BACKUP NOW","backup_activated":"Backup activated.","backup_email_sent":"Backup alert email sent.","backup_email_failed":"Backup activated, but the alert email could not be sent.","undo_activation":"UNDO BACKUP ACTIVATION","activation_undone":"Backup activation undone.","smtp_admin_note":"The sending-mailbox password is one shared system secret; residents never enter it.","settings_saved":"Settings saved.","backup_bonus":"Backup bonuses","bonus_balance":"Available backup bonuses","bonus_help":"When you actually cover another resident, you earn a REST credit as a future benefit. The covered resident receives no debt. MORNING, AFTERNOON and NIGHT are tracked separately.","use_bonus":"Use bonuses this month","bonus_target_effect":"At most 2 daytime rest credits in total may be used in one month. MORNING and AFTERNOON are tracked separately; NIGHT credits cannot reduce the current PGY1 daytime target.","bonus_insufficient":"You selected more bonuses than you currently have.",
 "dashboard_title":"Senior monthly control dashboard","completion":"Preference completion","missing_preferences":"Not submitted","missing_email":"Missing email","all_complete":"Everyone submitted preferences.","email_ready":"Email channel configuration found","email_not_ready":"Email channel is not ready yet. The Senior control shows one clear fix and provides a channel test.","send_reminders":"SEND TODAY'S REMINDERS","reminders_result":"Reminder result","no_due_reminders":"No reminders are due today under the current settings.","email_log":"Email log",
 "generation_title":"Schedule generation and publication","senior_only":"Only the senior scheduler can use this function.","generate_draft":"GENERATE / REGENERATE DRAFT","solver_wait":"The system is searching for the best solution...","draft_saved":"Draft created. The official schedule has not changed.","no_solution":"No feasible schedule could be found under the current hard rules.","publish":"PUBLISH AND LOCK","published":"Schedule published and baseline locked.","publication_mail":"Publication emails","no_draft":"There is no draft to publish.","draft_outdated":"Preferences, recurring rules, or bonus selection changed after the draft was generated. Regenerate the draft before publishing.","state":"Status","draft":"Draft","published_state":"Paskelbtas","not_created":"Not created","hard_errors":"Privalomų taisyklių klaidos","fairness_score":"Teisingumo įvertis","monthly_fairness":"Mėnesio teisingumas","cumulative_fairness":"Kaupiamasis teisingumas","fairness_hierarchy":"Grafiko vertinimo hierarchija","fairness_hierarchy_intro":"Prioritetų tvarka: absoliučios saugos ir darbo taisyklės → kuo lygesnis SPS RO, SPS UG ir savaitgalių paskirstymas → rezidentų privalomi negalėjimai → poilsis ir darbo krūvis → švenčių pasirinkimai → visų ne-Onko darbo vietų struktūrinis water-filling → kiti pageidavimai. Didesnis pateiktų pageidavimų skaičius nesuteikia didesnio prioriteto.","hard_validity":"Privalomų taisyklių atitiktis","hard_validity_pass":"0 privalomų taisyklių klaidų — tinkama","hard_validity_fail":"Yra privalomų taisyklių klaidų — skelbti negalima","fairness_monthly_explain":"Mėnesio teisingumas vertina tik pasirinktą mėnesį. Jis gali būti sąmoningai mažesnis, kai taisomas ankstesniais mėnesiais susikaupęs netolygumas.","fairness_cumulative_explain":"Kaupiamasis teisingumas apima visus anksčiau paskelbtus mėnesius ir pasirinktą mėnesį. Tai pagrindinis ilgalaikio grupės balanso rodiklis.","fairness_100_note":"100 % reiškia, kad sistemos paskirtas nesavanoriškas nepopuliarus krūvis ir kiti teisingumo komponentai yra optimaliai subalansuoti. Aiškiai savanoriškai pasirinkta penktadienio ar savaitgalio darbo data pati savaime teisingumo balo nemažina.","fairness_formula_month":"Mėnesio formulė: 100 − 18× savaitgalių skirtumas − 7× penktadienių skirtumas − 4× dvigubų pamainų skirtumas − 2× darbo dienų skirtumas.","fairness_formula_cumulative":"Kaupiamoji formulė tokia pati, tačiau kiekvienas skirtumas skaičiuojamas iš visų paskelbtų mėnesių sukauptų sumų.","fairness_breakdown":"Teisingumo išskaidymas","fairness_penalty":"Baudos taškai","fairness_scope":"Apimtis","fairness_metric":"Komponentas","fairness_spread":"Skirtumas (didž.−maž.)","fairness_history":"Teisingumo istorija","fairness_history_help":"Mėnesio teisingumas rodo balansą vieno mėnesio viduje; kaupiamasis teisingumas rodo, ar ilgainiui sistema artėja prie vienodo bendro krūvio.","fairness_ledger":"Sistemos teisingumo apskaita","actual_ledger":"Faktinio darbo apskaita","fairness_swap_neutral":"Abipusis savanoriškas apsikeitimas nekeičia sistemos teisingumo apskaitos: faktinis darbas pasikeičia, tačiau algoritmo paskirstymo balansas lieka tas pats.","fairness_forced_change":"Pateisinamas post-publication repair (liga, atostogos, force majeure, kritinis SPS pull-down) registruojamas ACTUAL audite, bet NEKEIČIA SYSTEM fairness / spread / postų istorijos. Savanoriški swapai taip pat fairness-neutral; keičiasi tik faktinis grafikas ir retrospektyvinis request satisfaction.","fairness_no_history":"Dar nėra pakankamai paskelbtų mėnesių teisingumo istorijai.","fairness_priority_table":"Kaip skaityti hierarchiją","fairness_level":"Lygis","fairness_goal":"Tikslas","fairness_interpretation":"Kaip interpretuoti","fairness_hard_goal":"ABSOLUTE HARD: 0 saugos / fizinio neįmanomumo pažeidimų","voluntary_unpopular_goal":"Vykdyti aiškiai savanoriškai pasirinktą nepopuliarų darbą tik išlaikant aukštesnes SYSTEM struktūrines taisykles, įskaitant Friday raw spread 0–1","voluntary_unpopular_explain":"Pageidautas penktadienis yra SOFT: generatorius jį vykdo tik tada, kai išlaiko penktadienių structural floor/ceil raw spread 0–1 ir aukštesnes HARD taisykles. Po publikavimo abipusis ACTUAL swapas gali šį balansą pakeisti neperrašydamas SYSTEM fairness.","other_preferences_goal":"SOFT: griežtai SOFT-1 → SOFT-2 → SOFT-3; kiekviename range pirmiausia horizontalus water-filling, po to likęs įmanomas išpildymas","other_preferences_explain":"SOFT pageidavimai optimizuojami tik po TRUE ABSOLUTE HARD, SYSTEM HARD postų lygybės, RESIDENT HARD ir likusio workload/fatigue fairness; aukštesnis SOFT rangas užrakinamas prieš pereinant į žemesnį.","fairness_cumulative_goal":"Antrinis ilgalaikis tikslas: po gero einamojo mėnesio balanso taisyti ankstesnės SYSTEM istorijos likutinę nelygybę","fairness_monthly_goal":"SPS RO, SPS UG, savaitgaliai IR penktadieniai SYSTEM grafike turi raw spread 0–1. Penktadieniai water-fill'inami pagal visų užpildytų penktadienio priskyrimų floor/ceil dalį. Visos ne-Onko darbo vietos taip pat water-fill'inamos iki raw spread 0–1 prieš SOFT; platesnis postų koridorius leidžiamas tik jei siauresnis įrodytas neįmanomas.","preference_avg":"Vidutinis pageidavimų išpildymas","weekend_spread":"Savaitgalių skirtumas",
 "published_schedule":"Current published schedule","not_published":"No official schedule has been published for this month.","colors":"Permanent resident colors","download_xlsx":"DOWNLOAD FORMATTED SCHEDULE (.xlsx)","download_csv":"Download data list (.csv)",
@@ -1067,9 +1066,11 @@ def _build_request_ledger(y,m,initials,p,s,rp,recurring_rows,claims,slot_lookup,
     for d in sorted(effective_pref_am): add("preferred","SOFT2_POSITIVE_PLACEMENT",d,"AM","monthly")
     for d in sorted(effective_pref_pm): add("preferred","SOFT2_POSITIVE_PLACEMENT",d,"PM","monthly")
 
-    # V2.5.52 SOFT whitelist. Broad weekday/weekend pattern sliders are deliberately
-    # not requests: they can shift critical weekend burden onto peers. Use exact
-    # Noriu laisvos / Pageidauju dirbti dates instead.
+    # V2.5.102 persistent work-style settings are real SOFT inputs. Weekend
+    # direction is optimized only after the raw Saturday/Sunday water-fill locks,
+    # so it can choose the upper/lower fair layer but can never widen SYSTEM fairness.
+    if int(s.get("weekday_preference",0) or 0): add("weekday_preference","SOFT3_SCHEDULE_SHAPE",source="account_settings",value=max(-2,min(2,int(s.get("weekday_preference",0) or 0))))
+    if int(s.get("weekend_preference",0) or 0): add("weekend_preference","SOFT3_SCHEDULE_SHAPE",source="account_settings",value=max(-2,min(2,int(s.get("weekend_preference",0) or 0))))
     if int(s.get("spread_preference",0) or 0): add("spread_preference","SOFT3_SCHEDULE_SHAPE",source="account_settings",value=int(s.get("spread_preference",0)))
     # Dedicated holiday inclination is one normalized SOFT unit only in months
     # that actually contain official public-holiday duty slots.
@@ -1168,7 +1169,7 @@ def load_people(y,m):
             long_duty=duty_days,reserved_backup=reserved,
             soft_free=effective_soft,soft_free_am=effective_soft_am,soft_free_pm=effective_soft_pm,
             preferred=effective_pref,preferred_am=effective_pref_am,preferred_pm=effective_pref_pm,
-            weekday_preference=0,weekend_preference=0,holiday_preference=max(-1,min(1,int(s.get("holiday_preference",0) or 0))),spread_preference=int(s.get("spread_preference",0)),
+            weekday_preference=max(-2,min(2,int(s.get("weekday_preference",0) or 0))),weekend_preference=max(-2,min(2,int(s.get("weekend_preference",0) or 0))),holiday_preference=max(-1,min(1,int(s.get("holiday_preference",0) or 0))),spread_preference=int(s.get("spread_preference",0)),
             shift_length_preference=max(0,min(3,int(s.get("shift_length_preference",0) or 0))),
             avoid_doubles=(max(0,min(3,int(s.get("shift_length_preference",0) or 0)))==1 or bool(s.get("avoid_doubles",False))),note=p.get("note",""),
             request_items=request_items,rest_credit_am_to_use=credits_am,rest_credit_pm_to_use=credits_pm,
@@ -3374,6 +3375,15 @@ def render_operator_manual_override(y,m,current_payload,lifecycle_state):
             st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
 
 
+def _lt_days_left_phrase(n: int) -> str:
+    n=int(n)
+    if n==1:
+        return "1 diena"
+    if 2<=n<=9:
+        return f"{n} dienos"
+    return f"{n} dienų"
+
+
 def send_due_reminders(y,m):
     """Manual fallback for today's preference reminder queue.
 
@@ -3395,7 +3405,7 @@ def send_due_reminders(y,m):
         subject=(
             f"Šiandien paskutinė diena pateikti {month_label(y,m)} pageidavimus"
             if lang=="LT" and left==0 else
-            f"Liko {left} d. pateikti {month_label(y,m)} pageidavimus"
+            f"Liko {_lt_days_left_phrase(left)} iki {month_label(y,m)} pageidavimų pateikimo pabaigos"
             if lang=="LT" else
             f"Today is the last day to submit {month_label(y,m)} preferences"
             if left==0 else
@@ -3546,7 +3556,7 @@ def localized_email_log(rows):
     } for r in rows])
 
 # --- Identity, role and month ---
-st.sidebar.title("Shift Happens"); st.sidebar.caption(f"PGY-1 Radiology · v{DISPLAY_VERSION}")
+st.sidebar.title("Shift Happens"); st.sidebar.caption("PGY-1 Radiology")
 
 def observer_assignment_changes_df(y,m,baseline,current):
     if baseline is None or current is None:
@@ -3897,7 +3907,6 @@ if advanced_mode:
 st.title(tr("app_title"))
 if advanced_mode:
     st.caption(tr("app_caption"))
-    st.success(f"RUNNING BUILD: V{DISPLAY_VERSION}")
     st.info(
         ("IŠPLĖSTINIS REŽIMAS — rodoma pilna fairness, guardrail, solverio ir tyrimo diagnostika."
          if lang=="LT" else
@@ -3905,8 +3914,6 @@ if advanced_mode:
     )
 else:
     st.caption("Paprastas režimas" if lang=="LT" else "Simple mode")
-dl,dlmsg,dldiff=deadline_message(year,month); cutoff_exact=preference_cutoff_for(year,month)
-st.markdown(f'<div class="deadline-card"><b>{tr("deadline")}: {cutoff_exact.strftime("%Y-%m-%d %H:%M")}</b><br>{html.escape(dlmsg)}<br><span style="color:#6b7280">{html.escape(tr("deadline_note"))}</span></div>',unsafe_allow_html=True)
 
 # V2.5.94: after the exact cutoff, SR/ŠR views automatically materialize
 # every still-missing active resident as a submitted zero-request form.
@@ -3989,6 +3996,49 @@ def flash_saved(message):
     st.session_state["_save_flash"] = str(message)
     st.rerun()
 
+
+def render_recurring_preferences_editor(initials: str):
+    """Persistent recurring preferences live in the Preferences tab, not Settings."""
+    st.divider()
+    st.markdown(f"### {tr('long_term')}")
+    st.caption(tr("long_term_help"))
+    st.caption(
+        "Ši dalis nėra pririšta prie vieno mėnesio: taisyklės automatiškai persikelia į visus būsimus dar neužšaldytus grafikus, kol jas pakeisite arba išjungsite. Jau paskelbto SYSTEM grafiko jos retroaktyviai nekeičia."
+        if lang=="LT" else
+        "This section is not tied to one month: the rules automatically carry into every future schedule that is not yet frozen until you change or disable them. They never rewrite an already published SYSTEM schedule."
+    )
+    st.caption(
+        "Savaitgalio „Pageidauju dirbti“ leidžiamas kaip savanoriškas nepopuliarios pamainos pasirinkimas. Generuojant SYSTEM, šeštadienio ir sekmadienio water-fill išlieka struktūriškai lygus; po publikavimo abipusiai savanoriški swapai gali pakeisti ACTUAL pasiskirstymą ir jo spread."
+        if lang=="LT" else
+        "Weekend 'prefer to work' is allowed as volunteering for unpopular duty. During SYSTEM generation, Saturday/Sunday water-fill remains structurally equal; after publication, bilateral voluntary swaps may change the ACTUAL distribution and its spread."
+    )
+    existing_rec={int(r["weekday"]):r for r in db.get_recurring_preferences(initials)}
+    rule_to_label={"hard_unavailable":tr("rec_hard"),"soft_free":tr("rec_soft"),"preferred":tr("rec_preferred"),"none":tr("rec_none")}
+    label_to_rule={v:k for k,v in rule_to_label.items()}
+    block_to_label={"FULL":tr("full_day"),"AM":tr("morning"),"PM":tr("afternoon")}
+    label_to_block={v:k for k,v in block_to_label.items()}
+    rec_rows=[]
+    for wd_i in range(7):
+        rr=existing_rec.get(wd_i,{}); typ=rr.get("preference_type","none"); block=rr.get("block","FULL")
+        rec_rows.append({tr("weekday_name"):WEEKDAY_FULL[lang][wd_i],tr("recurring_rule"):rule_to_label.get(typ,tr("rec_none")),tr("recurring_time"):block_to_label.get(block,tr("full_day")),"_weekday":wd_i})
+    rec_df=pd.DataFrame(rec_rows)
+    edited=st.data_editor(rec_df,column_config={tr("recurring_rule"):st.column_config.SelectboxColumn(options=list(rule_to_label.values())),tr("recurring_time"):st.column_config.SelectboxColumn(options=list(block_to_label.values())),"_weekday":None},disabled=[tr("weekday_name")],hide_index=True,use_container_width=True,key=f"recurring_{initials}_{lang}")
+    if st.button(tr("save_long_term"),type="primary",key=f"save_recurring_{initials}_{lang}"):
+        payload=[]; invalid_weekend_soft=[]
+        for _,r in edited.iterrows():
+            wd=int(r["_weekday"]); typ=label_to_rule.get(r[tr("recurring_rule")],"none"); block=label_to_block.get(r[tr("recurring_time")],"FULL")
+            if wd>=5 and typ=="soft_free":
+                invalid_weekend_soft.append(WEEKDAY_FULL[lang][wd]); continue
+            payload.append({"weekday":wd,"preference_type":typ,"block":block})
+        if invalid_weekend_soft:
+            st.error(
+                "Pasikartojantis savaitgalio „Noriu laisvos“ nepriimamas, nes perkeltų privalomą savaitgalių krūvį kitiems. Jei iš tikrųjų negalite dirbti kiekvieną tokį savaitgalį, naudokite RESIDENT HARD. Tačiau savaitgalio „Pageidauju dirbti“ leidžiamas."
+                if lang=="LT" else
+                "Recurring weekend 'want off' is not accepted because it would shift unavoidable weekend burden to peers. Use RESIDENT HARD if you truly cannot work those weekends. Weekend 'prefer to work' is allowed."
+            )
+        else:
+            db.save_recurring_preferences(initials,payload); flash_saved(tr("long_term_saved"))
+
 # --- Senior dashboard ---
 if senior_mode:
     with tabs[pos]:
@@ -4027,6 +4077,13 @@ if senior_mode:
 # --- Preferences ---
 with tabs[pos]:
     st.subheader(f"{tr('my_preferences')} — {month_label(year,month)}")
+    dl,dlmsg,dldiff=deadline_message(year,month); cutoff_exact=preference_cutoff_for(year,month)
+    st.markdown(f'<div class="deadline-card"><b>{tr("deadline")}: {cutoff_exact.strftime("%Y-%m-%d %H:%M")}</b><br>{html.escape(dlmsg)}<br><span style="color:#6b7280">{html.escape(tr("deadline_note"))}</span></div>',unsafe_allow_html=True)
+    st.caption(
+        "Šio mėnesio konkretūs pageidavimai galioja tik pasirinktam grafikui. Kito mėnesio forma pildoma iš naujo; ilgalaikiai pasikartojantys pageidavimai žemiau išlieka, kol juos pakeisite."
+        if lang=="LT" else
+        "Month-specific requests apply only to the selected schedule. The next month starts with a new monthly form; long-term recurring preferences below persist until you change them."
+    )
     if not resident_ok:
         st.error(tr("bad_pin"))
     else:
@@ -4270,6 +4327,15 @@ with tabs[pos]:
                             st.error("SYSTEM jau užšaldytas — pageidavimų keisti nebegalima." if lang=="LT" else "SYSTEM is frozen — preferences can no longer be changed.")
                         else:
                             st.error(msg)
+        if preference_target==active_user:
+            render_recurring_preferences_editor(active_user)
+        elif lifecycle_operator_ui:
+            st.divider()
+            st.caption(
+                "Ilgalaikius pasikartojančius pageidavimus kiekvienas rezidentas valdo savo Pageidavimų lange. Operatorinis įvedimas aukščiau keičia tik pasirinktą konkretų mėnesį."
+                if lang=="LT" else
+                "Each resident manages long-term recurring preferences in their own Preferences tab. The operator entry above changes only the selected month."
+            )
     if senior_mode:
         st.divider(); st.markdown(f"### {tr('all_preferences')}"); prefs=db.all_preferences(year,month); sets=db.all_account_settings(); recurring_all=db.all_recurring_preferences(); nd=calendar.monthrange(year,month)[1]; rows=[]
         for p in DEFAULT_PEOPLE:
@@ -4321,6 +4387,11 @@ with tabs[pos]:
     if not resident_ok: st.error(tr("bad_pin"))
     else:
         s=db.get_account_settings(active_user)
+        st.caption(
+            "Darbo pobūdžio nustatymai yra ilgalaikiai: jie automatiškai taikomi kiekvienam būsimam dar neužšaldytam mėnesiui, kol pats juos pakeisite. Jie nėra iš naujo nustatomi kiekvieną mėnesį."
+            if lang=="LT" else
+            "Work-style settings are persistent: they automatically apply to every future schedule that is not yet frozen until you change them. They do not reset each month."
+        )
         with st.form(f"settings_{active_user}"):
             shift_len_options=[tr("shift_length_6"),tr("shift_length_12"),tr("shift_length_mixed"),tr("shift_length_any")]
             shift_len_value_to_label={0:tr("shift_length_any"),1:tr("shift_length_6"),2:tr("shift_length_mixed"),3:tr("shift_length_12")}
@@ -4345,17 +4416,23 @@ with tabs[pos]:
                 help=tr("holiday_pref_help")
             )
             hp=holiday_label_to_value.get(holiday_pref_label,0)
+            wp=st.slider(tr("weekday_pref"),-2,2,int(s.get("weekday_preference",0) or 0),help=tr("weekday_help"))
+            wep=st.slider(tr("weekend_pref"),-2,2,int(s.get("weekend_preference",0) or 0),help=tr("weekend_help"))
+            st.caption(
+                "Generuojant SYSTEM, savaitgalių nustatymas veikia tik neutralios lygybės viduje: vien dėl šio pasirinkimo šeštadienio ir sekmadienio water-fill koridorius nepraplečiamas. Jis padeda parinkti, kas gauna viršutinį / apatinį lygios dalybos sluoksnį. Po publikavimo abipusiai savanoriški swapai gali šį ACTUAL balansą pralaužti; SYSTEM baseline lieka užšaldytas ir kitą mėnesį catch-up nekuriamas."
+                if lang=="LT" else
+                "During SYSTEM generation, the weekend setting works only inside the neutral fairness corridor: this choice alone cannot widen Saturday/Sunday water-fill. It helps decide who receives the upper/lower layer when the equal split has a remainder. After publication, bilateral voluntary swaps may break that ACTUAL balance; the SYSTEM baseline stays frozen and no next-month catch-up is created."
+            )
             sp=st.slider(tr("spread_pref"),-2,2,int(s.get("spread_preference",0)),help=tr("spread_help"))
             # `avoid_doubles` is retained in the database for backward compatibility;
             # the new four-way workday-length selector is the resident-facing source of truth.
             avoid=(shift_len_pref==1)
-            wp=0; wep=0
             st.markdown(f"### {tr('calendar')}")
             include_bk=st.checkbox(tr("include_backups_calendar"),value=bool(s.get("include_backups_in_calendar",False)))
             st.markdown(f"### {tr('notifications')}"); st.caption(tr("notification_default"))
             notif=st.toggle(tr("notifications_on"),value=bool(s.get("notifications_on",True)))
             dl=deadline_for(year,month)
-            st.caption((f"Priminimų terminas šiam grafikui: {dl:%Y-%m-%d}." if lang=="LT" else f"Preference deadline for this schedule: {dl:%Y-%m-%d}."))
+            st.caption((f"Asmeniniai priminimai skaičiuojami iki šio grafiko pageidavimų termino: {dl:%Y-%m-%d}." if lang=="LT" else f"Personal reminders count down to this schedule’s preference deadline: {dl:%Y-%m-%d}."))
             backup_email=st.toggle(tr("backup_email_alerts"),value=bool(s.get("backup_email_alerts",True)))
             phone=st.text_input(tr("phone_optional"),value=s.get("phone_e164",""),placeholder="+3706XXXXXXX")
             backup_sms=st.toggle(tr("backup_sms_alerts"),value=bool(s.get("backup_sms_alerts",False)),disabled=True)
@@ -4377,49 +4454,6 @@ with tabs[pos]:
                             st.caption(f"{type(exc).__name__}: {exc}")
                     else:
                         flash_saved(tr("settings_saved"))
-        st.divider(); st.markdown(f"### {tr('long_term')}"); st.caption(tr("long_term_help"))
-        st.caption(
-            "Savaitgalio „Pageidauju dirbti“ leidžiamas kaip savanoriškas nepopuliarios pamainos pasirinkimas. "
-            "Pirmame mėnesyje be ankstesnio savaitgalių balanso sistema pirmiausia bando išnaudoti tokius savanorius, "
-            "o likusį nesavanorišką savaitgalių krūvį dalija tolygiai. Jei aukštesnės taisyklės neleidžia pageidavimo įvykdyti, "
-            "po grafiko sugeneravimo galima siūlyti asmeninį apsikeitimą."
-            if lang=="LT" else
-            "Weekend 'prefer to work' is allowed as volunteering for an unpopular duty. In the first month with no prior weekend history, "
-            "the engine first tries to use such volunteers and water-fills the remaining non-voluntary weekend burden. "
-            "If a higher rule prevents it, the resident can propose a personal swap after generation."
-        )
-        existing_rec={int(r["weekday"]):r for r in db.get_recurring_preferences(active_user)}
-        rule_to_label={"hard_unavailable":tr("rec_hard"),"soft_free":tr("rec_soft"),"preferred":tr("rec_preferred"),"none":tr("rec_none")}
-        label_to_rule={v:k for k,v in rule_to_label.items()}
-        block_to_label={"FULL":tr("full_day"),"AM":tr("morning"),"PM":tr("afternoon")}
-        label_to_block={v:k for k,v in block_to_label.items()}
-        rec_rows=[]
-        for wd_i in range(7):
-            rr=existing_rec.get(wd_i,{}); typ=rr.get("preference_type","none"); block=rr.get("block","FULL")
-            rec_rows.append({tr("weekday_name"):WEEKDAY_FULL[lang][wd_i],tr("recurring_rule"):rule_to_label.get(typ,tr("rec_none")),tr("recurring_time"):block_to_label.get(block,tr("full_day")),"_weekday":wd_i})
-        rec_df=pd.DataFrame(rec_rows)
-        edited=st.data_editor(rec_df,column_config={tr("recurring_rule"):st.column_config.SelectboxColumn(options=list(rule_to_label.values())),tr("recurring_time"):st.column_config.SelectboxColumn(options=list(block_to_label.values())),"_weekday":None},disabled=[tr("weekday_name")],hide_index=True,use_container_width=True,key=f"recurring_{active_user}_{lang}")
-        if st.button(tr("save_long_term"),type="primary"):
-            payload=[]; invalid_weekend_soft=[]
-            for _,r in edited.iterrows():
-                wd=int(r["_weekday"]); typ=label_to_rule.get(r[tr("recurring_rule")],"none"); block=label_to_block.get(r[tr("recurring_time")],"FULL")
-                # Weekend "Noriu laisvos" may not become a blanket escape from
-                # weekend burden. Weekend "Pageidauju dirbti" is intentionally
-                # accepted as an unpopular-duty volunteer signal.
-                if wd>=5 and typ=="soft_free":
-                    invalid_weekend_soft.append(WEEKDAY_FULL[lang][wd]); continue
-                payload.append({"weekday":wd,"preference_type":typ,"block":block})
-            if invalid_weekend_soft:
-                st.error(
-                    "Pasikartojantis savaitgalio „Noriu laisvos“ nepriimamas, nes perkeltų privalomą savaitgalių krūvį kitiems. "
-                    "Jei iš tikrųjų negalite dirbti kiekvieną tokį savaitgalį, naudokite RESIDENT HARD. "
-                    "Tačiau savaitgalio „Pageidauju dirbti“ LEIDŽIAMAS — tai laikoma savanorišku nepopuliarios pamainos pasirinkimu."
-                    if lang=="LT" else
-                    "Recurring weekend 'want off' is not accepted because it would shift unavoidable weekend burden to peers. "
-                    "Use RESIDENT HARD if you truly cannot work those weekends. Weekend 'prefer to work' IS allowed and is treated as volunteering for unpopular duty."
-                )
-            else:
-                db.save_recurring_preferences(active_user,payload); flash_saved(tr("long_term_saved"))
 pos+=1
 
 def _hard_error_explanation(raw, lang="LT"):

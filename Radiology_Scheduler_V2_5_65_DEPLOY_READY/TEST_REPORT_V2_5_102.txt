@@ -1,0 +1,52 @@
+V2.5.102 TEST REPORT
+=====================
+
+1. Python compile
+- app.py: PASS
+- db.py: PASS
+- scheduler_engine.py: PASS
+- notification_core.py: PASS
+- notification_worker.py: PASS
+
+2. Persistence contract
+- account_settings is keyed by resident initials, not year/month: PASS
+- preferences is explicitly filtered/saved by target year + month: PASS
+- recurring_preferences is keyed by resident + weekday and has no month key: PASS
+- load_people(year, month) combines current persistent account settings + persistent recurring preferences + only that month's preferences: PASS
+- month-specific SOFT requests override opposite recurring SOFT only for that month; recurring RESIDENT HARD remains hard: PASS
+
+3. UI structure
+- user-facing V3.0 badge/build line removed: PASS
+- Lithuanian title changed to "Rezidentų grafiko sistema": PASS
+- deadline card rendered only inside Preferences: PASS
+- long-term recurring preferences moved from Settings to Preferences: PASS
+- Settings explicitly explains that work-style choices persist into future non-frozen months: PASS
+- Preferences explicitly explains that month-specific requests reset next month while recurring preferences persist: PASS
+- reminder-start label/help rewritten as personal countdown notification timing with concrete example: PASS
+
+4. Persistent weekday/weekend work style
+- weekday_preference/weekend_preference are no longer zeroed by load_people/normalization: PASS
+- Settings preserves and saves both values: PASS
+- weekend preference is optimized in the day-pattern phase, where weekend dates are still movable: PASS
+- Saturday and Sunday structural water-fill remains raw 0-1; preference cannot widen it: PASS
+
+5. October 2026 solver regression
+Test input: otherwise neutral roster; PV = weekend preference +2 AND preferred workday length = 12h.
+Observed:
+- solve: PASS
+- HARD errors: 0
+- Saturday spread: 1
+- Sunday spread: 1
+- critical worst spread: 1
+- PV weekend assignments: 2, weekend setting score 100%
+- PV 12h double-days: 13, workday-length setting score 100%
+- prior V2.5.101 solver-maintenance behavior remained feasible under the same run: PASS
+
+6. Structural regression against V2.5.101
+- make_slots(2026-09): identical
+- make_slots(2026-10): identical
+- make_slots(2027-01): identical
+- DEFAULT_RULE_PROFILE: identical
+
+7. Database migration
+- No new migration required. Existing tables already separate account_settings, monthly preferences, and recurring_preferences by the required persistence scopes.

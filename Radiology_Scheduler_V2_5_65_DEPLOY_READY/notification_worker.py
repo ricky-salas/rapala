@@ -28,6 +28,15 @@ def _month_label(year: int, month: int) -> str:
     return f"{year} m. {names[month]}"
 
 
+def _lt_days_left_phrase(n: int) -> str:
+    n=int(n)
+    if n==1:
+        return "1 diena"
+    if 2<=n<=9:
+        return f"{n} dienos"
+    return f"{n} dienų"
+
+
 def _public_url() -> str:
     return str(os.environ.get("SCHEDULER_PUBLIC_URL", "") or "").strip()
 
@@ -115,7 +124,7 @@ def enqueue_automatic_events(sb, now_lt: datetime, dry_run: bool = False) -> int
         if left == 0:
             subject = f"Šiandien paskutinė diena pateikti {_month_label(year, month)} pageidavimus"
         else:
-            subject = f"Liko {left} d. pateikti {_month_label(year, month)} pageidavimus"
+            subject = f"Liko {_lt_days_left_phrase(left)} iki {_month_label(year, month)} pageidavimų pateikimo pabaigos"
         body = (
             f"Sveiki,\n\nJūsų {_month_label(year, month)} pageidavimai dar nepateikti. "
             f"Terminas: {cutoff.strftime('%Y-%m-%d %H:%M')} Lietuvos laiku.\n"

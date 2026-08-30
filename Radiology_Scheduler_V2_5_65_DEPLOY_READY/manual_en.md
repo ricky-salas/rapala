@@ -77,7 +77,7 @@ When the senior scheduler publishes and locks the schedule, the system prepares 
 
 ## 4. Settings, short-term, and long-term preferences
 
-Persistent Settings contain the resident's normal work-style choices, notifications, reminder start day, and email.
+Persistent Settings contain the resident's normal work-style choices, notifications, reminder start day, and email. They automatically apply to every future schedule that is not yet frozen and do not reset each month.
 
 ### Short-term monthly preferences
 
@@ -85,7 +85,7 @@ For a specific month a resident can enter whole-day / AM / PM hard unavailabilit
 
 ### Long-term recurring preferences
 
-A recurring preference is linked to a **weekday name** rather than a date in one month. For example, a resident can prefer to work every Tuesday, prefer every Thursday off, or be hard-unavailable every Monday morning. The rule is automatically expanded into each future month until the resident changes or removes it.
+A recurring preference is linked to a **weekday name** rather than a date in one month. It is edited in the **Preferences** tab below the month-specific form. For example, a resident can prefer to work every Tuesday, prefer every Thursday off, or be hard-unavailable every Monday morning. The rule is automatically expanded into each future month until the resident changes or removes it.
 
 A month-specific soft preference overrides an opposite recurring soft preference for that month. A recurring **hard** unavailability remains hard and cannot be overridden by a monthly soft request.
 
@@ -413,7 +413,7 @@ Preferences are optimized on two axes. **Vertically**, strict priority is: ABSOL
 | RESIDENT HARD | Unavailable — date, AM, PM, recurring | Zero losses first; if impossible, minimum total loss plus horizontal water-filling |
 | SOFT-1 | Want time off; structured double/recovery avoidance | Protect personal time and recovery first |
 | SOFT-2 | Want to work — exact date / AM / PM | Positive placement into desired work time |
-| SOFT-3 | Dispersed or clustered month | Overall month shape; generic weekend/weekday direction is no longer scored as SOFT in V2.5.52+ |
+| SOFT-3 | Persistent work style | Weekday/weekend direction, dispersed/clustered shape, and other work-style signals. **During SYSTEM generation**, weekend direction may only choose the upper/lower layer inside the locked Saturday/Sunday water-fill corridor; this SOFT choice alone cannot widen it. **After publication**, bilateral voluntary swaps may change the ACTUAL Saturday/Sunday distribution and widen its spread; the SYSTEM baseline is not rewritten and no next-month catch-up is created. |
 
 **Horizontally**, progressive filling / water-filling is used inside each rank. For request counts `2,2,2,4`, the engine first aims for `2,2,2,2`, then attempts the remaining two requests of the fourth resident. For `2,2,3,4`, it protects `2,2,2,2` first and only then optimizes the remaining `0,0,1,2`. Raw request volume therefore does not buy extra priority.
 

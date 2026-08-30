@@ -1,0 +1,28 @@
+V2.5.103 TEST REPORT
+=====================
+
+1. Python compile
+- app.py: PASS
+- db.py: PASS
+- scheduler_engine.py: PASS
+- notification_core.py: PASS
+- notification_worker.py: PASS
+
+2. Water-fill contract wording
+- Settings states Saturday/Sunday water-fill is a SYSTEM-generation constraint: PASS
+- Settings states bilateral voluntary swaps may widen ACTUAL after publication: PASS
+- Recurring-preference help states the same SYSTEM-versus-ACTUAL distinction: PASS
+- LT/EN manuals state the same distinction: PASS
+- no-next-month catch-up after ACTUAL divergence remains explicit: PASS
+
+3. Solver regression
+- scheduler_engine.py is byte-identical to V2.5.102 after normalizing only ENGINE_API_VERSION: PASS
+- therefore make_slots, objectives, constraints, validation, backup logic, fairness calculations and preference behavior are unchanged: PASS
+
+4. Version pairing
+- APP_VERSION: 2.5.103 SYSTEM WATER-FILL + ACTUAL SWAPS: PASS
+- EXPECTED_ENGINE_API_VERSION: 2.5.103: PASS
+- ENGINE_API_VERSION: 2.5.103: PASS
+
+5. Database
+- No V2.5.103 migration required: PASS
