@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.104"
+ENGINE_API_VERSION = "2.5.105"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -2108,9 +2108,8 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
     _ini_to_pi={p.initials:pi for pi,p in enumerate(people)}
     if all(ini in _ini_to_pi for ini in _PRIORITY_COLOCATION_GROUP):
         _priority_idx=[_ini_to_pi[ini] for ini in _PRIORITY_COLOCATION_GROUP]
-    _priority_blocks=[]
+    _priority_candidates_by_week={}
     if _priority_idx:
-        _week_candidates={}
         for d in range(1,ndays+1):
             dt=date(year,month,d); wk=dt-timedelta(days=dt.weekday())
             for block in ("AM","PM"):
@@ -2118,11 +2117,7 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
                     continue
                 centro_rows=[sl for sl in normal if sl.day==d and sl.block==block and sl.department.startswith("CENTRO RO ")]
                 if len(centro_rows)>=len(_priority_idx):
-                    _week_candidates.setdefault(wk,[]).append((d,block))
-        for wk in sorted(_week_candidates):
-            if len(_priority_blocks)>=_PRIORITY_COLOCATION_MAX_PER_MONTH:
-                break
-            _priority_blocks.append(sorted(_week_candidates[wk],key=lambda z:(z[0],0 if z[1]=="AM" else 1))[0])
+                    _priority_candidates_by_week.setdefault(wk,[]).append((d,block))
 
     volunteer_weekend_sps_const={}
     for pi,p in enumerate(people):
@@ -2140,7 +2135,7 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
                         c+=1
         volunteer_weekend_sps_const[pi]=int(c)
 
-    def attempt(critical_cap, noncritical_cap):
+    def attempt(critical_cap, noncritical_cap, attempt_seconds):
         mb=_V2564FastMB(); x={}
         for s in normal:
             for pi in range(n):
@@ -2179,13 +2174,41 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
                         co=dict(crit); co[hit]=-1.0
                         mb.constraint(co,0.0,np.inf)
 
-        # Materialize the high-priority shared blocks chosen by phase 1.
-        for d,block in _priority_blocks:
-            for pi in _priority_idx:
-                co={v:1.0 for (ppi,sid),v in x.items() if ppi==pi and byid[sid].day==d and byid[sid].block==block and byid[sid].department.startswith("CENTRO RO ")}
-                if not co:
-                    return None, type("_NoRes",(),{"x":None,"status":2,"message":"priority Centro RO block unavailable"})()
-                mb.constraint(co,1.0,1.0)
+        # V2.5.105: the private high-priority co-location request is optimized
+        # JOINTLY with post feasibility instead of being hard-materialized before
+        # post water-fill. This implements the intended MAX 4 -> else 3 -> else 2
+        # semantics. A candidate week counts only when all three residents are
+        # actually placed in CENTRO RO in the same AM/PM block. Post water-fill and
+        # HARD feasibility remain constraints, so an impossible fourth co-location
+        # automatically falls back to the maximum feasible lower count instead of
+        # making the whole post model infeasible.
+        _coloc_week_vars=[]
+        for wk,cands in sorted(_priority_candidates_by_week.items()):
+            _cvars=[]
+            for d,block in sorted(cands,key=lambda z:(z[0],0 if z[1]=="AM" else 1)):
+                cv=mb.var(0.0,1.0,True,cost=0.0)
+                _cvars.append(cv)
+                for pi in _priority_idx:
+                    centro_vars={v:1.0 for (ppi,sid),v in x.items()
+                                 if ppi==pi and byid[sid].day==d and byid[sid].block==block
+                                 and byid[sid].department.startswith("CENTRO RO ")}
+                    if not centro_vars:
+                        mb.constraint({cv:1.0},0.0,0.0)
+                        continue
+                    co={cv:1.0}
+                    for v in centro_vars: co[v]=co.get(v,0.0)-1.0
+                    mb.constraint(co,-np.inf,0.0)
+            if _cvars:
+                wv=mb.var(0.0,1.0,True,cost=-1000000.0)
+                _coloc_week_vars.append(wv)
+                for cv in _cvars:
+                    mb.constraint({cv:1.0,wv:-1.0},-np.inf,0.0)
+                co={wv:1.0}
+                for cv in _cvars: co[cv]=co.get(cv,0.0)-1.0
+                mb.constraint(co,-np.inf,0.0)
+                mb.constraint({cv:1.0 for cv in _cvars},-np.inf,1.0)
+        if _coloc_week_vars:
+            mb.constraint({wv:1.0 for wv in _coloc_week_vars},-np.inf,float(_PRIORITY_COLOCATION_MAX_PER_MONTH))
 
         cats=[c for c in ROTATION_CATEGORIES if c!="Onko RO"]
         expr={}
@@ -2258,7 +2281,7 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
                 co2={k:-v for k,v in expr[(pi,cat)].items()}; co2[dev]=co2.get(dev,0.0)-1.0
                 mb.constraint(co2,-np.inf,-equal_share-offset)
 
-        res=mb.solve(seconds)
+        res=mb.solve(attempt_seconds)
         if res.x is None:
             return None,res
 
@@ -2280,8 +2303,14 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
     # mathematically proven infeasible by HiGHS.
     trials=[(1,1),(1,2),(1,3),(2,3)]
     logs=[]
+    # V2.5.105: `seconds` is a TOTAL phase budget, not a per-corridor budget.
+    # The old loop could spend up to 4× the advertised time and push Streamlit
+    # generation into the legacy rescue path. Most feasible months solve in the
+    # first 0-1 corridor, so give each trial a bounded slice and fail closed on an
+    # unknown/timeout result instead of silently widening fairness.
+    per_trial=max(4.0,float(seconds)/float(max(1,len(trials))))
     for cc,nc in trials:
-        assignments,res=attempt(cc,nc)
+        assignments,res=attempt(cc,nc,per_trial)
         logs.append({
             "critical_cap":cc,"noncritical_cap":nc,
             "status":int(getattr(res,"status",99)),"incumbent":bool(assignments),
@@ -2295,15 +2324,237 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
     return None,None,None,logs,None
 
 
+
+def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_gaps, seconds=45.0):
+    """Bounded post-label solver used by V2.5.105 production generation.
+
+    The prior post solver mixed structural feasibility with many deviation auxiliaries.
+    On some valid phase-1 work patterns HiGHS could spend a very long time proving a
+    tight corridor, pushing the app into the legacy rescue model. This formulation
+    keeps the same structural contract but is deliberately smaller:
+      * fixed phase-1 AM/PM/FULL blocks are preserved exactly;
+      * every open post is filled once;
+      * SPS RO/SPS UG and ordinary post water-fill are tried in the same ascending
+        certified corridors;
+      * weekend-volunteered SPS RO exposure is offset from the fairness burden;
+      * SR+GE+ŠR CENTRO RO co-location is maximized up to four distinct weeks, but
+        automatically degrades 4 -> 3 -> 2 -> 1 if a higher count conflicts with
+        post feasibility;
+      * Onko-zero residents are preferentially given at least one of the remaining
+        Mammography assignments.
+
+    No HARD or water-fill rule is relaxed merely because of a timeout. If the tight
+    corridor returns an unknown/time-limit result with no incumbent, the function
+    returns no schedule rather than silently widening it.
+    """
+    n=len(people); ndays=calendar.monthrange(year,month)[1]
+    normal=[s for s in slots if not s.blocked and s.idx not in fixed_gaps and s.department!="Onko RO centre"]
+    byid={s.idx:s for s in normal}
+    baseline_weekend_volunteer_mode=bool(pattern.get("baseline_weekend_volunteer_mode",False))
+
+    volunteer_weekend_sps_const={}
+    for pi,p in enumerate(people):
+        c=0
+        if baseline_weekend_volunteer_mode:
+            for d in sorted({s.day for s in normal if s.weekday>=5 and rotation_category(s)=="SPS RO"}):
+                if d in p.preferred:
+                    if bool(pattern["am"][(pi,d)] or pattern["pm"][(pi,d)]): c+=1
+                else:
+                    if d in p.preferred_am and pattern["am"][(pi,d)]: c+=1
+                    if d in p.preferred_pm and pattern["pm"][(pi,d)]: c+=1
+        volunteer_weekend_sps_const[pi]=int(c)
+
+    _onko_zero_indices=[pi for pi in range(n) if not any(bool(pattern["full"][(pi,d)]) for d in range(1,ndays+1))]
+    _ini_to_pi={p.initials:pi for pi,p in enumerate(people)}
+    _priority_idx=[_ini_to_pi[i] for i in _PRIORITY_COLOCATION_GROUP if i in _ini_to_pi]
+    if len(_priority_idx)!=len(_PRIORITY_COLOCATION_GROUP): _priority_idx=[]
+    _priority_candidates_by_week={}
+    if _priority_idx:
+        for d in range(1,ndays+1):
+            wk=date(year,month,d)-timedelta(days=date(year,month,d).weekday())
+            for block in ("AM","PM"):
+                if not all(bool(pattern[block.lower()][(pi,d)]) for pi in _priority_idx): continue
+                rows=[sl for sl in normal if sl.day==d and sl.block==block and sl.department.startswith("CENTRO RO ")]
+                if len(rows)>=len(_priority_idx): _priority_candidates_by_week.setdefault(wk,[]).append((d,block))
+
+    cats=[c for c in ROTATION_CATEGORIES if c!="Onko RO"]
+    cat_slot_counts={cat:sum(1 for sl in normal if rotation_category(sl)==cat) for cat in cats}
+    trials=[(1,1),(1,2),(1,3),(2,3)]
+    total_seconds=max(8.0,float(seconds)); per_trial=max(4.0,total_seconds/max(1,len(trials)))
+    logs=[]
+
+    for critical_cap,noncritical_cap in trials:
+        mb=_V2564FastMB(); x={}
+        for sl in normal:
+            for pi in range(n):
+                works=pattern["am"][(pi,sl.day)] if sl.block=="AM" else pattern["pm"][(pi,sl.day)]
+                if not works: continue
+                cost=(((pi+1)*37+(sl.idx+1)*13)%101)*1e-7
+                if pattern["am"][(pi,sl.day)] and pattern["pm"][(pi,sl.day)]:
+                    cost += (-0.02 if rotation_category(sl) in ("SPS RO","SPS UG") else 0.002)
+                x[(pi,sl.idx)]=mb.var(cost=cost)
+
+        # Slot coverage and fixed resident work blocks.
+        for sl in normal:
+            co={v:1.0 for (pi,sid),v in x.items() if sid==sl.idx}
+            if not co:
+                logs.append({"critical_cap":critical_cap,"noncritical_cap":noncritical_cap,"status":2,"reason":"unfillable slot"})
+                break
+            mb.constraint(co,1.0,1.0)
+        else:
+            for pi in range(n):
+                for d in range(1,ndays+1):
+                    for block in ("AM","PM"):
+                        need=1.0 if (pattern["am"][(pi,d)] if block=="AM" else pattern["pm"][(pi,d)]) else 0.0
+                        co={v:1.0 for (ppi,sid),v in x.items() if ppi==pi and byid[sid].day==d and byid[sid].block==block}
+                        mb.constraint(co,need,need)
+
+            expr={(pi,cat):{v:1.0 for (ppi,sid),v in x.items() if ppi==pi and rotation_category(byid[sid])==cat}
+                  for pi in range(n) for cat in cats}
+
+            # Structural post corridors.
+            for cat in cats:
+                total=int(cat_slot_counts.get(cat,0));
+                if total<=0: continue
+                cap=critical_cap if cat in CRITICAL_ROTATION_CATEGORIES else noncritical_cap
+                adjusted=(baseline_weekend_volunteer_mode and cat=="SPS RO")
+                offsets={pi:(int(volunteer_weekend_sps_const.get(pi,0)) if adjusted else 0) for pi in range(n)}
+                fair_total=total-sum(offsets.values()) if adjusted else total
+                if fair_total<0: fair_total=0
+                if int(cap)<=1:
+                    lo=fair_total//max(1,n); hi=int(math.ceil(float(fair_total)/float(max(1,n))))
+                    for pi in range(n):
+                        mb.constraint(expr[(pi,cat)],float(lo+offsets[pi]),float(hi+offsets[pi]))
+                else:
+                    # Pairwise fair-count corridor: |(raw_i-off_i)-(raw_j-off_j)| <= cap.
+                    for i in range(n):
+                        for j in range(i+1,n):
+                            co=dict(expr[(i,cat)])
+                            for v,c in expr[(j,cat)].items(): co[v]=co.get(v,0.0)-c
+                            shift=float(offsets[i]-offsets[j])
+                            mb.constraint(co,-float(cap)+shift,float(cap)+shift)
+
+            # High-priority co-location: maximize feasible distinct weeks, max four.
+            coloc_week_vars=[]
+            for wk,cands in sorted(_priority_candidates_by_week.items()):
+                cvars=[]
+                for d,block in sorted(cands,key=lambda z:(z[0],0 if z[1]=="AM" else 1)):
+                    cv=mb.var(0.0,1.0,True,cost=0.0); cvars.append(cv)
+                    for pi in _priority_idx:
+                        cvs={v:1.0 for (ppi,sid),v in x.items() if ppi==pi and byid[sid].day==d and byid[sid].block==block and byid[sid].department.startswith("CENTRO RO ")}
+                        if not cvs:
+                            mb.constraint({cv:1.0},0.0,0.0)
+                        else:
+                            co={cv:1.0}
+                            for v in cvs: co[v]=co.get(v,0.0)-1.0
+                            mb.constraint(co,-np.inf,0.0)
+                if cvars:
+                    wv=mb.var(0.0,1.0,True,cost=-10000.0); coloc_week_vars.append(wv)
+                    for cv in cvars: mb.constraint({cv:1.0,wv:-1.0},-np.inf,0.0)
+                    co={wv:1.0}
+                    for cv in cvars: co[cv]=co.get(cv,0.0)-1.0
+                    mb.constraint(co,-np.inf,0.0)
+                    mb.constraint({cv:1.0 for cv in cvars},-np.inf,1.0)
+            if coloc_week_vars:
+                mb.constraint({wv:1.0 for wv in coloc_week_vars},-np.inf,float(_PRIORITY_COLOCATION_MAX_PER_MONTH))
+
+            # Onko-zero -> Mammography first exposure, after structural corridor.
+            mammo_seen=[]; mam_total=int(cat_slot_counts.get("Mamografijos",0) or 0)
+            if mam_total>0:
+                for pi in _onko_zero_indices:
+                    me=expr.get((pi,"Mamografijos"),{})
+                    if not me: continue
+                    sv=mb.var(0.0,1.0,True,cost=-50.0); mammo_seen.append(sv)
+                    co=dict(me); co[sv]=co.get(sv,0.0)-1.0
+                    mb.constraint(co,0.0,np.inf)
+                    co=dict(me); co[sv]=co.get(sv,0.0)-float(mam_total)
+                    mb.constraint(co,-np.inf,0.0)
+
+            res=mb.solve(per_trial,mip_gap=0.0)
+            status=int(getattr(res,"status",99)); has=bool(res.x is not None)
+            logs.append({"critical_cap":critical_cap,"noncritical_cap":noncritical_cap,"status":status,"incumbent":has,"solver":"V25105_RESILIENT_POST"})
+            if has:
+                assignments={}
+                onko_by_day={sl.day:sl for sl in slots if sl.department=="Onko RO centre" and not sl.blocked and sl.idx not in fixed_gaps}
+                for pi,p in enumerate(people):
+                    for d in range(1,ndays+1):
+                        if pattern["full"][(pi,d)]:
+                            os=onko_by_day.get(d)
+                            if os is None: return None,None,None,logs,None
+                            assignments[os.idx]=p.initials
+                for (pi,sid),v in x.items():
+                    if float(res.x[v])>0.5: assignments[sid]=people[pi].initials
+                return assignments,critical_cap,noncritical_cap,logs,float(getattr(res,"fun",0.0) or 0.0)
+            # Only proven infeasibility permits a wider corridor.
+            if status!=2:
+                return None,None,None,logs,None
+            continue
+        # broke because a slot had no eligible worker in this fixed pattern
+        return None,None,None,logs,None
+    return None,None,None,logs,None
+
 def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_snapshot, time_limit=90.0):
-    """Fast primary generation path. Returns None so the legacy solver can rescue edge cases."""
+    """Primary fairness-first generator with bounded automatic retries.
+
+    V2.5.105 fixes a production failure mode where the fast two-phase model could
+    time out without an incumbent on a slower Streamlit worker and immediately fall
+    into the much larger legacy rescue MILP. The legacy model could then report an
+    alarming ``ABSOLUTE HARD / COVERAGE FEASIBILITY FAILED`` even though the same
+    request set is feasible in the intended two-phase architecture.
+
+    A timeout/no-incumbent is never treated as proof of infeasibility. Each fast
+    phase therefore gets one focused retry with a larger budget before the caller
+    considers any legacy rescue path. This changes solver reliability only; it does
+    not relax HARD, exact workload, Onko parity, weekend preference semantics, or
+    post water-fill rules.
+    """
+    retry_trace=[]
     _fixed_legacy,gap_meta,gap_errors=plan_distributed_gaps(year,month,people,slots,targets)
     if gap_errors: return None
-    fixed_gaps=_v2564_choose_fixed_gaps(year,month,slots,gap_meta,seconds=min(5.0,max(2.0,time_limit*0.05)))
+
+    gap_first=min(12.0,max(8.0,time_limit*0.07))
+    fixed_gaps=_v2564_choose_fixed_gaps(year,month,slots,gap_meta,seconds=gap_first)
+    if fixed_gaps is None:
+        gap_retry=min(20.0,max(12.0,time_limit*0.10))
+        retry_trace.append({"phase":"fixed_gaps","first_seconds":round(gap_first,1),"retry_seconds":round(gap_retry,1)})
+        fixed_gaps=_v2564_choose_fixed_gaps(year,month,slots,gap_meta,seconds=gap_retry)
     if fixed_gaps is None: return None
-    pattern=_v2564_work_pattern(year,month,people,slots,targets,fixed_gaps,seconds=min(60.0,max(20.0,time_limit*0.45)))
+
+    work_first=min(30.0,max(22.0,time_limit*0.18))
+    pattern=_v2564_work_pattern(year,month,people,slots,targets,fixed_gaps,seconds=work_first)
+    if pattern is None:
+        work_retry=min(50.0,max(35.0,time_limit*0.25))
+        retry_trace.append({"phase":"work_pattern","first_seconds":round(work_first,1),"retry_seconds":round(work_retry,1)})
+        pattern=_v2564_work_pattern(year,month,people,slots,targets,fixed_gaps,seconds=work_retry)
     if pattern is None: return None
-    assigned,critical_cap,noncritical_cap,post_log,post_obj=_v2564_assign_posts(year,month,people,slots,pattern,fixed_gaps,seconds=min(45.0,max(15.0,time_limit*0.35)))
+
+    post_first=min(45.0,max(15.0,time_limit*0.35))
+    assigned,critical_cap,noncritical_cap,post_log,post_obj=_v25105_assign_posts_resilient(year,month,people,slots,pattern,fixed_gaps,seconds=post_first)
+    if assigned is None:
+        # A phase-1 incumbent can satisfy every date/block preference yet be awkward
+        # to label with the full post water-fill matrix. Re-solving the same post
+        # model longer does not fix that structural coupling. Instead generate one
+        # diversified, shorter phase-1 incumbent (same HARD + preference semantics)
+        # and immediately test its post feasibility. This recovered the real
+        # September request set that triggered the production error while keeping
+        # VL's requested Sundays and all HARD constraints intact.
+        rescue_work=min(30.0,max(22.0,time_limit*0.18))
+        retry_trace.append({"phase":"post_feasibility_pattern_rescue","seconds":round(rescue_work,1)})
+        rescue_pattern=_v2564_work_pattern(year,month,people,slots,targets,fixed_gaps,seconds=rescue_work)
+        if rescue_pattern is not None:
+            rescue_post=min(40.0,max(20.0,time_limit*0.20))
+            assigned2,cc2,nc2,post_log2,post_obj2=_v25105_assign_posts_resilient(
+                year,month,people,slots,rescue_pattern,fixed_gaps,seconds=rescue_post
+            )
+            post_log=list(post_log or [])+[{"pattern_rescue":True,"seconds":round(rescue_post,1)}]+list(post_log2 or [])
+            if assigned2 is not None:
+                pattern=rescue_pattern
+                assigned,critical_cap,noncritical_cap,post_obj=assigned2,cc2,nc2,post_obj2
+    if assigned is None:
+        post_retry=min(60.0,max(30.0,time_limit*0.30))
+        retry_trace.append({"phase":"post_assignment_final_retry","seconds":round(post_retry,1)})
+        assigned,critical_cap,noncritical_cap,post_log2,post_obj=_v25105_assign_posts_resilient(year,month,people,slots,pattern,fixed_gaps,seconds=post_retry)
+        post_log=list(post_log or [])+[{"final_retry":True,"seconds":round(post_retry,1)}]+list(post_log2 or [])
     if assigned is None: return None
     stats=validate_schedule(year,month,people,slots,assigned,targets)
     g=stats.setdefault("global",{})
@@ -2339,6 +2590,8 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "post_waterfill_exchange_scope":"ALL_FIXED_AM_PM_POST_LABELS_JOINTLY; TWO_WAY_AND_MULTIWAY_CYCLES_IMPLICIT",
         "generation_quality_gate_passed":True,
         "generation_quality_issues":[],
+        "v25105_fast_retry_trace":list(retry_trace),
+        "v25105_fast_retry_used":bool(retry_trace),
         "resident_hard_min_total_found":int(pattern.get("resident_hard_min_total",0)),
         "resident_hard_minimum_proven":bool(pattern.get("resident_hard_minimum_proven",False)),
         "resident_hard_current_max_lock":int(pattern.get("resident_hard_max_loss",0)),
@@ -2440,6 +2693,25 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
             targets=dict(fast_result.targets),
             stats=fast_result.stats,
             objective_value=fast_result.objective_value,
+            request_snapshot=request_snapshot,
+        )
+
+    # V2.5.105: preference-aware weekend semantics are implemented and validated
+    # in the two-phase architecture. If that model still returns no incumbent after
+    # its automatic retries, do NOT reinterpret a timeout as an ABSOLUTE-HARD
+    # contradiction by dropping into the older all-in-one rescue model. Preserve any
+    # existing draft at the UI layer and report a retryable solver failure instead.
+    _has_weekend_positive_request=any(
+        any(date(year,month,int(d)).weekday()>=5 for d in (set(p.preferred)|set(p.preferred_am)|set(p.preferred_pm)))
+        for p in people
+    )
+    if _has_weekend_positive_request:
+        return SolveResult(
+            False,
+            "PREFERENCE-AWARE GENERATION DID NOT FINISH AFTER AUTOMATIC RETRIES. "
+            "The request set was not proven infeasible and no HARD rule is being blamed. "
+            "Existing draft, if any, remains unchanged; run generation again if needed.",
+            targets=fast_targets,
             request_snapshot=request_snapshot,
         )
 

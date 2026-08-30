@@ -1,0 +1,46 @@
+V2.5.105 TEST REPORT — RESILIENT PREFERENCE-AWARE SOLVE
+=======================================================
+
+1. Compile
+- app.py: PASS
+- db.py: PASS
+- scheduler_engine.py: PASS
+- notification_core.py: PASS
+- notification_worker.py: PASS
+
+2. September 2026 active-request regression
+- 16-resident roster and active September request structure reproduced.
+- Generation: PASS.
+- HARD errors: 0.
+- SPS RO adjusted spread: 0.
+- SPS UG spread: 1.
+- Saturday adjusted spread: 1.
+- Sunday adjusted spread: 1.
+- Friday spread: 1.
+- Worst ordinary non-Onko post spread: 1.
+
+3. Weekend positive-request regression
+- VL effective Sunday requests: 4.
+- Honored: 4/4.
+- VL raw Sundays: 4.
+- VL voluntary Sundays: 4.
+- VL fairness Sunday burden: 0.
+- Interpretation: voluntary requested weekend work may widen RAW exposure without being counted as involuntary fairness burden.
+
+4. Onko-zero -> Mammography regression
+- Five residents had zero Onko RO in the tested solution.
+- All five received at least one Mammography exposure.
+- Mammography remained within ordinary post spread 1.
+
+5. Generation-failure semantics
+- Primary post-label model uses bounded total phase time.
+- Timeout/no-incumbent does not prove infeasibility and cannot trigger a false ABSOLUTE-HARD diagnosis in preference-aware mode.
+- Existing draft preservation path: PASS by code inspection.
+
+6. Version pairing
+- APP_VERSION = 2.5.105 RESILIENT PREFERENCE-AWARE SOLVE: PASS
+- EXPECTED_ENGINE_API_VERSION = 2.5.105: PASS
+- ENGINE_API_VERSION = 2.5.105: PASS
+
+7. Database
+- No V2.5.105 migration required.

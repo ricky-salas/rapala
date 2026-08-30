@@ -1,0 +1,12 @@
+V2.5.105 — RESILIENT PREFERENCE-AWARE GENERATION
+=================================================
+
+Base: V2.5.104.
+
+Locked correction:
+- Preference-aware weekend allocation remains active: explicit weekend “Pageidauju dirbti” may increase RAW SYSTEM exposure while the remaining non-voluntary Saturday/Sunday burden is water-filled.
+- A timeout/no-incumbent is never treated as proof of HARD infeasibility.
+- The primary two-phase generator uses bounded retries and a smaller post-label feasibility model before any legacy rescue.
+- Post-label search time is a total phase budget, not a separate full budget for every fairness corridor.
+- If preference-aware generation still cannot obtain a verified candidate after retries, the app preserves the existing draft and reports a retryable solve failure rather than falsely blaming ABSOLUTE HARD.
+- Existing V2.5.96 SYSTEM/ACTUAL separation, no catch-up, exact workload, Onko parity/recovery, required coverage, position-based backups, Saturday/Sunday semantics, and post water-fill remain unchanged.

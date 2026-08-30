@@ -45,8 +45,8 @@ import db
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.104 PREFERENCE-AWARE WATER-FILL + ONKO-ZERO MAMMO"
-EXPECTED_ENGINE_API_VERSION = "2.5.104"
+APP_VERSION = "2.5.105 RESILIENT PREFERENCE-AWARE SOLVE"
+EXPECTED_ENGINE_API_VERSION = "2.5.105"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "SR"
 RESEARCHER_INITIALS = "ŠR"
@@ -4595,7 +4595,17 @@ if senior_mode:
                             )
                         st.rerun()
                     else:
-                        st.error(result.message if getattr(result,"message",None) else tr("no_solution"))
+                        _msg=result.message if getattr(result,"message",None) else tr("no_solution")
+                        if "PREFERENCE-AWARE GENERATION DID NOT FINISH" in str(_msg):
+                            st.warning(
+                                "Solveris neįrodė, kad grafikas neįmanomas — jis tiesiog negavo patvirtinto kandidato net po automatinio retry. "
+                                "Esamas juodraštis, jei yra, nepakeistas. Galima spausti GENERUOTI / PERKURTI dar kartą."
+                                if lang=="LT" else
+                                "The solver did not prove the schedule infeasible; it simply did not obtain a verified candidate even after automatic retry. "
+                                "Any existing draft is preserved. You can run GENERATE / REBUILD again."
+                            )
+                        else:
+                            st.error(_msg)
         draft_for_improve=db.load_schedule(year,month,"draft")
         if draft_for_improve:
             current_draft=refresh_result_payload(draft_for_improve,year,month,use_actual_backups=False)
