@@ -24,31 +24,50 @@ def _data(resp):
     return getattr(resp, "data", None) or []
 
 
-def _retry_db(fn, attempts: int = 3, base_delay: float = 0.25):
-    """Retry transient Supabase/httpx read failures instead of crashing the whole Streamlit page."""
+def _is_transient_db_error(exc: Exception) -> bool:
+    """Classify short-lived network/protocol failures from Supabase/httpx/postgrest."""
+    msg=str(exc).lower()
+    cls=exc.__class__.__name__.lower()
+    mod=getattr(exc.__class__,"__module__","").lower()
+    return (
+        cls in {"remoteprotocolerror","readerror","connecterror","connecttimeout","readtimeout","writetimeout","pooltimeout"}
+        or "remoteprotocolerror" in cls
+        or "protocolerror" in cls
+        or "httpx" in mod and any(x in cls for x in ("read","connect","timeout","protocol"))
+        or "resource temporarily unavailable" in msg
+        or "readerror" in msg
+        or "connecterror" in msg
+        or "timed out" in msg
+        or "timeout" in msg
+        or "server disconnected" in msg
+        or "peer closed connection" in msg
+        or "connection reset" in msg
+        or "connection aborted" in msg
+        or "incomplete message" in msg
+        or "remote protocol" in msg
+    )
+
+
+def _retry_db(fn, attempts: int = 5, base_delay: float = 0.20):
+    """Retry transient Supabase/httpx failures with short exponential backoff."""
     last=None
-    for attempt in range(attempts):
+    for attempt in range(max(1,int(attempts))):
         try:
             return fn()
         except Exception as exc:
             last=exc
-            msg=str(exc).lower()
-            transient=(
-                "resource temporarily unavailable" in msg
-                or "readerror" in msg
-                or "connecterror" in msg
-                or "timed out" in msg
-                or "timeout" in msg
-                or "server disconnected" in msg
-            )
-            if (not transient) or attempt==attempts-1:
+            if (not _is_transient_db_error(exc)) or attempt>=int(attempts)-1:
                 raise
-            time.sleep(base_delay*(2**attempt))
+            time.sleep(float(base_delay)*(2**attempt))
     raise last
 
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
+
+
+_ACTIVE_RULE_PROFILE_CACHE: Optional[dict] = None
+_DIRECTORY_CACHE: Optional[Dict[str, dict]] = None
 
 
 def _parse_dt(value):
@@ -66,19 +85,50 @@ def init_db(default_manual_lt: str, default_manual_en: str, default_people: list
     _default_manuals["EN"] = default_manual_en
 
 
-def current_profile() -> Optional[dict]:
-    rows = _data(_retry_db(lambda: client().table("user_profiles").select("user_id,initials,email,approved,preferred_language,access_role").limit(1).execute()))
-    return rows[0] if rows else None
+def current_profile(expected_user_id: Optional[str] = None) -> Optional[dict]:
+    """Return ONLY the profile bound to auth.uid() through a dedicated RPC.
+
+    The RPC itself ignores senior visibility and derives identity exclusively from
+    auth.uid(). `expected_user_id` is an additional client-side consistency check.
+    """
+    uid=str(expected_user_id or "").strip()
+    rows=_data(_retry_db(lambda:
+        client().rpc("current_identity_v2589",{}).execute()
+    ))
+    if len(rows)>1:
+        raise RuntimeError("IDENTITY_INVARIANT_BROKEN: multiple identity rows")
+    row=rows[0] if rows else None
+    if row and uid and str(row.get("user_id") or "")!=uid:
+        raise RuntimeError("IDENTITY_INVARIANT_BROKEN: auth UID/profile UID mismatch")
+    return row
 
 
 def auth_user_id():
-    p=current_profile()
-    return p.get("user_id") if p else None
+    try:
+        auth_resp=client().auth.get_user()
+        auth_user=getattr(auth_resp,"user",None)
+        return str(getattr(auth_user,"id","") or "") or None
+    except Exception:
+        return None
 
 
 def directory() -> Dict[str, dict]:
-    rows = _data(_retry_db(lambda: client().table("resident_directory").select("initials,full_name,role,target_adjustment,color,active").eq("active", True).execute()))
-    return {r["initials"]: r for r in rows}
+    global _DIRECTORY_CACHE
+    try:
+        rows = _data(_retry_db(lambda:
+            client().table("resident_directory")
+            .select("initials,full_name,role,target_adjustment,color,active")
+            .eq("active", True)
+            .execute()
+        ))
+        data={r["initials"]:r for r in rows}
+        if data:
+            _DIRECTORY_CACHE={k:dict(v) for k,v in data.items()}
+        return data
+    except Exception:
+        if _DIRECTORY_CACHE is not None:
+            return {k:dict(v) for k,v in _DIRECTORY_CACHE.items()}
+        raise
 
 
 def claim_profile(initials: str, invite_code: str) -> dict:
@@ -91,10 +141,8 @@ def claim_observer_profile(invite_code: str) -> dict:
     return rows[0] if rows else {}
 
 
-def save_preference(year: int, month: int, initials: str, payload: dict):
-    old = get_preference(year, month, initials) or {}
-    row = {
-        "year": int(year), "month": int(month), "initials": initials,
+def _preference_payload_json(payload: dict) -> dict:
+    return {
         "unavailable": sorted(payload.get("unavailable", [])),
         "unavailable_am": sorted(payload.get("unavailable_am", [])),
         "unavailable_pm": sorted(payload.get("unavailable_pm", [])),
@@ -107,21 +155,46 @@ def save_preference(year: int, month: int, initials: str, payload: dict):
         "preferred": sorted(payload.get("preferred", [])),
         "preferred_am": sorted(payload.get("preferred_am", [])),
         "preferred_pm": sorted(payload.get("preferred_pm", [])),
-        "note": payload.get("note", ""),
-        "prior_weekend_count": int(old.get("prior_weekend_count", payload.get("prior_weekend_count", 0))),
-        # V2.5.5: old generic credit selector is frozen at zero.
-        "backup_credits_to_use": 0,
-        "backup_credits_am_to_use": int(payload.get("backup_credits_am_to_use", old.get("backup_credits_am_to_use", 0))),
-        "backup_credits_pm_to_use": int(payload.get("backup_credits_pm_to_use", old.get("backup_credits_pm_to_use", 0))),
+        "note": str(payload.get("note", "") or ""),
+        "backup_credits_am_to_use": int(payload.get("backup_credits_am_to_use", 0) or 0),
+        "backup_credits_pm_to_use": int(payload.get("backup_credits_pm_to_use", 0) or 0),
         "backup_credits_night_to_use": 0,
-        "updated_at": _now(),
     }
-    client().table("preferences").upsert(row, on_conflict="year,month,initials").execute()
+
+
+def save_preference(year: int, month: int, initials: str, payload: dict):
+    """Save the authenticated resident's own preferences before the server cutoff.
+
+    `initials` is retained in the Python signature for compatibility, but the RPC
+    resolves identity from auth.uid() and rejects any cross-account write.
+    """
+    rows=_data(_retry_db(lambda: client().rpc("save_my_preferences_v2595", {
+        "p_year": int(year),
+        "p_month": int(month),
+        "p_payload": _preference_payload_json(payload),
+    }).execute()))
+    return rows[0] if isinstance(rows,list) and rows else (rows if isinstance(rows,dict) else {})
+
+
+def save_preference_for_resident_v2595(year: int, month: int, target_initials: str, payload: dict, reason: str):
+    """Lifecycle-operator manual entry for another resident (or a late self-entry).
+
+    The backend authorizes SR/ŠR, preserves account identity, and writes an audit row.
+    """
+    rows=_data(_retry_db(lambda: client().rpc("save_preferences_for_resident_v2595", {
+        "p_year": int(year),
+        "p_month": int(month),
+        "p_target_initials": str(target_initials),
+        "p_payload": _preference_payload_json(payload),
+        "p_reason": str(reason or ""),
+    }).execute()))
+    return rows[0] if isinstance(rows,list) and rows else (rows if isinstance(rows,dict) else {})
+
+
 
 
 def set_prior_weekend_count(year: int, month: int, initials: str, count: int):
-    old = get_preference(year, month, initials) or {}
-    save_preference(year, month, initials, {**old, "prior_weekend_count": int(count)})
+    raise RuntimeError("set_prior_weekend_count is retired in V2.5.95; cumulative weekend history is authoritative.")
 
 
 def _pref_from_row(row):
@@ -144,6 +217,10 @@ def _pref_from_row(row):
         "backup_credits_am_to_use": int(row.get("backup_credits_am_to_use", 0)),
         "backup_credits_pm_to_use": int(row.get("backup_credits_pm_to_use", 0)),
         "backup_credits_night_to_use": int(row.get("backup_credits_night_to_use", 0)),
+        "submission_source": str(row.get("submission_source") or "resident"),
+        "submitted_at": row.get("submitted_at") or row.get("updated_at", ""),
+        "submitted_by_user_id": row.get("submitted_by_user_id"),
+        "submitted_by_initials": row.get("submitted_by_initials") or "",
         "updated_at": row.get("updated_at", ""),
     }
 
@@ -158,16 +235,37 @@ def all_preferences(year: int, month: int) -> Dict[str, dict]:
     return {r["initials"]: _pref_from_row(r) for r in rows}
 
 
+def auto_submit_zero_preferences_v2594(year: int, month: int, cutoff_iso: str) -> dict:
+    """After the exact preference cutoff, create zero-request submissions for missing active residents.
+
+    Server-side authorization and cutoff enforcement remain authoritative.
+    """
+    rows = _data(_retry_db(lambda: client().rpc("auto_submit_zero_preferences_v2594", {
+        "p_year": int(year),
+        "p_month": int(month),
+        "p_cutoff": str(cutoff_iso),
+    }).execute()))
+    if isinstance(rows, dict):
+        return rows
+    if isinstance(rows, list) and rows:
+        return rows[0] if isinstance(rows[0], dict) else {"ok": True, "result": rows[0]}
+    return {"ok": True, "count": 0, "initials": []}
+
+
 def get_account_settings(initials: str) -> dict:
     rows = _data(_retry_db(lambda: client().table("account_settings").select("*").eq("initials", initials).limit(1).execute()))
     if not rows:
         return {"email":"", "weekday_preference":0, "weekend_preference":0, "holiday_preference":0, "spread_preference":0,
-                "avoid_doubles":False, "notifications_on":True, "reminder_start_day":8,
+                "shift_length_preference":0, "avoid_doubles":False, "notifications_on":True, "reminder_start_day":8,
                 "preferred_language":"LT", "include_backups_in_calendar":False,
                 "backup_email_alerts":True, "phone_e164":"", "backup_sms_alerts":False,
                 "calendar_feed_token":"", "updated_at":""}
     r = rows[0]
     r["holiday_preference"] = max(-1,min(1,int(r.get("holiday_preference",0) or 0)))
+    r["shift_length_preference"] = max(0,min(3,int(r.get("shift_length_preference",0) or 0)))
+    # Preserve old residents who had only the legacy "avoid doubles" checkbox.
+    if r["shift_length_preference"] == 0 and bool(r.get("avoid_doubles", False)):
+        r["shift_length_preference"] = 1
     r["avoid_doubles"] = bool(r.get("avoid_doubles", False))
     r["notifications_on"] = bool(r.get("notifications_on", True))
     r["include_backups_in_calendar"] = bool(r.get("include_backups_in_calendar", False))
@@ -182,6 +280,7 @@ def all_account_settings() -> Dict[str, dict]:
     return {r["initials"]: {
         **r,
         "holiday_preference": max(-1,min(1,int(r.get("holiday_preference",0) or 0))),
+        "shift_length_preference": (1 if max(0,min(3,int(r.get("shift_length_preference",0) or 0)))==0 and bool(r.get("avoid_doubles",False)) else max(0,min(3,int(r.get("shift_length_preference",0) or 0)))),
         "avoid_doubles": bool(r.get("avoid_doubles", False)),
         "notifications_on": bool(r.get("notifications_on", True)),
         "include_backups_in_calendar": bool(r.get("include_backups_in_calendar", False)),
@@ -199,6 +298,7 @@ def save_account_settings(initials: str, payload: dict):
         "weekend_preference": int(payload.get("weekend_preference", 0)),
         "holiday_preference": max(-1,min(1,int(payload.get("holiday_preference",0) or 0))),
         "spread_preference": int(payload.get("spread_preference", 0)),
+        "shift_length_preference": max(0,min(3,int(payload.get("shift_length_preference",0) or 0))),
         "avoid_doubles": bool(payload.get("avoid_doubles", False)),
         "notifications_on": bool(payload.get("notifications_on", True)),
         "reminder_start_day": int(payload.get("reminder_start_day", 8)),
@@ -210,6 +310,23 @@ def save_account_settings(initials: str, payload: dict):
         "updated_at": _now(),
     }
     client().table("account_settings").update({k:v for k,v in row.items() if k!="initials"}).eq("initials",initials).execute()
+
+
+def set_resident_notification_email_v2593(initials: str, email: str) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("set_resident_notification_email_v2593",{
+        "p_initials":str(initials),"p_email":str(email or "")
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def autofill_notification_emails_v2593() -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("autofill_notification_emails_v2593",{}).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def list_resident_email_admin_audit_v2593(limit: int=100) -> List[dict]:
+    return _data(_retry_db(lambda: client().table("resident_email_admin_audit")
+        .select("*").order("created_at",desc=True).limit(int(limit)).execute()))
 
 
 def ensure_calendar_feed_token(initials: str) -> str:
@@ -246,7 +363,13 @@ def get_recurring_preferences(initials: str) -> List[dict]:
 
 
 def all_recurring_preferences() -> Dict[str, List[dict]]:
-    rows = _data(client().table("recurring_preferences").select("*").order("initials").order("weekday").execute())
+    rows = _data(_retry_db(lambda:
+        client().table("recurring_preferences")
+        .select("*")
+        .order("initials")
+        .order("weekday")
+        .execute()
+    ))
     out: Dict[str, List[dict]] = {}
     for r in rows:
         out.setdefault(r["initials"], []).append(r)
@@ -323,7 +446,7 @@ def load_schedule(year: int, month: int, kind: str = "current") -> Optional[dict
 def list_published_schedules() -> List[dict]:
     """Return all published ACTUAL schedule payloads for calendar-feed assembly."""
     rows = _data(_retry_db(lambda: client().table("schedules")
-        .select("year,month,current_json,status,published_at,updated_at")
+        .select("year,month,baseline_json,current_json,status,published_at,updated_at")
         .eq("status", "published")
         .order("year")
         .order("month")
@@ -339,19 +462,218 @@ def get_schedule_state(year: int, month: int) -> dict:
     return {"has_draft":bool(r.get("draft_json")),"has_published":r.get("status")=="published" and bool(r.get("current_json")),"status":r.get("status"),"published_at":r.get("published_at"),"updated_at":r.get("updated_at")}
 
 
+def get_schedule_lifecycle(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().table("schedule_lifecycle")
+        .select("*").eq("year",int(year)).eq("month",int(month)).limit(1).execute()))
+    if rows:
+        return rows[0]
+    state=get_schedule_state(year,month)
+    return {
+        "year":int(year),"month":int(month),
+        "state":"working" if state.get("has_published") else "draft",
+        "swap_opened_at":state.get("published_at"),
+        "swap_deadline":None,"swap_closed_at":None,
+        "finalized_at":None,"finalized_by":None,"final_json":None,"final_backups":None,
+    }
+
+
+def open_swap_window_v2591(year: int, month: int, deadline_iso: str) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("open_swap_window_v2591",{
+        "p_year":int(year),"p_month":int(month),"p_deadline":str(deadline_iso)
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def close_swap_window_v2591(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("close_swap_window_v2591",{
+        "p_year":int(year),"p_month":int(month)
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def get_swap_permission_v2591(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("get_swap_permission_v2591",{
+        "p_year":int(year),"p_month":int(month)
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {"allowed":False,"source":"unavailable"})
+
+
+def grant_late_swap_access_v2591(year: int, month: int, initials: str, expires_at_iso: str, request_limit: int=1, reason: str="") -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("grant_late_swap_access_v2591",{
+        "p_year":int(year),"p_month":int(month),"p_initials":str(initials),
+        "p_expires_at":str(expires_at_iso),"p_max_requests":int(request_limit),
+        "p_access_mode":"one_request" if int(request_limit)==1 else "time_window",
+        "p_reason":str(reason or "")
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def revoke_late_swap_access_v2591(grant_id: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("revoke_late_swap_access_v2591",{
+        "p_id":int(grant_id)
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def list_late_swap_access_v2591(year: int, month: int) -> List[dict]:
+    return _data(_retry_db(lambda: client().table("late_swap_access")
+        .select("*").eq("year",int(year)).eq("month",int(month))
+        .order("created_at",desc=True).execute()))
+
+
+def finalization_blockers_v2591(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("finalization_blockers_v2591",{
+        "p_year":int(year),"p_month":int(month)
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def ensure_working_schedule_v2592(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("ensure_working_schedule_v2592",{
+        "p_year":int(year),"p_month":int(month)
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def apply_manual_schedule_override_v2592(
+    year: int, month: int, current_json: dict,
+    slot_a: int, slot_b: int, person_a: str, person_b: str, reason: str
+) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("apply_manual_schedule_override_v2592",{
+        "p_year":int(year),"p_month":int(month),"p_current_json":current_json,
+        "p_slot_a":int(slot_a),"p_slot_b":int(slot_b),
+        "p_person_a":str(person_a),"p_person_b":str(person_b),
+        "p_reason":str(reason or "")
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def list_manual_schedule_overrides_v2592(year: int, month: int) -> List[dict]:
+    return _data(_retry_db(lambda: client().table("manual_schedule_overrides")
+        .select("*").eq("year",int(year)).eq("month",int(month))
+        .order("created_at",desc=True).execute()))
+
+
+def review_manual_override_v2593(override_id: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("review_manual_override_v2593",{
+        "p_id":int(override_id)
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def list_unreviewed_manual_overrides_v2593(year: int, month: int) -> List[dict]:
+    return _data(_retry_db(lambda: client().table("manual_schedule_overrides")
+        .select("*").eq("year",int(year)).eq("month",int(month)).is_("reviewed_at","null")
+        .order("created_at",desc=False).execute()))
+
+
+def finalize_schedule_v2592(year: int, month: int, final_json: dict) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("finalize_schedule_v2592",{
+        "p_year":int(year),"p_month":int(month),"p_final_json":final_json
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def load_final_schedule_v2591(year: int, month: int) -> Optional[dict]:
+    lifecycle=get_schedule_lifecycle(year,month)
+    return lifecycle.get("final_json") if lifecycle.get("state")=="final" else None
+
+
 def create_swap_request(year: int, month: int, slot_a: int, slot_b: int, person_a: str, person_b: str, reason: str = ""):
-    row={"year":year,"month":month,"slot_a":slot_a,"slot_b":slot_b,"person_a":person_a,"person_b":person_b,"status":"pending","reason":str(reason or ""),"created_at":_now()}
+    """V2.5.91 lifecycle-gated swap creation.
+
+    The server allows new requests only while the normal swap window is open or
+    while this authenticated resident has an active individual late-access grant.
+    Existing pending requests may still be responded to after the deadline.
+    """
+    rows=_data(_retry_db(lambda: client().rpc("create_swap_request_v2591",{
+        "p_year":int(year),"p_month":int(month),
+        "p_slot_a":int(slot_a),"p_slot_b":int(slot_b),
+        "p_person_a":str(person_a),"p_person_b":str(person_b),
+        "p_reason":str(reason or ""),
+    }).execute()))
+    if isinstance(rows,dict): return [rows]
+    return rows
+
+
+def delete_swap_action_v2586(request_id: int, current_json: Optional[dict] = None, backups: Optional[List[dict]] = None) -> dict:
+    args={
+        "p_request_id":int(request_id),
+        "p_current_json":current_json,
+        "p_backups":backups,
+    }
+    rows=_data(_retry_db(lambda: client().rpc("delete_swap_action_v2586",args).execute()))
+    if isinstance(rows,dict):
+        return rows
+    return rows[0] if rows else {}
+
+
+def delete_backup_swap_v2586(request_id: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc(
+        "delete_backup_swap_v2586",{"p_request_id":int(request_id)}
+    ).execute()))
+    if isinstance(rows,dict):
+        return rows
+    return rows[0] if rows else {}
+
+
+def apply_emergency_rescue_atomic_v2585(
+    year: int, month: int, source_slot: int, target_slot: int,
+    mover: str, rescued_person: str, current_payload: dict,
+    desired_backups: List[dict], reason: str = ""
+) -> dict:
+    """Atomically apply ACTUAL rescue + backup-plan sync + audit on the server."""
+    payload={
+        "p_year":int(year),"p_month":int(month),
+        "p_source_slot":int(source_slot),"p_target_slot":int(target_slot),
+        "p_mover":str(mover),"p_rescued_person":str(rescued_person),
+        "p_current_json":current_payload,
+        "p_backups":list(desired_backups or []),
+        "p_reason":str(reason or ""),
+    }
+    rows=_data(_retry_db(lambda:
+        client().rpc("apply_emergency_rescue_v2585",payload).execute()
+    ))
+    if isinstance(rows,dict):
+        return rows
+    return rows[0] if rows else {}
+
+
+def create_emergency_rescue_log(
+    year: int, month: int, source_slot: int, target_slot: int,
+    mover: str, rescued_person: str, reason: str = ""
+):
+    """Record an already-applied ONE-WAY emergency rescue.
+
+    `mover` must be the authenticated resident under the existing swap INSERT RLS.
+    This is an audit row only; it is never a bilateral pending swap.
+    """
+    row={
+        "year":int(year),"month":int(month),
+        "slot_a":int(source_slot),"slot_b":int(target_slot),
+        "person_a":str(mover),"person_b":str(rescued_person),
+        "status":"approved","reason":str(reason or ""),
+        "created_at":_now(),"responded_at":_now(),
+    }
     return _data(client().table("swap_requests").insert(row).execute())
 
 
 def get_swap_request(request_id: int) -> Optional[dict]:
-    rows=_data(client().table("swap_requests").select("*").eq("id",request_id).limit(1).execute())
+    rows=_data(_retry_db(lambda:
+        client().table("swap_requests").select("*").eq("id",request_id).limit(1).execute()
+    ))
     return rows[0] if rows else None
 
 
 def list_swap_requests(year: int, month: int, person: Optional[str] = None) -> List[dict]:
-    q=client().table("swap_requests").select("*").eq("year",year).eq("month",month)
-    rows=_data(q.order("id",desc=True).execute())
+    rows=_data(_retry_db(lambda:
+        client().table("swap_requests")
+        .select("*")
+        .eq("year",year)
+        .eq("month",month)
+        .order("id",desc=True)
+        .execute()
+    ))
     if person:
         rows=[r for r in rows if r.get("person_a")==person or r.get("person_b")==person]
     return rows
@@ -359,6 +681,51 @@ def list_swap_requests(year: int, month: int, person: Optional[str] = None) -> L
 
 def update_swap_request(request_id: int, status: str, reason: str = ""):
     client().table("swap_requests").update({"status":status,"reason":reason,"responded_at":_now()}).eq("id",request_id).execute()
+
+
+def respond_swap_request_v2578(request_id: int, action: str, reason: str = "") -> dict:
+    """Atomic participant response with lost-response reconciliation.
+
+    If the network drops after Postgres commits but before the HTTP response reaches
+    Streamlit, re-read the authoritative row. This prevents an indeterminate
+    Accept/Reject state after transient RemoteProtocolError failures.
+    """
+    action=str(action).strip().lower()
+    reason=str(reason or "")
+    expected_status={"accept":"approved","reject":"rejected","cancel":"rejected"}.get(action)
+    try:
+        rows=_data(client().rpc("respond_swap_request_v2578",{
+            "p_request_id":int(request_id),
+            "p_action":action,
+            "p_reason":reason,
+        }).execute())
+        if isinstance(rows,dict):
+            return rows
+        return rows[0] if rows else {}
+    except Exception as exc:
+        # Safe reconciliation is useful for any transport/protocol exception. If
+        # the server did not commit, the row stays pending and we re-raise.
+        try:
+            saved=get_swap_request(int(request_id))
+        except Exception:
+            raise exc
+        if saved and expected_status and saved.get("status")==expected_status:
+            saved_reason=str(saved.get("reason") or "")
+            # Require the reason/meta written by this action when supplied. This
+            # avoids mistaking somebody else's prior response for our lost reply.
+            if (not reason) or saved_reason==reason:
+                saved=dict(saved)
+                saved["_reconciled_after_transport_error"]=True
+                return saved
+        raise
+
+
+def cancel_swap_request(request_id: int) -> dict:
+    return respond_swap_request_v2578(request_id,"cancel","cancelled_by_requester")
+
+
+def cancel_backup_swap_request(request_id: int):
+    client().rpc("cancel_backup_swap_request",{"p_request_id":int(request_id)}).execute()
 
 
 def sync_backups(year: int, month: int, desired: List[dict]):
@@ -379,19 +746,15 @@ def sync_backups(year: int, month: int, desired: List[dict]):
 
 
 def list_backup_claims(year: int, month: int) -> List[dict]:
-    """All self-selected backup slots for the month.
-
-    Historical table name `weekend_backup_claims` is kept for backward compatibility,
-    but from V2.5.32 it stores WEEKEND + weekday SPS RO + weekday SPS UG claims.
-    """
-    return _data(
+    """All self-selected backup slots for the month."""
+    return _data(_retry_db(lambda:
         client().table("weekend_backup_claims")
         .select("*")
         .eq("year",int(year))
         .eq("month",int(month))
         .order("claimed_at")
         .execute()
-    )
+    ))
 
 
 def list_weekend_backup_claims(year: int, month: int) -> List[dict]:
@@ -400,7 +763,7 @@ def list_weekend_backup_claims(year: int, month: int) -> List[dict]:
 
 
 def get_backup_claims(year: int, month: int, initials: str) -> List[dict]:
-    return _data(
+    return _data(_retry_db(lambda:
         client().table("weekend_backup_claims")
         .select("*")
         .eq("year",int(year))
@@ -408,7 +771,7 @@ def get_backup_claims(year: int, month: int, initials: str) -> List[dict]:
         .eq("initials",initials)
         .order("claimed_at")
         .execute()
-    )
+    ))
 
 
 def get_weekend_backup_claim(year: int, month: int, initials: str) -> Optional[dict]:
@@ -473,14 +836,23 @@ def release_weekend_backup_claim(year: int, month: int, initials: str):
 
 
 def create_backup_swap_request(year: int, month: int, requester: str, requester_slot: int, target: str, target_slot: int, note: str=""):
-    client().table("backup_swap_requests").insert({"year":int(year),"month":int(month),"requester":requester,"requester_slot":int(requester_slot),"target":target,"target_slot":int(target_slot),"status":"pending","note":note}).execute()
+    rows=_data(_retry_db(lambda: client().rpc("create_backup_swap_request_v2591",{
+        "p_year":int(year),"p_month":int(month),
+        "p_requester":str(requester),"p_requester_slot":int(requester_slot),
+        "p_target":str(target),"p_target_slot":int(target_slot),
+        "p_note":str(note or ""),
+    }).execute()))
+    if isinstance(rows,dict): return [rows]
+    return rows
 
 
 def list_backup_swap_requests(year: int, month: int, initials: Optional[str]=None) -> List[dict]:
-    q=client().table("backup_swap_requests").select("*").eq("year",int(year)).eq("month",int(month))
-    if initials:
-        q=q.or_(f"requester.eq.{initials},target.eq.{initials}")
-    return _data(q.order("created_at",desc=True).execute())
+    def _read():
+        q=client().table("backup_swap_requests").select("*").eq("year",int(year)).eq("month",int(month))
+        if initials:
+            q=q.or_(f"requester.eq.{initials},target.eq.{initials}")
+        return q.order("created_at",desc=True).execute()
+    return _data(_retry_db(_read))
 
 
 def reject_backup_swap_request(request_id: int):
@@ -547,9 +919,11 @@ def _target_month_start(year: int, month: int) -> str:
 def rest_credit_balances(initials: str) -> Dict[str,int]:
     """Currently usable, unexpired, unconsumed and unredeemed rest credits."""
     now_dt=datetime.now(timezone.utc)
-    rows=_data(client().table("backup_credit_earnings")
+    rows=_data(_retry_db(lambda:
+        client().table("backup_credit_earnings")
         .select("credit_type,expires_at,redeemed_at,consumed_at")
-        .eq("initials",initials).execute())
+        .eq("initials",initials).execute()
+    ))
     out={"AM":0,"PM":0,"NIGHT":0}
     for r in rows:
         typ=(r.get("credit_type") or "AM").upper()
@@ -568,9 +942,11 @@ def rest_credit_available_for_month(initials: str, year: int, month: int, credit
     target_dt=_parse_dt(_target_month_start(year,month))
     now_dt=datetime.now(timezone.utc)
     valid_after=max(target_dt,now_dt) if target_dt else now_dt
-    rows=_data(client().table("backup_credit_earnings")
+    rows=_data(_retry_db(lambda:
+        client().table("backup_credit_earnings")
         .select("credit_type,expires_at,redeemed_year,redeemed_month,redeemed_at,consumed_at")
-        .eq("initials",initials).eq("credit_type",typ).execute())
+        .eq("initials",initials).eq("credit_type",typ).execute()
+    ))
     n=0
     for r in rows:
         if r.get("consumed_at"):
@@ -586,8 +962,10 @@ def rest_credit_available_for_month(initials: str, year: int, month: int, credit
 
 
 def all_rest_credit_balances() -> Dict[str,dict]:
-    rows=_data(client().table("backup_credit_earnings")
-        .select("initials,credit_type,expires_at,redeemed_at,consumed_at").execute())
+    rows=_data(_retry_db(lambda:
+        client().table("backup_credit_earnings")
+        .select("initials,credit_type,expires_at,redeemed_at,consumed_at").execute()
+    ))
     now_dt=datetime.now(timezone.utc); out={}
     for r in rows:
         i=r["initials"]; out.setdefault(i,{"AM":0,"PM":0,"NIGHT":0})
@@ -601,29 +979,6 @@ def all_rest_credit_balances() -> Dict[str,dict]:
     return out
 
 
-def list_open_work_debts(initials: Optional[str] = None) -> List[dict]:
-    q=client().table("backup_work_debts").select("*").is_("settled_at","null")
-    if initials:
-        q=q.eq("initials",initials)
-    return _data(q.order("due_at").execute())
-
-
-def work_debt_balances(initials: str) -> Dict[str,int]:
-    out={"AM":0,"PM":0,"NIGHT":0}
-    for r in list_open_work_debts(initials):
-        typ=(r.get("debt_type") or "").upper()
-        if typ in out: out[typ]+=1
-    return out
-
-
-def all_work_debt_balances() -> Dict[str,dict]:
-    out={}
-    for r in list_open_work_debts():
-        i=r["initials"]; out.setdefault(i,{"AM":0,"PM":0,"NIGHT":0})
-        typ=(r.get("debt_type") or "").upper()
-        if typ in out[i]: out[i][typ]+=1
-    return out
-
 
 def set_rest_credit_redemptions(initials: str, year: int, month: int, am_units: int, pm_units: int):
     client().rpc("set_rest_credit_redemptions_v255", {
@@ -633,9 +988,11 @@ def set_rest_credit_redemptions(initials: str, year: int, month: int, am_units: 
 
 
 def redemption_units(initials: str, year: int, month: int, credit_type: str) -> int:
-    rows=_data(client().table("backup_credit_redemptions").select("units")
+    rows=_data(_retry_db(lambda:
+        client().table("backup_credit_redemptions").select("units")
         .eq("initials",initials).eq("target_year",int(year)).eq("target_month",int(month))
-        .eq("credit_type",credit_type.upper()).limit(1).execute())
+        .eq("credit_type",credit_type.upper()).limit(1).execute()
+    ))
     return int(rows[0].get("units",0)) if rows else 0
 
 
@@ -662,9 +1019,11 @@ def redeem_credits(initials: str, year: int, month: int, units: int):
 
 def published_baselines_before(year: int, month: int) -> List[dict]:
     """Published SYSTEM schedules strictly before the requested month."""
-    rows=_data(client().table("schedules").select(
-        "year,month,baseline_json,status"
-    ).eq("status","published").execute())
+    rows=_data(_retry_db(lambda:
+        client().table("schedules").select(
+            "year,month,baseline_json,status"
+        ).eq("status","published").execute()
+    ))
     target=int(year)*12+int(month)
     out=[]
     for r in rows:
@@ -674,9 +1033,11 @@ def published_baselines_before(year: int, month: int) -> List[dict]:
 
 def fairness_cumulative_before(year: int, month: int) -> Dict[str,dict]:
     """Sum finalized monthly fairness burdens strictly before target month."""
-    rows=_data(client().table("fairness_history").select(
-        "year,month,initials,weekend_assignments,friday_assignments,doubles,weekday_days"
-    ).execute())
+    rows=_data(_retry_db(lambda:
+        client().table("fairness_history").select(
+            "year,month,initials,weekend_assignments,friday_assignments,doubles,weekday_days"
+        ).execute()
+    ))
     target_key=int(year)*12+int(month)
     out={}
     for r in rows:
@@ -715,9 +1076,11 @@ def sync_fairness_history(year: int, month: int, people_stats: Dict[str,dict]):
 
 
 def fairness_history_rows(up_to_year: Optional[int] = None, up_to_month: Optional[int] = None) -> List[dict]:
-    rows=_data(client().table("fairness_history").select(
-        "year,month,initials,weekend_assignments,friday_assignments,doubles,weekday_days,updated_at"
-    ).order("year").order("month").order("initials").execute())
+    rows=_data(_retry_db(lambda:
+        client().table("fairness_history").select(
+            "year,month,initials,weekend_assignments,friday_assignments,doubles,weekday_days,updated_at"
+        ).order("year").order("month").order("initials").execute()
+    ))
     if up_to_year is not None and up_to_month is not None:
         key=int(up_to_year)*12+int(up_to_month)
         rows=[r for r in rows if int(r["year"])*12+int(r["month"])<=key]
@@ -733,7 +1096,11 @@ def apply_schedule_repair(year: int, month: int, current_payload: dict, slot_id:
 
 
 def list_schedule_repairs(year: int, month: int) -> List[dict]:
-    return _data(client().rpc("list_schedule_repairs_v2512", {"p_year":int(year),"p_month":int(month)}).execute())
+    return _data(_retry_db(lambda:
+        client().rpc("list_schedule_repairs_v2512", {
+            "p_year":int(year),"p_month":int(month)
+        }).execute()
+    ))
 
 
 def record_email(initials: str, kind: str, target_year: int, target_month: int, send_date: str, status: str, detail: str = ""):
@@ -749,6 +1116,77 @@ def email_already_recorded(initials: str, kind: str, target_year: int, target_mo
 def get_email_log(target_year: int, target_month: int, limit: int = 200) -> List[dict]:
     return _data(client().table("email_log").select("*").eq("target_year",target_year).eq("target_month",target_month).order("id",desc=True).limit(limit).execute())
 
+
+
+# --- V2.5.100 durable notification outbox ---
+def enqueue_notification_v25100(event_key: str, event_type: str, initials: str, target_year: int, target_month: int,
+                                 to_email: str, subject: str, body: str, scheduled_for: Optional[str] = None,
+                                 ics_text: Optional[str] = None, ics_name: Optional[str] = None) -> dict:
+    row={
+        "event_key":str(event_key),"event_type":str(event_type),"initials":str(initials),
+        "target_year":int(target_year),"target_month":int(target_month),
+        "scheduled_for":scheduled_for or _now(),"to_email":str(to_email or ""),
+        "subject":str(subject),"body":str(body),"ics_text":ics_text,"ics_name":ics_name,
+        "status":"pending" if str(to_email or "").strip() else "blocked",
+        "last_error":None if str(to_email or "").strip() else "Missing notification email",
+        "updated_at":_now(),
+    }
+    existing=_data(_retry_db(lambda: client().table("notification_outbox")
+        .select("*").eq("event_key",row["event_key"]).eq("initials",row["initials"]).limit(1).execute()))
+    if existing:
+        cur=existing[0]
+        if str(cur.get("status") or "")=="sent":
+            return cur
+        # Refresh content/address and make an explicit app retry immediately available.
+        upd={k:v for k,v in row.items() if k not in ("event_key","initials")}
+        upd["status"]="pending" if row["to_email"].strip() else "blocked"
+        _retry_db(lambda: client().table("notification_outbox").update(upd).eq("id",cur["id"]).execute())
+        rows=_data(_retry_db(lambda: client().table("notification_outbox").select("*").eq("id",cur["id"]).limit(1).execute()))
+        return rows[0] if rows else {**cur,**upd}
+    rows=_data(_retry_db(lambda: client().table("notification_outbox").insert(row).execute()))
+    return rows[0] if rows else row
+
+
+def mark_notification_delivery_v25100(notification_id: int, ok: bool, detail: str = "") -> dict:
+    cur=_data(_retry_db(lambda: client().table("notification_outbox").select("attempt_count").eq("id",int(notification_id)).limit(1).execute()))
+    attempts=int((cur[0] if cur else {}).get("attempt_count",0) or 0)+1
+    upd={
+        "status":"sent" if ok else "failed",
+        "attempt_count":attempts,
+        "last_error":None if ok else str(detail or "Delivery failed"),
+        "sent_at":_now() if ok else None,
+        "updated_at":_now(),
+    }
+    rows=_data(_retry_db(lambda: client().table("notification_outbox").update(upd).eq("id",int(notification_id)).execute()))
+    return rows[0] if rows else upd
+
+
+def list_notification_outbox_v25100(target_year: int, target_month: int, limit: int = 500) -> List[dict]:
+    return _data(_retry_db(lambda: client().table("notification_outbox").select("*")
+        .eq("target_year",int(target_year)).eq("target_month",int(target_month))
+        .order("created_at",desc=True).limit(int(limit)).execute()))
+
+
+def failed_notification_outbox_v25100(target_year: int, target_month: int, limit: int = 100, event_type: Optional[str] = None) -> List[dict]:
+    def _q():
+        q=client().table("notification_outbox").select("*")
+        q=q.eq("target_year",int(target_year)).eq("target_month",int(target_month)).in_("status",["failed","blocked"])
+        if event_type:
+            q=q.eq("event_type",str(event_type))
+        return q.order("created_at",desc=False).limit(int(limit)).execute()
+    return _data(_retry_db(_q))
+
+
+def notification_summary_v25100(target_year: int, target_month: int) -> List[dict]:
+    rows=list_notification_outbox_v25100(target_year,target_month,limit=2000)
+    out={}
+    for r in rows:
+        typ=str(r.get("event_type") or "other")
+        rec=out.setdefault(typ,{"event_type":typ,"pending":0,"sent":0,"failed":0,"blocked":0,"total":0})
+        status=str(r.get("status") or "pending")
+        rec["total"]+=1
+        if status in rec: rec[status]+=1
+    return [out[k] for k in sorted(out)]
 
 def get_manual(lang: str) -> str:
     rows=_data(client().table("manual_docs").select("content").eq("lang",lang).limit(1).execute())
@@ -809,6 +1247,31 @@ def research_checkpoint_summary() -> List[dict]:
 
 def research_comments_v2510() -> List[dict]:
     return _data(client().rpc("research_comments_v2510",{}).execute())
+
+
+
+def list_schedule_day_statuses_v2597(year: int, month: int) -> List[dict]:
+    """Senior/research-operator operational day-status markers (private reason view)."""
+    return _data(_retry_db(lambda: client().table("schedule_day_statuses")
+        .select("*").eq("year",int(year)).eq("month",int(month))
+        .order("day").order("initials").execute()))
+
+
+def set_schedule_day_status_v2597(year: int, month: int, day: int, initials: str, status_kind: str, note: str="") -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("set_schedule_day_status_v2597",{
+        "p_year":int(year),"p_month":int(month),"p_day":int(day),
+        "p_initials":str(initials),"p_status_kind":str(status_kind),"p_note":str(note or ""),
+    }).execute()))
+    return rows if isinstance(rows,dict) else (rows[0] if rows else {})
+
+
+def clear_schedule_day_status_v2597(status_id: int) -> bool:
+    data=_data(_retry_db(lambda: client().rpc("clear_schedule_day_status_v2597",{
+        "p_id":int(status_id)
+    }).execute()))
+    if isinstance(data,bool): return data
+    if isinstance(data,list) and data: return bool(data[0])
+    return bool(data)
 
 
 def get_my_scheduler_research_checkpoint(year: int, month: int, checkpoint: str) -> Optional[dict]:
@@ -882,15 +1345,30 @@ def list_rule_profiles(limit: int = 20) -> List[dict]:
 
 
 def get_active_rule_profile() -> Optional[dict]:
-    rows=_data(_retry_db(lambda:
-        client().table("scheduler_rule_profiles")
-        .select("*")
-        .eq("is_active",True)
-        .order("version_no",desc=True)
-        .limit(1)
-        .execute()
-    ))
-    return rows[0] if rows else None
+    global _ACTIVE_RULE_PROFILE_CACHE
+    try:
+        rows=_data(_retry_db(lambda:
+            client().table("scheduler_rule_profiles")
+            .select("*")
+            .eq("is_active",True)
+            .order("version_no",desc=True)
+            .limit(1)
+            .execute()
+        ))
+        row=rows[0] if rows else None
+        if row:
+            _ACTIVE_RULE_PROFILE_CACHE=dict(row)
+        return row
+    except Exception as exc:
+        # A transient read failure must not crash the entire Streamlit rerun.
+        # Reuse only a previously successful row from this process; never invent
+        # a DB rule profile silently.
+        if _ACTIVE_RULE_PROFILE_CACHE is not None:
+            row=dict(_ACTIVE_RULE_PROFILE_CACHE)
+            row["_read_fallback"]="memory_cache"
+            row["_read_error"]=str(exc)
+            return row
+        raise
 
 
 def create_and_activate_rule_profile(name: str, config: dict, note: str = "") -> dict:

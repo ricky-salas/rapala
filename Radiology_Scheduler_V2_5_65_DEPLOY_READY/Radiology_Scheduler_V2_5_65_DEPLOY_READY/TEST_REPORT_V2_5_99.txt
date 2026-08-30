@@ -1,0 +1,48 @@
+V2.5.99 TEST REPORT — ROSTER INITIALS MIGRATION
+================================================
+
+PASS 1 — Python compile
+- app.py
+- db.py
+- scheduler_engine.py
+Result: PASS
+
+PASS 2 — App / engine version lock
+- APP_VERSION = 2.5.99 ROSTER INITIALS MIGRATION
+- EXPECTED_ENGINE_API_VERSION = 2.5.99
+- ENGINE_API_VERSION = 2.5.99
+Result: PASS
+
+PASS 3 — Roster mapping
+- 16 unique new initials
+- exact requested full names loaded
+- SR retains target_adjustment = -2
+- identity order/colors preserved from V2.5.98 to avoid solver tie-break regression
+Result: PASS
+
+PASS 4 — Slot/rule regression
+Compared V2.5.98 vs V2.5.99 make_slots output:
+- 2026-09: identical, 478 slots
+- 2026-10: identical, 480 slots
+- 2027-01: identical, 463 slots
+- DEFAULT_RULE_PROFILE: identical
+Result: PASS
+
+PASS 5 — Supabase identity migration
+- 16 active resident_directory rows use new initials and requested names
+- linked user_profiles moved to new initials
+- old initials remaining in resident_directory/user_profiles/account_settings/preferences/recurring_preferences: 0
+- schedules containing exact old-initial JSON identity tokens: 0
+- backup rows containing old initials: 0
+- swap rows containing old initials: 0
+Result: PASS
+
+PASS 6 — Security / operator identity
+- MG: senior=false, lifecycle_operator=false
+- SR: senior=true, lifecycle_operator=true
+- ŠR: senior=true, lifecycle_operator=true
+- no public function definitions retain old roster initials
+Result: PASS
+
+MIGRATION
+SUPABASE_MIGRATION_V2_5_99_INITIALS.sql applied successfully to project gqdlwhjgwqmuoolybusy.

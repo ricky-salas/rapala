@@ -1,0 +1,14 @@
+V2.5.100 LOCKED — EMAIL LIFECYCLE + DURABLE OUTBOX
+
+1. V2.5.99 scheduler/solver behavior is unchanged.
+2. One system sender; residents are recipients only.
+3. Lifecycle notifications: preferences open -> missing preference reminder -> swap open -> FINAL.
+4. Lifecycle email is queued before SMTP delivery.
+5. Unique event_key + resident identity prevents duplicates.
+6. Failed lifecycle emails remain retryable and do not require resending to successful recipients.
+7. Preliminary and FINAL messages retain personal ICS attachments.
+8. Background worker handles automatic preference-stage notices and retries without requiring Streamlit to be open.
+9. Repeated missing-form reminders respect the resident's existing notifications_on and reminder_start_day settings.
+10. Separate backup-claim reminder is retired from the lifecycle reminder path.
+11. Simple UI hides SMTP clutter; technical details remain Advanced-only.
+12. Supabase service-role secret is worker-only and must never be embedded in the Streamlit app/repository.

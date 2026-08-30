@@ -1,0 +1,50 @@
+V2.5.96 TEST REPORT — MONTHLY BASELINE + LIVE ACTUAL FAIRNESS — NO CATCH-UP
+
+PASS 1 — Python compile
+- app.py
+- db.py
+- scheduler_engine.py
+Result: PASS
+
+PASS 2 — Completed backup cover semantics
+- Planned/activated-only backup: ACTUAL fairness ownership unchanged.
+- completed_at present: covered slot ownership transfers from scheduled resident to actual_backup/planned_backup fallback.
+Result: PASS
+
+PASS 3 — No-catch-up solve boundary
+Injected historical values before solve:
+- weekends 9
+- holidays 8
+- Fridays 7
+- doubles 6
+- weekday-days 5
+- rotation counts SPS UG 12 / Onko 4
+- Resident-HARD prior losses 3
+Observed inside solver:
+- every fairness-history input = 0 / {}
+- prior consecutive-weekend tail = 2 preserved
+- prior last-day Onko = True preserved
+Result: PASS
+
+PASS 4 — Legacy catch-up mechanisms retired
+- CUMULATIVE_POST_CATCHUP_WEIGHT forced to 0.0.
+- post_debt_enabled=False.
+- future_fairness_catchup_enabled=False.
+- validator first-history-month weekend volunteer adjustment disabled.
+Result: PASS
+
+PASS 5 — ACTUAL override visibly changes fairness
+Synthetic SPS UG baseline: spread 0.
+After a post-publication-style ownership change: SPS UG ACTUAL spread 2.
+The live ACTUAL fairness snapshot reports the wider spread rather than normalizing or rejecting it.
+Result: PASS
+
+PASS 6 — Data path separation
+- SYSTEM trend derives from baseline_json.
+- ACTUAL trend derives from current_json + completed backup rows.
+- db.list_published_schedules returns both baseline_json and current_json.
+- load_people does not read fairness history into new-month solver input.
+Result: PASS by code-path/static inspection.
+
+MIGRATION
+No Supabase schema migration required for V2.5.96.

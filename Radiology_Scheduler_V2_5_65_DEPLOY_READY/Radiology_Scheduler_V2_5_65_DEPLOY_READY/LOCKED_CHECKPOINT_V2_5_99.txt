@@ -1,0 +1,11 @@
+V2.5.99 LOCKED — ROSTER INITIALS MIGRATION
+
+- New roster identifiers are the only active resident initials.
+- Existing identities/data are migrated; residents are not recreated as new people.
+- SR = operational Senior Scheduler, target adjustment -2.
+- ŠR = researcher + contingency lifecycle operator.
+- Existing colors are preserved by person.
+- Stored schedule/current/baseline JSON identity tokens are migrated.
+- Security/research RPC hard-coded identity checks are migrated to SR / ŠR.
+- V2.5.98 scheduling/backup/credit behavior is preserved.
+- Engine API bumped to 2.5.99 so app.py and scheduler_engine.py must be deployed together.

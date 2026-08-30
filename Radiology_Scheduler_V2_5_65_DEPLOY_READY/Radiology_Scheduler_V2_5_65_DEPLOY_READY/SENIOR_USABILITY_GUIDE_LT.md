@@ -1,3 +1,36 @@
+# V2.5.100 — EMAIL LIFECYCLE + DURABLE OUTBOX
+
+- Vienas sistemos siuntėjas siunčia operacinius grafiko pranešimus visiems aktyviems rezidentams.
+- Etapai: **pageidavimai atidaryti → trūkstamų pageidavimų priminimai → preliminarus grafikas / apsikeitimų etapas → FINAL / baigta**.
+- `preferences_open`, `swap_open` ir `final` yra operaciniai etapo pranešimai; individualus `notifications_on` toliau valdo tik periodinius trūkstamų pageidavimų priminimus.
+- Kiekvienas lifecycle laiškas prieš SMTP siuntimą įrašomas į `notification_outbox`. Unikalus `event_key + initials` neleidžia Streamlit rerun ar cron jobui netyčia išsiųsti dublikato.
+- Nepavykę laiškai lieka retry eilėje. Seniūnė gali pakartoti **tik nepavykusiems**, o background worker gali juos bandyti dar kartą automatiškai.
+- Preliminaraus etapo laiškas prisega asmeninį preliminarų `.ics`; FINAL laiškas prisega galutinį `.ics`.
+- Automatinis workeris pageidavimų etapą pradeda ankstesnio mėnesio 1 d. 08:00 Lietuvos laiku. Trūkstamų anketų priminimai nuo rezidento pasirinktos `reminder_start_day` dienos siunčiami daugiausia kartą per dieną iki termino.
+- Senas atskiras `backup_claim_reminder` lifecycle kelyje nebegeneruojamas, kad žmogus negautų dviejų panašių priminimų tą pačią dieną.
+- Seniūnės Simple UI rodo vieną kompaktišką el. pašto paruošimo būseną, kanalo testą ir etapų pristatymo lentelę. SMTP techninė lentelė rodoma tik Išplėstiniame režime.
+- Solverio logika V2.5.100 nekeista; `scheduler_engine.py` yra identiškas V2.5.99.
+
+# V2.5.98 dubliai ir kreditai
+
+Privalomas dublio dengimas yra pozicijomis paremtas: SPS RO ir SPS UG visada, Centro UG 120 rytas, Onko RO visa 9 val. pamaina; CENTRO RO best-effort. Realiai pavadavęs rezidentas gauna poilsio kreditą. Pavaduotam žmogui skola nesukuriama.
+
+# V2.5.97 — NAUDOTOJŲ PASTABŲ ATNAUJINIMAS
+
+> **Šis skyrius papildo ir, jei prieštarauja, yra viršesnis už ankstesnius šio dokumento teiginius. V2.5.96 principas „be kito mėnesio fairness catch-up“ lieka galioti.**
+
+- **Centro UG 120 kab. dabar turi RYTĄ ir POPIETĘ.** Naujos PM vietos pridėtos append-only būdu po senų slotų ID, kad ankstesnių paskelbtų grafikų skaitmeniniai slotų ID nepasikeistų.
+- **Dengimai / dubliai:** privalomas vardinis dengimas taikomas savaitgalio SPS RO, Centro UG 120 RYTUI, Onko RO pilnai 9 val. dienai, darbo dienos SPS RO RYTUI ir šiuo metu išlaikytam SPS UG dengimui. **CENTRO RO** dengiama kuo plačiau pagal likusią saugią talpą, tačiau jos nepadengimas publikavimo neblokuoja.
+- **Mamografija yra paskutinio prioriteto neprivalomas kabinetas.** Kai dėl tikslaus grupės krūvio dalį neprivalomų vietų reikia palikti tuščių, solveris pirmiausia renkasi Mamografijos vietas; kitų kabinetų skylės naudojamos tik kai reikia.
+- **Šeštadieniai ir sekmadieniai nuo šiol yra dvi atskiros teisingumo kategorijos.** SYSTEM generavimo metu kiekviena jų water-fill'inama atskirai iki raw spread 0–1. Po publikavimo leidžiami abipusiai swapai / operaciniai pakeitimai gali ACTUAL balansą pakeisti; SYSTEM baseline auditui lieka nekintamas.
+- **Darbo dienos trukmės pageidavimas yra tikras aktyvus SOFT signalas.** Sistema pirmiausia nustato neutralų bendrą matematiškai reikalingų AM+PM dvigubų dienų kiekį. Tada, nekeisdama šio bendro kiekio, perskirsto jas pagal aktyvius 6 val. / 12 val. darbo pobūdžio pasirinkimus. Neutralus N/A žmogus nekonkuruoja su aiškiu pageidavimu. Todėl jei tik vienas rezidentas renkasi „dažniausiai 12 val.“, jis turi gauti kuo daugiau jau reikalingų 12 val. dienų, kiek leidžia ABSOLUTE/HARD, poilsis, tikslus mėnesio krūvis ir kritiniai SPS / šeštadienio / sekmadienio guardrailai.
+- **Vienodas pageidavimas visai grupei yra atskiras scarcity klausimas.** Galutinė taisyklė, kam pirmiau tenkinti ribotą vienodą pageidavimą, dar neužrakinama V2.5.97 ir bus apibrėžta atskirai.
+- **Operacinės nedarbo dienos:** SR (ir ŠR contingency operatorius Išplėstiniame režime) Grafiko lange gali pažymėti `Nedarbingumas`, `Kvalifikacijos kėlimas` arba `Sveikatinimosi diena`. Žyma spalvinama to rezidento spalva, išima jo tos dienos ACTUAL pamainas ir nekeičia SYSTEM baseline. Tiksli priežastis / pastaba rodoma tik lifecycle operatoriui.
+
+# V2.5.96 dabartinė taisyklė
+
+Kiekvienas mėnuo generuojamas nuo švaraus SYSTEM water-fill baseline. Po publikavimo leidžiami override'ai / swapai / repair gali jį pralaužti, o ACTUAL fairness perskaičiuojamas pagal realybę. Istorija yra tik auditui — jokio kito mėnesio catch-up. Completed backup cover fairness ekspoziciją perkelia tik tada, kai realus pavadavimas pažymėtas completed.
+
 # Seniūnės naudojimo ir audito vadovas
 
 ## 1. Kam skirtas šis įrankis
@@ -84,9 +117,9 @@ Nepublikuoti, jei:
 ## 5. Kas nėra automatiškai klaida
 
 - SOFT pageidavimas gali būti neįvykdytas, jei aukštesnio prioriteto fairness / HARD reikalavimai to neleidžia.
-- Noncritical posto spread gali laikinai būti iki leidžiamo guardrail, jei tai pagrįstas kompromisas ir sukuriamas POST DEBT ateinančiam mėnesiui.
+- Neprivalomo posto skirtumas gali laikinai nukrypti po leidžiamo ACTUAL pakeitimo; tai rodoma gyvoje ACTUAL statistikoje ir nesukuria ateities skolos.
 - Po publikavimo voluntary swapas keičia ACTUAL grafiką, bet neperrašo SYSTEM fairness baseline.
-- Ligos / neatvykimo atveju jau dirbantis žmogus gali būti perkeltas iš optional posto į SPS; toks operacinis pull-down yra fairness-neutral.
+- Ligos / neatvykimo atveju jau dirbantis žmogus gali būti perkeltas iš optional posto į SPS; SYSTEM baseline nekinta, tačiau ACTUAL postų/fairness statistika perskaičiuojama pagal realų darbą.
 
 ## 6. Rekomenduojamas visas mėnesio workflow
 
@@ -154,3 +187,26 @@ Klaida nėra slepiama – ji tampa konkrečiu sistemos kokybės rezultatu ir pat
 ## Savanoriškas dublio perėmimas
 
 Jei dublį reikia aktyvuoti žmogui, kuriam tai sukurtų didesnį savaitės krūvį ar 12 val. darbo dieną, Seniūnės lange pirmiausia rodoma pasekmių lentelė: **dabar → po dublio → taikoma riba → būsena**. Jei tai tik perspėjimas, galima atšaukti arba patvirtinti gavus aiškų rezidento sutikimą. Jei lentelė rodo ABSOLUTE / teisinį blokatorių, patvirtinimo mygtukas išjungiamas.
+
+## V2.5.75 — Suvestinė prieš publikavimą
+
+Po `GENERUOTI` seniūnė gali iš karto atverti `Suvestinė`. Kol kandidatas nepaskelbtas, viršuje aiškiai rodoma `JUODRAŠČIO SUVESTINĖ — DAR NEPASKELBTA`. Joje matomi visų rezidentų RESIDENT HARD, `Noriu laisvos`, `Pageidauju dirbti`, bendro išpildymo, workstyle, krūvio, doubles, savaitgalių ir kritinių postų rodikliai bei konkretūs neįvykdyti prašymai. Jei rezultatas netenkina, grįžtama į `Sudarymas` ir kandidatas gerinamas / generuojamas iš naujo. Publikuotas grafikas nesikeičia, kol aiškiai nepaspaudžiama `PASKELBTI / PATVIRTINTI`.
+
+
+### V2.5.79 ONE-WAY EMERGENCY RESCUE
+ EMERGENCY RESCUE
+
+
+Senas pavadinimas „Emergency swap“ buvo misnomer. Naujas modelis yra vienpusis operational rescue:
+
+1. Pats realiai perkeltas rezidentas savo paskyroje pasirenka `CURRENT LOCATION`.
+2. Pasirenka to paties laiko kritinį `MOVING TO` postą (SPS RO / SPS UG).
+3. Sistema spalvotai parodo `RESCUED PERSON` — žmogų, kuris tuo metu buvo kritiniame poste.
+4. Patvirtinus:
+   - mover pašalinamas iš seno žemesnio prioriteto optional posto;
+   - jo `CURRENT LOCATION` lieka **tuščias**;
+   - mover įrašomas į `MOVING TO` kritinį postą;
+   - `RESCUED PERSON` atleidžiamas nuo target posto;
+   - rescued person **nėra** perkeliamas į mover seną vietą.
+
+Tai keičia ACTUAL operational grafiką ir ACTUAL fairness statistiką. SYSTEM publication baseline lieka užšaldytas auditui; post debt / future catch-up V2.5.96 nebenaudojamas. Nauji rescue įrašai žurnale rodomi `CURRENT LOCATION → MOVING TO` formatu, su spalvotais mover / rescued inicialais. Seni `emergency_actual` bilateraliniai įrašai paliekami tik kaip aiškiai pažymėtas LEGACY auditas.

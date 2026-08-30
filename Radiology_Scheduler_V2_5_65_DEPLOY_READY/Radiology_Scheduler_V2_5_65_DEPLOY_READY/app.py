@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+from copy import deepcopy
 import calendar
 import html
 import unicodedata
@@ -24,6 +25,7 @@ from pypdf import PdfReader
 from docx import Document
 from supabase import create_client
 
+import scheduler_engine as _scheduler_engine
 from scheduler_engine import (
     Person, Slot, SolveResult, DEFAULT_PEOPLE, PERSON_COLORS, next_month, weekday_count, round_half_up,
     standard_target, make_slots, solve_schedule, attempt_swap, preview_swap, validate_schedule,
@@ -31,7 +33,8 @@ from scheduler_engine import (
     serialize_result, deserialize_result, revalidate_loaded_result, calculate_targets, blocks_overlap, hard_unavailable_for_block,
     resident_hard_unavailable_for_block, absolute_unavailable_for_block,
     serialize_people_request_snapshot, people_from_request_snapshot,
-    ROTATION_CATEGORIES, rotation_category, backup_required_slot,
+    ROTATION_CATEGORIES, rotation_category, backup_required_slot, backup_best_effort_slot,
+    effective_actual_assignments, calculate_live_fairness_snapshot,
     is_emergency_critical_slot, is_emergency_lower_priority_donor_slot,
     emergency_donor_source_slots, apply_emergency_critical_transfer,
     DEFAULT_RULE_PROFILE, validate_rule_profile, set_runtime_rules, get_runtime_rules, rule_value,
@@ -39,10 +42,15 @@ from scheduler_engine import (
     SWAP_ABSOLUTE_MAX_HOURS_ROLLING7, SWAP_MAX_WORKDAYS_ROLLING7, SWAP_MIN_DAILY_REST_HOURS, SWAP_MAX_HOURS_PER_DAY
 )
 import db
+from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
-APP_VERSION = "2.5.67 EXACT WORKLOAD + ONKO PAIRS"
+ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
+APP_VERSION = "2.5.101 SOLVER MAINTENANCE"
+EXPECTED_ENGINE_API_VERSION = "2.5.101"
+DISPLAY_VERSION = "3.0"
 BASE = Path(__file__).parent
-SENIOR_INITIALS = "G.M."
+SENIOR_INITIALS = "SR"
+RESEARCHER_INITIALS = "ŠR"
 DEFAULT_SUPABASE_URL = "https://gqdlwhjgwqmuoolybusy.supabase.co"
 DEFAULT_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_kHX4M55rZoHJr61S9kzdLg_tgKN-oDI"
 DEFAULT_MANUAL_LT = (BASE / "manual_lt.md").read_text(encoding="utf-8")
@@ -52,7 +60,16 @@ SENIOR_GUIDE_EN = (BASE / "SENIOR_USABILITY_GUIDE_EN.md").read_text(encoding="ut
 
 db.init_db(DEFAULT_MANUAL_LT, DEFAULT_MANUAL_EN, DEFAULT_PEOPLE)
 
-st.set_page_config(page_title="Radiology Scheduler", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Shift Happens", layout="wide", initial_sidebar_state="expanded")
+
+if str(ENGINE_API_VERSION) != EXPECTED_ENGINE_API_VERSION:
+    st.error(
+        "APP / ENGINE VERSION MISMATCH. "
+        f"App expects scheduler_engine API {EXPECTED_ENGINE_API_VERSION}, "
+        f"but loaded {ENGINE_API_VERSION}. "
+        "Deploy app.py AND scheduler_engine.py from the same release."
+    )
+    st.stop()
 st.markdown("""
 <style>
 html, body, [class*="css"] {font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
@@ -74,9 +91,9 @@ TR = {
 "app_title":"Rezidentų mėnesinio grafiko sistema","app_caption":"Mėnesinio rezidentų grafiko planavimas, pageidavimai, dubliai ir kontroliuojami pakeitimai.",
 "year":"Metai","month":"Mėnuo","weekdays":"Darbo dienos","base_target":"Bazinis pamainų tikslas",
 "deadline":"Pageidavimų pateikimo terminas","days_left":"Liko dienų","deadline_today":"Šiandien paskutinė diena.","deadline_passed":"Terminas praėjo prieš {n} d.",
-"deadline_future":"Iki termino liko {n} d.","deadline_note":"Kito mėnesio pageidavimai pateikiami iki ankstesnio mėnesio 13 dienos imtinai.",
+"deadline_future":"Iki termino liko {n} d.","deadline_note":"Kito mėnesio pageidavimai pateikiami iki ankstesnio mėnesio 14 d. 00:00 (13 d. imtinai).",
 "senior_dashboard":"Seniūnės skydas","preferences":"Pageidavimai","settings":"Nustatymai","generation":"Sudarymas","schedule":"Grafikas",
-"summary":"Suvestinė","transparency":"Skaidrumas","credits_debts":"Kreditai ir skolos","backups":"Dubliai","swaps":"Apsikeitimai","calendar":"Kalendorius","proof":"Patikra","senior_guide":"Seniūnės vadovas","rules":"Taisyklės",
+"summary":"Suvestinė","transparency":"Skaidrumas","credits_debts":"Kreditai","backups":"Dubliai","swaps":"Apsikeitimai","calendar":"Kalendorius","proof":"Patikra","senior_guide":"Seniūnės vadovas","rules":"Taisyklės",
 "my_preferences":"Mano mėnesio pageidavimai","hard_unavailable":"Negaliu dirbti — RESIDENT HARD","hard_help":"Galite pažymėti visą dieną arba tik rytą / popietę. Tai aukščiausio prioriteto rezidento prašymas: sistema pirmiausia ieško grafiko su 0 tokių praradimų. Tik jei tai neįmanoma, minimalus būtinas praradimų skaičius paskirstomas kuo lygiau grupėje; ABSOLUTE HARD saugos taisyklės niekada nepažeidžiamos.","hard_all_day":"Visa diena","hard_morning":"Rytas (08:00–14:00)","hard_afternoon":"Popietė (14:00–20:00)","hard_partial_note":"Jei pažymite rytą arba popietę, kitu paros bloku vis tiek galite būti paskirtas į normalią pamainą arba būti dubliu.","hard_overlap":"Ta pati data negali būti kartu pažymėta kaip visa diena ir dalinis privalomas negalėjimas.",
 "soft_free":"Noriu laisvos — pageidavimas","soft_help":"Pasirinkite visą dieną, rytą arba popietę. Sistema stengsis šį pageidavimą įvykdyti, jei tai neprieštarauja aukštesnio prioriteto taisyklėms.","soft_overlap":"Ta pati data negali būti kartu pažymėta kaip visa diena ir dalinis noras būti laisvam.",
 "preferred":"Pageidauju dirbti — pageidavimas","preferred_help":"Pasirinkite visą dieną, rytą arba popietę. Savanoriškas pasirinkimas dirbti nepopuliarią pamainą vykdomas prioritetiškai, jei nepažeidžiami Darbo kodekso ir poilsio saugos reikalavimai.","preferred_overlap":"Ta pati data negali būti kartu pažymėta kaip visa diena ir dalinis pageidavimas dirbti.","vacation":"Atostogos — patvirtintos nedarbo dienos","vacation_help":"Pažymėkite patvirtintas atostogų dienas. Tomis dienomis sistema jūsų neskirs dirbti ar dubliuoti ir proporcingai sumažins mėnesio darbo tikslą, kad atostogos nebūtų laikomos teisingumo trūkumu.","vacation_overlap":"Ta pati diena pažymėta ir kaip atostogos, ir kaip kitas pateisinamas neatvykimas — palikite ją tik viename laukelyje.","note":"Papildomas komentaras","note_ph":"Pvz. po kelių dienų iš eilės nenorėčiau dvigubos pamainos.",
@@ -84,30 +101,30 @@ TR = {
 "all_preferences":"Visų rezidentų pageidavimai","preference_load":"Pageidavimų apimtis","review":"Peržiūrėti","normal":"Įprasta","visibility_flag":"Žyma „Peržiūrėti“ yra tik seniūnės dėmesio indikatorius, ne bauda ir ne automatinis apribojimas.",
 "submitted":"Pateikta","updated":"Atnaujinta","hard_dates":"Negaliu dirbti — visa diena","hard_am_dates":"Negaliu dirbti — rytas","hard_pm_dates":"Negaliu dirbti — popietė","soft_dates":"Noriu laisvos — visa diena","soft_am_dates":"Noriu laisvos — rytas","soft_pm_dates":"Noriu laisvos — popietė","preferred_dates":"Pageidauju dirbti — visa diena","preferred_am_dates":"Pageidauju dirbti — rytas","preferred_pm_dates":"Pageidauju dirbti — popietė","comment":"Komentaras",
 "settings_title":"Mano paskyros ir darbo pobūdžio nustatymai","short_term":"Trumpalaikiai mėnesio pageidavimai","legal_safety_inputs":"Darbo teisės / poilsio saugos duomenys","justified_absence":"Kitas pateisinamas neatvykimas (liga ar kita patvirtinta priežastis)","justified_absence_help":"Privaloma nedarbo data. Sistema tą dieną neskiria pamainų ir proporcingai perskaičiuoja šio mėnesio vidinį pamainų tikslą. 38 val./sav. norma čia nėra fiksuota programoje.","long_duty":"Jau žinomo ilgo budėjimo už šio grafiko ribų pradžios data","long_duty_help":"Čia žymėkite tik jau žinomą ilgą budėjimą, kurio ši sistema pati neplanuoja (pvz., kitoje darbovietėje ar kitame grafike). Jei ilgą / naktinį budėjimą paskiria pati LSMU schedulerio sistema, jo atskirai įvesti nereikia — sistema po jo automatiškai taiko 24 val. poilsio apsaugą ir neskiria įprastų LSMU pamainų.","labour_hard_summary":"Privalomas saugos sluoksnis: šiame grafike ≤12 val. per darbo dieną; ≥11 val. tarp atskirų darbo dienų; po sistemos paskirto arba ranka įvesto ilgo / naktinio budėjimo taikoma 24 val. poilsio apsauga; bent 1 visiškai laisva diena per kiekvienas slenkančias 7 d.; ≤48 šiame grafike žinomų darbo valandų per bet kurias 7 dienas. Generatorius papildomai taikosi į ~40 val./7 d. ir po dviejų iš eilės 12 val. dienų kitą dieną leidžia tik PM arba poilsį.","labour_scope_note":"Sistema gali tikrinti tik jai žinomą darbo laiką. Kitos darbovietės ar nesuvesti budėjimai turi būti įvertinti atskirai.","long_term":"Ilgalaikiai pasikartojantys pageidavimai","long_term_help":"Šie nustatymai automatiškai taikomi kiekvienam mėnesiui, kol juos pakeisite. Trumpalaikis konkretaus mėnesio SOFT pageidavimas turi pirmenybę prieš priešingą ilgalaikį SOFT pageidavimą; ilgalaikis „Negaliu dirbti“ lieka RESIDENT HARD. Laiko stulpelis (visa diena / rytas / popietė) taikomas RESIDENT HARD; savaitės dienos SOFT pageidavimai yra visos dienos.","weekday_name":"Savaitės diena","recurring_rule":"Pasikartojanti taisyklė","recurring_time":"Laikas","rec_none":"Nėra","rec_hard":"Negaliu dirbti (RESIDENT HARD)","rec_soft":"Noriu laisvos","rec_preferred":"Pageidauju dirbti","save_long_term":"IŠSAUGOTI ILGALAIKIUS PAGEIDAVIMUS","long_term_saved":"Ilgalaikiai pageidavimai išsaugoti.","email":"El. paštas","email_required":"Kiekvienoje paskyroje turi būti galiojantis el. pašto adresas.",
-"weekday_pref":"Darbo dienų pobūdis","weekend_pref":"Savaitgalių pobūdis","holiday_pref":"Švenčių dienos","holiday_pref_help":"Ilgalaikis pasirinkimas oficialioms Lietuvos švenčių dienoms. Sistema pirmiausia skiria šventinį darbą norintiems, po jų — neutraliems, o norinčius ilsėtis naudoja tik kai reikia. Tarp vienodai pasirinkusių žmonių šventinis darbas paskirstomas kuo tolygiau, atsižvelgiant ir į ankstesnius mėnesius.","holiday_rest":"Norėčiau ilsėtis per šventes","holiday_neutral":"Neutralu / nesvarbu","holiday_work":"Norėčiau dirbti per šventes","spread_pref":"Pamainų išdėstymas","avoid_double_shifts":"Jei įmanoma, vengti dvigubų pamainų",
+"shift_length_pref":"Pageidaujama darbo dienos trukmė","shift_length_help":"Ilgalaikis privatus darbo pobūdžio pasirinkimas. Sistema stengiasi formuoti darbo dienų trukmę pagal jūsų pasirinkimą, jei tai leidžia privalomos taisyklės, poilsio reikalavimai ir mėnesio darbo krūvis. Onko RO lieka atskira 9 val. pilnos dienos pamaina.","shift_length_any":"Nesvarbu","shift_length_6":"Dažniausiai 6 val.","shift_length_mixed":"Mišriai – tinka ir 6 val., ir 12 val. darbo dienos","shift_length_12":"Dažniausiai 12 val.","weekday_pref":"Darbo dienų pobūdis","weekend_pref":"Savaitgalių pobūdis","holiday_pref":"Švenčių dienos","holiday_pref_help":"Ilgalaikis pasirinkimas oficialioms Lietuvos švenčių dienoms. Sistema pirmiausia skiria šventinį darbą norintiems, po jų — neutraliems, o norinčius ilsėtis naudoja tik kai reikia. Tarp vienodai pasirinkusių žmonių šventinis darbas paskirstomas kuo tolygiau, atsižvelgiant ir į ankstesnius mėnesius.","holiday_rest":"Norėčiau ilsėtis per šventes","holiday_neutral":"Neutralu / nesvarbu","holiday_work":"Norėčiau dirbti per šventes","spread_pref":"Pamainų išdėstymas","avoid_double_shifts":"Jei įmanoma, vengti dvigubų pamainų",
 "weekday_help":"−2 = santykinai mažiau darbo dienomis, 0 = nesvarbu, +2 = santykinai daugiau.","weekend_help":"−2 = mažiau savaitgalių, 0 = nesvarbu, +2 = daugiau.",
 "spread_help":"−2 = labiau sutelktas grafikas, 0 = nesvarbu, +2 = labiau išsklaidytas.","notifications":"Pranešimai","notifications_on":"Gauti el. pašto priminimus apie pageidavimų pateikimo termino pabaigą","notification_default":"Pagal nutylėjimą pranešimai įjungti.",
-"reminder_start":"Priminimus pradėti nuo mėnesio dienos","reminder_help":"Šis nustatymas skirtas tik priminimams apie kito mėnesio pageidavimų pateikimo terminą. Jei pageidavimai dar nepateikti, priminimai gali būti siunčiami nuo pasirinktos dienos iki termino dienos.","include_backups_calendar":"Rodyti dublius mano .ics kalendoriuje","backup_email_alerts":"Gauti el. laišką, kai seniūnė aktyvuoja mano dublį","phone_optional":"Telefono numeris SMS pranešimams (pasirinktinai)","sms_future":"SMS pranešimai paruošti nustatymuose, bet beta versijoje dar nesiunčiami.","backup_sms_alerts":"Gauti SMS, kai aktyvuojamas dublis","backup_activation":"Dublio aktyvavimas","activate_backup":"KVIESTI DUBLĮ DABAR","backup_activated":"Dublis aktyvuotas.","backup_email_sent":"El. pranešimas dubliui išsiųstas.","backup_email_failed":"Dublis aktyvuotas, bet el. laiško išsiųsti nepavyko.","undo_activation":"ATŠAUKTI DUBLIO AKTYVAVIMĄ","activation_undone":"Dublio aktyvavimas atšauktas.","smtp_admin_note":"Siunčiančio pašto slaptažodis yra vienas bendras sistemos secret ir jo rezidentai neįveda.","settings_saved":"Nustatymai išsaugoti.","backup_bonus":"Dublių bonusai","bonus_balance":"Sukaupti dublių bonusai","bonus_help":"Yra du priešingi tos pačios rūšies balansai: kai realiai pavaduojate kitą — gaunate POILSIO kreditą; kai realiai pavaduoja jus — gaunate DARBO skolą. RYTAS, POPIETĖ ir NAKTIS apskaitomi atskirai. Tos pačios rūšies naujas pavadavimas pirmiausia uždaro jūsų seniausią darbo skolą, o tik tada kuria poilsio kreditą.","use_bonus":"Šį mėnesį panaudoti bonusų","bonus_target_effect":"Per vieną mėnesį galima panaudoti daugiausia 2 dieninius poilsio kreditus iš viso. RYTO ir POPIETĖS kreditai apskaitomi atskirai; NAKTIES kreditas dabartinio PGY1 dieninio targeto nemažina.","bonus_insufficient":"Pasirinkta daugiau bonusų nei turite sukaupę.",
+"reminder_start":"Priminimus pradėti nuo mėnesio dienos","reminder_help":"Šis nustatymas skirtas tik priminimams apie kito mėnesio pageidavimų pateikimo terminą. Jei pageidavimai dar nepateikti, priminimai gali būti siunčiami nuo pasirinktos dienos iki termino dienos.","include_backups_calendar":"Rodyti dublius mano .ics kalendoriuje","backup_email_alerts":"Gauti el. laišką, kai seniūnė aktyvuoja mano dublį","phone_optional":"Telefono numeris SMS pranešimams (pasirinktinai)","sms_future":"SMS pranešimai paruošti nustatymuose, bet beta versijoje dar nesiunčiami.","backup_sms_alerts":"Gauti SMS, kai aktyvuojamas dublis","backup_activation":"Dublio aktyvavimas","activate_backup":"KVIESTI DUBLĮ DABAR","backup_activated":"Dublis aktyvuotas.","backup_email_sent":"El. pranešimas dubliui išsiųstas.","backup_email_failed":"Dublis aktyvuotas, bet el. laiško išsiųsti nepavyko.","undo_activation":"ATŠAUKTI DUBLIO AKTYVAVIMĄ","activation_undone":"Dublio aktyvavimas atšauktas.","smtp_admin_note":"Siunčiančio pašto slaptažodis yra vienas bendras sistemos secret ir jo rezidentai neįveda.","settings_saved":"Nustatymai išsaugoti.","backup_bonus":"Dublių bonusai","bonus_balance":"Sukaupti dublių bonusai","bonus_help":"Kai realiai pavaduojate kitą rezidentą, gaunate POILSIO kreditą kaip naudą būsimam mėnesiui. Pavaduotam žmogui jokia skola nesukuriama. RYTAS, POPIETĖ ir NAKTIS apskaitomi atskirai.","use_bonus":"Šį mėnesį panaudoti bonusų","bonus_target_effect":"Per vieną mėnesį galima panaudoti daugiausia 2 dieninius poilsio kreditus iš viso. RYTO ir POPIETĖS kreditai apskaitomi atskirai; NAKTIES kreditas dabartinio PGY1 dieninio targeto nemažina.","bonus_insufficient":"Pasirinkta daugiau bonusų nei turite sukaupę.",
 "dashboard_title":"Seniūnės mėnesio kontrolės skydas","completion":"Pageidavimų užpildymas","missing_preferences":"Dar nepateikė","missing_email":"Nenurodė el. pašto","all_complete":"Visi pageidavimus pateikė.",
-"email_ready":"El. pašto siuntimas sukonfigūruotas","email_not_ready":"El. pašto siuntimas dar nesukonfigūruotas. Nustatymai ir laiškų logika veikia, bet realiam siuntimui reikės SMTP aplinkos kintamųjų.",
+"email_ready":"El. pašto kanalo konfigūracija rasta","email_not_ready":"El. pašto kanalas dar neparuoštas. Seniūnės lange matysite vieną aiškų taisytiną punktą ir galėsite atlikti kanalo testą.",
 "send_reminders":"SIŲSTI ŠIANDIENOS PRIMINIMUS","reminders_result":"Priminimų rezultatas","no_due_reminders":"Šiandien pagal nustatymus priminimų siųsti nereikia.","email_log":"El. laiškų žurnalas",
 "generation_title":"Grafiko sudarymas ir paskelbimas","senior_only":"Šią funkciją gali atlikti tik seniūnė.","generate_draft":"GENERUOTI / PERKURTI JUODRAŠTĮ","solver_wait":"Sistema ieško geriausio sprendinio...",
 "draft_saved":"Juodraštis sukurtas. Oficialus grafikas dar nepakeistas.","no_solution":"Pagal dabartines kietas taisykles tinkamo grafiko rasti nepavyko.","publish":"PASKELBTI IR UŽRAKINTI",
 "published":"Grafikas paskelbtas ir pradinė versija užrakinta.","publication_mail":"Paskelbimo laiškai","no_draft":"Nėra juodraščio, kurį būtų galima paskelbti.","draft_outdated":"Po juodraščio sukūrimo pasikeitė pageidavimai, ilgalaikės taisyklės arba bonusų pasirinkimas. Perkurkite juodraštį prieš paskelbiant.","state":"Būsena","draft":"Juodraštis","published_state":"Paskelbtas","not_created":"Nesukurtas",
-"hard_errors":"Privalomų taisyklių klaidos","fairness_score":"Teisingumo rodiklis","monthly_fairness":"Mėnesio teisingumas","cumulative_fairness":"Kaupiamasis teisingumas","fairness_hierarchy":"Grafiko vertinimo hierarchija","fairness_hierarchy_intro":"V2.5.58: TRUE ABSOLUTE HARD → kritinis SPS RO + SPS UG + savaitgalių water-filling (raw spread 0–1) → RESIDENT HARD → kritinio krūvio spacing → savaitinio krūvio / recovery water-filling → ŠVENČIŲ preference-cohort water-filling → kitas burden fairness → kitų postų guardrail → SOFT-1 → SOFT-2 → SOFT-3 → post debt catch-up. Raw pageidavimų kiekis prioriteto neperka.","hard_validity":"ABSOLUTE HARD atitiktis","hard_validity_pass":"0 ABSOLUTE HARD klaidų — tinkama","hard_validity_fail":"Yra ABSOLUTE HARD klaidų — negalima skelbti","fairness_monthly_explain":"Mėnesio teisingumas vertina tik pasirinktą mėnesį. Jis gali būti mažesnis net sąmoningai, jei šis mėnuo taiso ankstesnių mėnesių nelygybę.","fairness_cumulative_explain":"Kaupiamasis teisingumas sumuoja visus sistemoje paskelbtus ankstesnius mėnesius ir šį mėnesį. Tai pagrindinis ilgalaikio grupės lygumo rodiklis.","fairness_100_note":"100% reiškia, kad sistemos paskirtas nesavanoriškas nepopuliarus krūvis ir kiti teisingumo komponentai yra optimaliai subalansuoti. Aiškiai savanoriškai pasirinkta penktadienio ar savaitgalio darbo data pati savaime teisingumo balo nemažina.","fairness_formula_month":"Mėnesio formulė: 100 − 18× savaitgalių skirtumas − 7× penktadienių skirtumas − 4× dublių skirtumas − 2× darbo dienų skirtumas.","fairness_formula_cumulative":"Kaupiamojo teisingumo formulė tokia pati, bet kiekvienas skirtumas skaičiuojamas iš visų paskelbtų mėnesių sukauptų sumų.","fairness_breakdown":"Teisingumo išskaidymas","fairness_penalty":"Baudos taškai","fairness_scope":"Apimtis","fairness_metric":"Komponentas","fairness_spread":"Skirtumas (didž.−maž.)","fairness_history":"Teisingumo istorija","fairness_history_help":"Grafike mėnesio teisingumas parodo konkretaus mėnesio lygumą, o kaupiamasis teisingumas — ar sistema laikui bėgant artėja prie lygaus bendro krūvio.","fairness_ledger":"Sistemos teisingumo apskaita","actual_ledger":"Faktinio darbo apskaita","fairness_swap_neutral":"Abipusis savanoriškas apsikeitimas nekeičia teisingumo apskaitos: keičiasi faktinis darbas, bet ne algoritmo paskirstymo vertinimas.","fairness_forced_change":"Pateisinamas post-publication repair (liga, atostogos, force majeure, kritinis SPS pull-down) registruojamas ACTUAL audite, bet NEKEIČIA SYSTEM fairness / spread / post-debt apskaitos. Savanoriški swapai taip pat fairness-neutral; keičiasi tik faktinis grafikas ir retrospektyvinis request satisfaction.","fairness_no_history":"Dar nėra pakankamai paskelbtų mėnesių teisingumo istorijai.","fairness_priority_table":"Ką reiškia hierarchija","fairness_level":"Lygis","fairness_goal":"Tikslas","fairness_interpretation":"Kaip interpretuoti","fairness_hard_goal":"ABSOLUTE HARD: 0 saugos / fizinio neįmanomumo pažeidimų","voluntary_unpopular_goal":"Prioritetiškai vykdyti aiškiai savanoriškai pasirinktą nepopuliarų darbą, jei leidžia privalomos taisyklės ir poilsio sauga","voluntary_unpopular_explain":"Aiškiai pageidauta penktadienio ar savaitgalio darbo data laikoma savanoriškai prisiimtu nepopuliariu krūviu: ji nekonkuruoja su teisingumo balansavimu ir neblogina sistemos teisingumo apskaitos.","other_preferences_goal":"SOFT: griežtai SOFT-1 → SOFT-2 → SOFT-3; kiekviename range pirmiausia horizontalus water-filling, po to likęs įmanomas išpildymas","other_preferences_explain":"SOFT pageidavimai optimizuojami tik po TRUE ABSOLUTE HARD, SYSTEM HARD postų lygybės, RESIDENT HARD ir likusio workload/fatigue fairness; aukštesnis SOFT rangas užrakinamas prieš pereinant į žemesnį.","fairness_cumulative_goal":"Antrinis ilgalaikis tikslas: po gero einamojo mėnesio balanso taisyti ankstesnės SYSTEM istorijos likutinę nelygybę","fairness_monthly_goal":"SPS RO, SPS UG ir savaitgaliai paskirstomi kuo lygiau — paprastai žmonių skaičiai skiriasi ne daugiau kaip 1. Kitose darbo vietose pirmiausia stengiamasi, kad visi gautų bent po vieną galimybę, kai mėnesio vietų tam pakanka; didesnis skirtumas leidžiamas tik kai lygesnis variantas neįmanomas.","preference_avg":"Vidutinis pageidavimų išpildymas","weekend_spread":"Savaitgalių skirtumas",
+"hard_errors":"Privalomų taisyklių klaidos","fairness_score":"Teisingumo rodiklis","monthly_fairness":"Mėnesio teisingumas","cumulative_fairness":"Kaupiamasis teisingumas","fairness_hierarchy":"Grafiko vertinimo hierarchija","fairness_hierarchy_intro":"V2.5.58: TRUE ABSOLUTE HARD → kritinis SPS RO + SPS UG + savaitgalių + penktadienių water-filling (raw spread 0–1) → RESIDENT HARD → kritinio krūvio spacing → savaitinio krūvio / recovery water-filling → ŠVENČIŲ preference-cohort water-filling → kitas burden fairness → VISŲ ne-Onko postų struktūrinis water-filling (tikslas raw 0–1) → SOFT-1 → SOFT-2 → SOFT-3 → future catch-up catch-up. Raw pageidavimų kiekis prioriteto neperka.","hard_validity":"ABSOLUTE HARD atitiktis","hard_validity_pass":"0 ABSOLUTE HARD klaidų — tinkama","hard_validity_fail":"Yra ABSOLUTE HARD klaidų — negalima skelbti","fairness_monthly_explain":"Mėnesio teisingumas vertina tik pasirinktą mėnesį. Jis gali būti mažesnis net sąmoningai, jei šis mėnuo taiso ankstesnių mėnesių nelygybę.","fairness_cumulative_explain":"Kaupiamasis teisingumas sumuoja visus sistemoje paskelbtus ankstesnius mėnesius ir šį mėnesį. Tai pagrindinis ilgalaikio grupės lygumo rodiklis.","fairness_100_note":"100% reiškia, kad SYSTEM struktūrinis krūvis yra optimaliai subalansuotas. Pageidautas penktadienis gali būti vykdomas tik structural Friday raw spread 0–1 viduje; po publikavimo savanoriškas ACTUAL swapas fairness baseline nekeičia.","fairness_formula_month":"Mėnesio formulė: 100 − 18× savaitgalių skirtumas − 7× penktadienių skirtumas − 4× dublių skirtumas − 2× darbo dienų skirtumas.","fairness_formula_cumulative":"Kaupiamojo teisingumo formulė tokia pati, bet kiekvienas skirtumas skaičiuojamas iš visų paskelbtų mėnesių sukauptų sumų.","fairness_breakdown":"Teisingumo išskaidymas","fairness_penalty":"Baudos taškai","fairness_scope":"Apimtis","fairness_metric":"Komponentas","fairness_spread":"Skirtumas (didž.−maž.)","fairness_history":"Teisingumo istorija","fairness_history_help":"Grafike mėnesio teisingumas parodo konkretaus mėnesio lygumą, o kaupiamasis teisingumas — ar sistema laikui bėgant artėja prie lygaus bendro krūvio.","fairness_ledger":"Sistemos teisingumo apskaita","actual_ledger":"Faktinio darbo apskaita","fairness_swap_neutral":"Abipusis savanoriškas apsikeitimas nekeičia teisingumo apskaitos: keičiasi faktinis darbas, bet ne algoritmo paskirstymo vertinimas.","fairness_forced_change":"Pateisinamas post-publication repair (liga, atostogos, force majeure, kritinis SPS pull-down) registruojamas ACTUAL audite, bet NEKEIČIA SYSTEM fairness / spread / postų istorijos. Savanoriški swapai taip pat fairness-neutral; keičiasi tik faktinis grafikas ir retrospektyvinis request satisfaction.","fairness_no_history":"Dar nėra pakankamai paskelbtų mėnesių teisingumo istorijai.","fairness_priority_table":"Ką reiškia hierarchija","fairness_level":"Lygis","fairness_goal":"Tikslas","fairness_interpretation":"Kaip interpretuoti","fairness_hard_goal":"ABSOLUTE HARD: 0 saugos / fizinio neįmanomumo pažeidimų","voluntary_unpopular_goal":"Vykdyti aiškiai savanoriškai pasirinktą nepopuliarų darbą tik išlaikant aukštesnes SYSTEM struktūrines taisykles, įskaitant Friday raw spread 0–1","voluntary_unpopular_explain":"Pageidautas penktadienis yra SOFT: generatorius jį vykdo tik tada, kai išlaiko penktadienių structural floor/ceil raw spread 0–1 ir aukštesnes HARD taisykles. Po publikavimo abipusis ACTUAL swapas gali šį balansą pakeisti neperrašydamas SYSTEM fairness.","other_preferences_goal":"SOFT: griežtai SOFT-1 → SOFT-2 → SOFT-3; kiekviename range pirmiausia horizontalus water-filling, po to likęs įmanomas išpildymas","other_preferences_explain":"SOFT pageidavimai optimizuojami tik po TRUE ABSOLUTE HARD, SYSTEM HARD postų lygybės, RESIDENT HARD ir likusio workload/fatigue fairness; aukštesnis SOFT rangas užrakinamas prieš pereinant į žemesnį.","fairness_cumulative_goal":"Antrinis ilgalaikis tikslas: po gero einamojo mėnesio balanso taisyti ankstesnės SYSTEM istorijos likutinę nelygybę","fairness_monthly_goal":"SPS RO, SPS UG, savaitgaliai IR penktadieniai SYSTEM grafike turi raw spread 0–1. Penktadieniai water-fill'inami pagal visų užpildytų penktadienio priskyrimų floor/ceil dalį. Visos ne-Onko darbo vietos taip pat water-fill'inamos iki raw spread 0–1 prieš SOFT; platesnis postų koridorius leidžiamas tik jei siauresnis įrodytas neįmanomas.","preference_avg":"Vidutinis pageidavimų išpildymas","weekend_spread":"Savaitgalių skirtumas",
 "published_schedule":"Galiojantis paskelbtas grafikas","not_published":"Šiam mėnesiui oficialus grafikas dar nepaskelbtas.","colors":"Nuolatinės žmonių spalvos","download_xlsx":"ATSISIŲSTI SPALVOTĄ GRAFIKĄ (.xlsx)","download_csv":"Atsisiųsti duomenų sąrašą (.csv)",
-"summary_title":"Žmonių suvestinė","frozen_fairness":"Paskelbimo teisingumas","current_after_changes":"Dabartinė būsena po savanoriškų pakeitimų","fairness_frozen_note":"Sistemos teisingumo, postų spread ir post-debt apskaita fiksuojama pagal paskirstymą paskelbimo momentu. Abipusiai savanoriški swapai ir pateisinami post-publication repair (liga, atostogos, force majeure, SPS pull-down) keičia ACTUAL grafiką, bet NEĮEINA į fairness / spread / debt. Faktinis darbas ir retrospektyvinis request satisfaction gali būti rodomi atskirai.",
-"person":"Žmogus","name":"Vardas","target":"Tikslas","workload":"Krūvis","weekday_assignments":"Darbo dienų paskyrimai","weekday_days":"Atskiros darbo dienos","weekend_assignments":"Savaitgalio pamainos","prior_weekends":"Ankstesni savaitgaliai","cumulative_weekends":"Sukaupti savaitgaliai","fridays":"Penktadieniai","double_shifts":"Dvigubos pamainos","max_consecutive":"Daugiausia dienų iš eilės","max_rolling7_hours":"Daugiausia val. per 7 d.","max_calendar_week_hours":"Daugiausia val. kalendorinę savaitę","free_days":"Laisvos dienos","preference_score":"Bendras prašymų išpildymas, %","planned_backups":"Planuoti dubliai","effective_backups":"Faktiniai / galiojantys dubliai",
+"summary_title":"Žmonių suvestinė","frozen_fairness":"Paskelbimo teisingumas","current_after_changes":"Dabartinė būsena po savanoriškų pakeitimų","fairness_frozen_note":"Sistemos teisingumo, postų spread ir future catch-up apskaita fiksuojama pagal paskirstymą paskelbimo momentu. Abipusiai savanoriški swapai ir pateisinami post-publication repair (liga, atostogos, force majeure, SPS pull-down) keičia ACTUAL grafiką, bet NEĮEINA į fairness / spread / istorijos. Faktinis darbas ir retrospektyvinis request satisfaction gali būti rodomi atskirai.",
+"person":"Žmogus","name":"Vardas","target":"Tikslas","workload":"Krūvis","weekday_assignments":"Darbo dienų paskyrimai","weekday_days":"Atskiros darbo dienos","weekend_assignments":"Savaitgalio pamainos","saturday_assignments":"Šeštadienio pamainos","sunday_assignments":"Sekmadienio pamainos","prior_weekends":"Ankstesni savaitgaliai","cumulative_weekends":"Sukaupti savaitgaliai","fridays":"Penktadieniai","double_shifts":"Dvigubos pamainos","max_consecutive":"Daugiausia dienų iš eilės","max_rolling7_hours":"Daugiausia val. per 7 d.","max_calendar_week_hours":"Daugiausia val. kalendorinę savaitę","free_days":"Laisvos dienos","preference_score":"Bendras prašymų išpildymas, %","planned_backups":"Planuoti dubliai","effective_backups":"Faktiniai / galiojantys dubliai",
 "transparency_title":"Skaidrumas","validity_heading":"1. Privalomų taisyklių patikra","validity_text":"0 klaidų reiškia, kad paskelbta bazinė versija nepažeidė nė vienos privalomos taisyklės. Tai galiojimo, o ne teisingumo procentas.",
 "fairness_heading":"2. Grupės teisingumas","fairness_text":"Teisingumas skiriamas į mėnesio ir kaupiamąjį. Kaupiamasis yra pagrindinis ilgalaikis sistemos lygumo rodiklis; mėnesio teisingumas padeda suprasti konkretų mėnesį.","fair_formula":"Abiejų rodiklių formulė vienoda: 100 − 18×savaitgalių skirtumas − 7×penktadienių skirtumas − 4×dublių skirtumas − 2×darbo dienų skirtumas. Skiriasi tik apimtis: vienas mėnuo arba visų paskelbtų mėnesių suma.",
 "metric_weekend":"Savaitgalių skirtumas","metric_friday":"Penktadienių skirtumas","metric_double":"Dvigubų pamainų skirtumas","metric_weekday":"Darbo dienų skirtumas",
 "personal_vs_group":"Asmeninis pageidavimų išpildymas ir grupės teisingumas","balance_ratio":"Balanso santykis","ratio_help":"Balanso santykis = mažesnis procentas / didesnis procentas. 1,00 reiškia, kad abu rodikliai yra vienodo lygio; jis neparodo absoliučios kokybės.",
 "baseline_personal":"Asmeninis paskelbimo momentu","current_personal":"Asmeninis dabar","not_applicable":"Netaikoma","all_resident_scores":"Visų rezidentų pageidavimų išpildymas",
-"backup_title":"Dubliai / pavadavimai","backup_self_select":"Pasirink mano mėnesio dublių slotus","backup_self_select_help":"Rezervuojami savaitgalio SPS RO budėjimai, darbo dienų SPS RO ir SPS UG slotai. Galima pasirinkti kelis slotus; rezervuotas dublis blokuoja persidengiančią normalią pamainą.","backup_claim_deadline":"Dublių pasirinkimo terminas","backup_claim_saved":"Dublių slotai rezervuoti.","backup_claim_released":"Dublio pasirinkimas atšauktas.","backup_claim_taken":"Šį slotą ką tik pasirinko kitas rezidentas. Pasirinkite kitą.","backup_claim_locked":"Pasirinkimo terminas pasibaigė arba grafikas jau paskelbtas. Toliau dublio slotai keičiami per Apsikeitimai.","backup_claim_missing_penalty":"Dar nepasirinkote nė vieno dublio sloto. Jei iki termino nepasirinksite, neteksite first-come pasirinkimo prioriteto ir pateksite į pirmiausia automatiškai skiriamų likusių dublių eilę.","backup_claim_yours":"Jūsų rezervuoti dubliai","backup_claim_board":"Dublių rezervacijos","backup_claim_free":"Laisva","backup_claim_auto_queue":"Automatinio paskyrimo prioritetinė eilė","backup_claim_auto_queue_help":"Rezidentai, kurie nepasirinko nė vieno dublio sloto, pirmiausia svarstomi likusiems nepaimtiems privalomiems dublio slotams. Pirmiausia saugomas RESIDENT HARD; tik jei griežto kandidato nėra, leidžiamas minimalus ir kuo lygiau paskirstytas RESIDENT-HARD praradimas. ABSOLUTE HARD niekada neatlaisvinamas.","release_backup_claim":"ATŠAUKTI MANO PASIRINKIMĄ","backup_claim_reminder_kind":"Dublių pasirinkimo priminimas","backup_swap_title":"Dublių apsikeitimai","backup_swap_help":"Po grafiko paskelbimo galite pasiūlyti apsikeisti bet kuriuo suplanuotu savaitgalio / SPS RO / SPS UG dublio slotu. Apsikeitimas taikomas tik jei abu lieka tinkami naujiems slotams.","my_backup_duty":"Mano dublio vieta","their_backup_duty":"Kito rezidento dublio vieta","request_backup_swap":"SIŪLYTI DUBLIŲ APSIKEITIMĄ","backup_swap_sent":"Dublio apsikeitimo pasiūlymas išsiųstas.","backup_swap_invalid":"Šio apsikeitimo negalima atlikti, nes bent vienas rezidentas nebūtų tinkamas naujam dublio slotui.","backup_swap_accepted":"Dublių apsikeitimas patvirtintas ir pritaikytas.","backup_swap_rejected":"Dublio apsikeitimas atmestas.","backup_definition":"Kiekviena užpildyta savaitgalio, SPS RO ir SPS UG pamaina turi turėti vardinį dublį. Pirmiausia parenkamas laisvas rezidentas, kurio RESIDENT HARD išlieka nepažeistas. Tik jei tokio nėra, galima taikyti minimalų ir kuo lygiau paskirstytą RESIDENT-HARD praradimą; ABSOLUTE HARD ir persidengianti normali pamaina niekada neleidžiami.",
+"backup_title":"Dubliai / pavadavimai","backup_self_select":"Pasirink mano mėnesio dublių slotus","backup_self_select_help":"Rezervuojami privalomo dengimo slotai pagal poziciją: SPS RO bet kurią dieną / bloką, SPS UG bet kurią dieną / bloką, Centro UG 120 rytas ir Onko RO pilna 9 val. pamaina. CENTRO RO dengiama automatiškai best-effort. Galima pasirinkti kelis slotus; rezervuotas dublis blokuoja persidengiančią normalią pamainą.","backup_claim_deadline":"Dublių pasirinkimo terminas","backup_claim_saved":"Dublių slotai rezervuoti.","backup_claim_released":"Dublio pasirinkimas atšauktas.","backup_claim_taken":"Šį slotą ką tik pasirinko kitas rezidentas. Pasirinkite kitą.","backup_claim_locked":"Pasirinkimo terminas pasibaigė arba grafikas jau paskelbtas. Toliau dublio slotai keičiami per Apsikeitimai.","backup_claim_missing_penalty":"Dar nepasirinkote nė vieno dublio sloto. Jei iki termino nepasirinksite, neteksite first-come pasirinkimo prioriteto ir pateksite į pirmiausia automatiškai skiriamų likusių dublių eilę.","backup_claim_yours":"Jūsų rezervuoti dubliai","backup_claim_board":"Dublių rezervacijos","backup_claim_free":"Laisva","backup_claim_auto_queue":"Automatinio paskyrimo prioritetinė eilė","backup_claim_auto_queue_help":"Rezidentai, kurie nepasirinko nė vieno dublio sloto, pirmiausia svarstomi likusiems nepaimtiems privalomiems dublio slotams. Pirmiausia saugomas RESIDENT HARD; tik jei griežto kandidato nėra, leidžiamas minimalus ir kuo lygiau paskirstytas RESIDENT-HARD praradimas. ABSOLUTE HARD niekada neatlaisvinamas.","release_backup_claim":"ATŠAUKTI MANO PASIRINKIMĄ","backup_claim_reminder_kind":"Dublių pasirinkimo priminimas","backup_swap_title":"Dublių apsikeitimai","backup_swap_help":"Po grafiko paskelbimo galite pasiūlyti apsikeisti bet kuriuo suplanuotu privalomu dublio slotu. Apsikeitimas taikomas tik jei abu lieka tinkami naujiems slotams.","my_backup_duty":"Mano dublio vieta","their_backup_duty":"Kito rezidento dublio vieta","request_backup_swap":"SIŪLYTI DUBLIŲ APSIKEITIMĄ","backup_swap_sent":"Dublio apsikeitimo pasiūlymas išsiųstas.","backup_swap_invalid":"Šio apsikeitimo negalima atlikti, nes bent vienas rezidentas nebūtų tinkamas naujam dublio slotui.","backup_swap_accepted":"Dublių apsikeitimas patvirtintas ir pritaikytas.","backup_swap_rejected":"Dublio apsikeitimas atmestas.","backup_definition":"Privalomas vardinis dublis pagal poziciją: SPS RO bet kurią dieną / bloką, SPS UG bet kurią dieną / bloką, Centro UG 120 rytas ir Onko RO pilna 9 val. pamaina. CENTRO RO dengiama kuo plačiau pagal likusią saugią talpą; jos nepadengimas publikavimo neblokuoja. ABSOLUTE HARD ir persidengianti normali pamaina niekada neleidžiami.",
 "my_backup_schedule":"Mano dublių grafikas","no_backups":"Šiam žmogui šį mėnesį dublio pareigų nėra.","covered_assignment":"Dubliuojamas žmogus ir jo grafikas","covered_person":"Dubliuojamas žmogus","covered_schedule":"Dubliuojama pamaina","planned_backup":"Planuotas dublis","actual_backup":"Faktinis dublis","effective_backup":"Galiojantis dublis","backup_note":"Pastaba",
-"manage_backups":"Seniūnės dublių kontrolė","backup_coverage":"Dublių padengimas","working_person_days":"Privalomų padengti pamainų","covered_person_days":"Pamainų su vardiniu dubliu","backup_complete":"Visos užpildytos savaitgalio, SPS RO ir SPS UG pamainos turi konkretų vardinį dublį.","backup_incomplete":"Bent viena savaitgalio / SPS RO / SPS UG pamaina neturi tinkamo dublio. Tokio grafiko negalima skelbti.","resync_backups":"ATNAUJINTI DUBLIUS PAGAL GALIOJANTĮ GRAFIKĄ","backup_synced":"Dubliai automatiškai perskaičiuoti pagal galiojantį grafiką.","backup_capacity_block":"Juodraščio negalima paskelbti tik tada, jei bent vienai privalomai savaitgalio / SPS RO / SPS UG pamainai nėra nė vieno tuo metu laisvo ir ABSOLUTE-HARD saugaus žmogaus. Vien RESIDENT HARD publikavimo neblokuoja: minimalus neišvengiamas praradimas paskirstomas kuo teisingiau ir aiškiai parodomas.",
-"cover_credit_type":"Automatiškai nustatoma pavadavimo rūšis","cover_6h":"RYTAS 08:00–14:00 = 6 val.","cover_12h":"RYTAS + POPIETĖ = du atskiri 6 val. įvykiai","cover_night12h":"NAKTIS 20:00–08:00 = 12 val.","cover_credit_note":"Rūšies seniūnė nepasirenka ranka: ji nustatoma pagal konkrečią realiai dubliuotą vietą. Jei žmogus realiai pavaduoja ir RYTĄ, ir POPIETĘ, registruojami du atskiri 6 val. pavadavimai. NAKTIS bus 12 val. įvykis, kai sistemoje atsiras naktinės pamainos.","actual_override":"Faktinio dublio rankinis pakeitimas","mark_backup_completed":"PAŽYMĖTI REALIAI ĮVYKDYTĄ PAVADAVIMĄ","backup_completed":"Realus pavadavimas užregistruotas. Sistema automatiškai atnaujino abiejų žmonių tos pačios rūšies balansus.","undo_backup_completed":"ATŠAUKTI REALŲ PAVADAVIMĄ IR JO BALANSŲ POKYČIUS","backup_completion_undone":"Realus pavadavimas ir jo sukurti balansų pokyčiai atšaukti.","completed_backup":"Įvykdyta","credit_balances":"Poilsio kreditai ir darbo skolos","bonus_units":"Kreditai","bonus_shift_value":"Galimas pamainų sumažinimas","rest_credit_bank":"Poilsio kreditų bankas","work_debt_bank":"Darbo skolų bankas","credit_type":"Kredito / skolos rūšis","credit_am":"RYTAS — 6 val.","credit_pm":"POPIETĖ — 6 val.","credit_night":"NAKTIS — 12 val.","use_credit_am":"Panaudoti RYTO poilsio kreditų","use_credit_pm":"Panaudoti POPIETĖS poilsio kreditų","credit_month_cap":"Per mėnesį galima panaudoti daugiausia 2 dieninius poilsio kreditus iš viso.","night_bank_only":"NAKTIES kreditai kol kas tik kaupiami; jie negali būti panaudoti dabartiniam dieniniam PGY1 targetui.","debt_policy":"Darbo skolos politika","debt_policy_text":"Darbo skola neprivalo būti atidirbta kitą mėnesį. 0–2 mėn. ji tik bankuojama; nuo 3 mėn. sistema švelniai teikia prioritetą tos pačios rūšies dublio galimybėms; nuo 6 mėn. prioritetas tampa stiprus; po 12 mėn. skola tampa pradelsta ir lieka aktyvi, kol realiai padengiama.","debt_due":"Terminas","debt_age":"Amžius, mėn.","debt_status":"Būsena","debt_open":"Aktyvi","debt_soft":"3+ mėn. — prioritetas","debt_strong":"6+ mėn. — stiprus prioritetas","debt_overdue":"12+ mėn. — PRADELSTA","netting_explain":"Jei jau turite tos pačios rūšies darbo skolą ir realiai pavaduojate kitą, naujas pavadavimas pirmiausia uždaro seniausią skolą. Jei jus pavaduoja, o turite laisvą nepanaudotą tos pačios rūšies poilsio kreditą, jis pirmiausia panaudojamas skolai kompensuoti. Jau rezervuotas mini-atostogoms kreditas neatimamas.","cover_effect_rest":"Pavaduojančiam sukurtas naujas poilsio kreditas.","cover_effect_debt_settled":"Pavaduojančiam uždaryta seniausia tos pačios rūšies darbo skola.","covered_effect_debt":"Pavaduotam žmogui sukurta nauja tos pačios rūšies darbo skola.","covered_effect_rest_used":"Pavaduoto žmogaus laisvas tos pačios rūšies poilsio kreditas panaudotas kompensacijai; nauja darbo skola nesukurta.","max_credit_error":"Vienam mėnesiui galima pasirinkti daugiausia 2 dieninius poilsio kreditus iš viso.","backup_record":"Dublio įrašas","record_actual":"ĮRAŠYTI FAKTINĮ DUBLĮ","actual_saved":"Faktinis dublis įrašytas. Dublių statistika naudos šį žmogų.","clear_actual":"GRĄŽINTI PLANUOTĄ DUBLĮ","actual_cleared":"Faktinis pakeitimas pašalintas; vėl galioja planuotas dublis.","no_eligible_backup":"Šiai pamainai nėra tinkamo žmogaus: kandidatas turi būti laisvas tuo pačiu laiko bloku ir nepažeisti ABSOLUTE HARD. RESIDENT HARD pirmiausia saugomas, o tik jei griežto kandidato nėra — taikomas minimalus ir kuo teisingiau paskirstytas praradimas.",
-"swap_title":"Savanoriški apsikeitimai","swap_note":"Savanoriški apsikeitimai keičia faktinį grafiką tik po abiejų žmonių sutikimo ir privalomų taisyklių patikros. Sistemos teisingumo apskaita lieka tokia, kokią paskyrė sistema prieš apsikeitimą, todėl abipusis apsikeitimas savaime nekeičia mėnesio ar kaupiamojo teisingumo.","repair_title":"Neplanuoti pakeitimai po publikavimo","repair_help":"Liga, atostogos ar kita pateisinama / force majeure priežastis keičia tik FAKTINĮ grafiką. Paskelbimo momento SISTEMOS teisingumo bazė ir fairness_history nekeičiami; sergančiam ar neatvykstančiam rezidentui nesukuriama teisingumo skola. V2.5.57: jei neatvykstantis žmogus dengė SPS RO / SPS UG, kritinis postas išlaikomas pirmiausia perkeliant tos pačios pamainos rezidentą iš žemesnės hierarchijos NEPRIVALOMO posto; donorinis optional postas gali likti tuščias. Tik jei saugaus donorinio perkėlimo nėra, naudojamas tame laiko bloke laisvo rezidento fallback. ABSOLUTE sauga, overlap ir mandatory coverage lieka privalomi. Pull-down ir kiti pateisinami repair NEĮEINA į SYSTEM fairness, postų spread ar post-debt skaičiavimus.","repair_assignment":"Keičiama pamaina","repair_replacement":"Pavaduojantis rezidentas","repair_reason":"Priežasties kategorija","repair_reason_sickness":"Liga","repair_reason_leave":"Atostogos","repair_reason_approved":"Kitas pateisinamas neatvykimas","repair_reason_force":"Force majeure / nenumatytas įvykis","repair_note":"Vidinė pastaba (nebūtina)","apply_repair":"PRITAIKYTI NEPLANUOTĄ PAKEITIMĄ","repair_applied":"Pakeitimas pritaikytas FAKTINIAM grafikui. SYSTEM fairness, postų spread ir post-debt lieka pagal publikavimo bazę; repair į juos nepridedamas. Faktinis grafikas ir request satisfaction perskaičiuoti.","repair_invalid":"Šio pakeitimo negalima taikyti dėl operacinės saugos / HARD taisyklės","repair_no_candidate":"Šiai pamainai nėra saugiai tinkamo pavaduojančio rezidento.","repair_history":"Neplanuotų pakeitimų istorija","repair_load":"Papildoma repair našta šį mėnesį","repair_load_help":"Tai tik operacinis audito skaitiklis. Jis NENAUDOJAMAS fairness, postų spread, post-debt ar ateities kompensacijai. Kritinis pull-down reiškia tos pačios suplanuotos darbo pamainos vietos pakeitimą, o ne papildomą fairness naštą.","repair_fairness_neutral":"FAIRNESS NEUTRAL","repair_from":"Negalintis dirbti","repair_to":"Pavadavo","repair_date":"Data / pamaina","my_assignment":"Mano pamaina","their_assignment":"Kito žmogaus pamaina","request_swap":"SIŪLYTI APSIKEITIMĄ","request_sent":"Apsikeitimo pasiūlymas išsiųstas.","incoming":"Gauti pasiūlymai","accept":"PRIIMTI","reject":"ATMESTI","accepted":"Apsikeitimas patvirtintas ir pritaikytas.","accepted_pending":"Apsikeitimą patvirtino abu žmonės. Beta versijoje seniūnė atliks galutinę privalomų taisyklių patikrą ir pritaikys pakeitimą.","finalize_swap":"PRITAIKYTI PATVIRTINTĄ APSIKEITIMĄ","swap_applied":"Apsikeitimas pritaikytas, privalomos taisyklės patikrintos, dubliai perskaičiuoti.","swap_finalize_failed":"Apsikeitimo pritaikyti nepavyko, nes po galutinės patikros būtų pažeista privaloma taisyklė.","rejected":"Apsikeitimas atmestas.","hard_reject":"Apsikeitimas atmestas, nes pažeistų privalomą taisyklę.","history":"Apsikeitimų istorija","pending":"Laukiama","approved":"Patvirtinta","rejected_status":"Atmesta",
+"manage_backups":"Seniūnės dublių kontrolė","backup_coverage":"Dublių padengimas","working_person_days":"Privalomų padengti pamainų","covered_person_days":"Pamainų su vardiniu dubliu","backup_complete":"Visos privalomai dengiamos pamainos turi konkretų vardinį dublį.","backup_incomplete":"Bent viena privalomai dengiama pamaina neturi tinkamo dublio. Tokio grafiko negalima skelbti.","resync_backups":"ATNAUJINTI DUBLIUS PAGAL GALIOJANTĮ GRAFIKĄ","backup_synced":"Dubliai automatiškai perskaičiuoti pagal galiojantį grafiką.","backup_capacity_block":"Juodraščio negalima paskelbti, jei bent vienai privalomai dengiama pamainai nėra nė vieno tuo metu laisvo ir ABSOLUTE-HARD saugaus žmogaus. CENTRO RO best-effort padengimo trūkumas publikavimo neblokuoja. Vien RESIDENT HARD publikavimo neblokuoja: minimalus neišvengiamas praradimas paskirstomas kuo teisingiau ir aiškiai parodomas.",
+"cover_credit_type":"Automatiškai nustatoma pavadavimo rūšis","cover_6h":"RYTAS 08:00–14:00 = 6 val.","cover_12h":"RYTAS + POPIETĖ = du atskiri 6 val. įvykiai","cover_night12h":"NAKTIS 20:00–08:00 = 12 val.","cover_credit_note":"Rūšies seniūnė nepasirenka ranka: ji nustatoma pagal konkrečią realiai dubliuotą vietą. Jei žmogus realiai pavaduoja ir RYTĄ, ir POPIETĘ, registruojami du atskiri 6 val. pavadavimai. NAKTIS bus 12 val. įvykis, kai sistemoje atsiras naktinės pamainos.","actual_override":"Faktinio dublio rankinis pakeitimas","mark_backup_completed":"PAŽYMĖTI REALIAI ĮVYKDYTĄ PAVADAVIMĄ","backup_completed":"Realus pavadavimas užregistruotas. Pavaduojančiam rezidentui suteiktas poilsio kreditas; pavaduotam žmogui jokia skola nesukuriama.","undo_backup_completed":"ATŠAUKTI REALŲ PAVADAVIMĄ IR JO KREDITĄ","backup_completion_undone":"Realus pavadavimas ir pavaduojančiam suteiktas kreditas atšaukti.","completed_backup":"Įvykdyta","credit_balances":"Poilsio kreditai","bonus_units":"Kreditai","bonus_shift_value":"Galimas pamainų sumažinimas","rest_credit_bank":"Poilsio kreditų bankas","credit_type":"Kredito rūšis","credit_am":"RYTAS — 6 val.","credit_pm":"POPIETĖ — 6 val.","credit_night":"NAKTIS — 12 val.","use_credit_am":"Panaudoti RYTO poilsio kreditų","use_credit_pm":"Panaudoti POPIETĖS poilsio kreditų","credit_month_cap":"Per mėnesį galima panaudoti daugiausia 2 dieninius poilsio kreditus iš viso.","night_bank_only":"NAKTIES kreditai kol kas tik kaupiami; jie negali būti panaudoti dabartiniam dieniniam PGY1 targetui.","netting_explain":"Kreditas yra vienpusė nauda realiai pavaduojančiam rezidentui. Pavaduotam žmogui skola nesukuriama ir jo turimi poilsio kreditai dėl pavadavimo neatimami.","cover_effect_rest":"Pavaduojančiam rezidentui suteiktas naujas poilsio kreditas.","max_credit_error":"Vienam mėnesiui galima pasirinkti daugiausia 2 dieninius poilsio kreditus iš viso.","backup_record":"Dublio įrašas","record_actual":"ĮRAŠYTI FAKTINĮ DUBLĮ","actual_saved":"Faktinis dublis įrašytas. Dublių statistika naudos šį žmogų.","clear_actual":"GRĄŽINTI PLANUOTĄ DUBLĮ","actual_cleared":"Faktinis pakeitimas pašalintas; vėl galioja planuotas dublis.","no_eligible_backup":"Šiai pamainai nėra tinkamo žmogaus: kandidatas turi būti laisvas tuo pačiu laiko bloku ir nepažeisti ABSOLUTE HARD. RESIDENT HARD pirmiausia saugomas, o tik jei griežto kandidato nėra — taikomas minimalus ir kuo teisingiau paskirstytas praradimas.",
+"swap_title":"Savanoriški apsikeitimai","swap_note":"Savanoriški apsikeitimai keičia faktinį grafiką tik po abiejų žmonių sutikimo ir privalomų taisyklių patikros. Tikslus mėnesio targetas ir Onko poros 0/2/4/... lieka ABSOLUTE HARD ir negali būti apeitos swapu; consecutive Onko gali būti tik aiškiai patvirtinama ACK pasekmė. Sistemos teisingumo apskaita lieka tokia, kokią paskyrė sistema prieš apsikeitimą.","repair_title":"Neplanuoti pakeitimai po publikavimo","repair_help":"Liga, atostogos ar kita pateisinama / force majeure priežastis keičia tik FAKTINĮ grafiką. Paskelbimo momento SISTEMOS teisingumo bazė ir fairness_history nekeičiami; sergančiam ar neatvykstančiam rezidentui nesukuriama teisingumo skola. V2.5.57: jei neatvykstantis žmogus dengė SPS RO / SPS UG, kritinis postas išlaikomas pirmiausia perkeliant tos pačios pamainos rezidentą iš žemesnės hierarchijos NEPRIVALOMO posto; donorinis optional postas gali likti tuščias. Tik jei saugaus donorinio perkėlimo nėra, naudojamas tame laiko bloke laisvo rezidento fallback. ABSOLUTE sauga, overlap ir mandatory coverage lieka privalomi. Pull-down ir kiti pateisinami repair NEĮEINA į SYSTEM fairness, postų spread ar future catch-up skaičiavimus.","repair_assignment":"Keičiama pamaina","repair_replacement":"Pavaduojantis rezidentas","repair_reason":"Priežasties kategorija","repair_reason_sickness":"Liga","repair_reason_leave":"Atostogos","repair_reason_approved":"Kitas pateisinamas neatvykimas","repair_reason_force":"Force majeure / nenumatytas įvykis","repair_note":"Vidinė pastaba (nebūtina)","apply_repair":"PRITAIKYTI NEPLANUOTĄ PAKEITIMĄ","repair_applied":"Pakeitimas pritaikytas FAKTINIAM grafikui. SYSTEM fairness, postų spread ir future catch-up lieka pagal publikavimo bazę; repair į juos nepridedamas. Faktinis grafikas ir request satisfaction perskaičiuoti.","repair_invalid":"Šio pakeitimo negalima taikyti dėl operacinės saugos / HARD taisyklės","repair_no_candidate":"Šiai pamainai nėra saugiai tinkamo pavaduojančio rezidento.","repair_history":"Neplanuotų pakeitimų istorija","repair_load":"Papildoma repair našta šį mėnesį","repair_load_help":"Tai tik operacinis audito skaitiklis. Jis NENAUDOJAMAS fairness, postų spread, future catch-up ar ateities kompensacijai. Kritinis pull-down reiškia tos pačios suplanuotos darbo pamainos vietos pakeitimą, o ne papildomą fairness naštą.","repair_fairness_neutral":"FAIRNESS NEUTRAL","repair_from":"Negalintis dirbti","repair_to":"Pavadavo","repair_date":"Data / pamaina","my_assignment":"Mano pamaina","their_assignment":"Kito žmogaus pamaina","request_swap":"SIŪLYTI APSIKEITIMĄ","request_sent":"Apsikeitimo pasiūlymas išsiųstas.","incoming":"Gauti pasiūlymai","accept":"PRIIMTI","reject":"ATMESTI","accepted":"Apsikeitimas patvirtintas ir pritaikytas.","accepted_pending":"Apsikeitimą patvirtino abu žmonės. Beta versijoje seniūnė atliks galutinę privalomų taisyklių patikrą ir pritaikys pakeitimą.","finalize_swap":"PRITAIKYTI PATVIRTINTĄ APSIKEITIMĄ","swap_applied":"Apsikeitimas pritaikytas, privalomos taisyklės patikrintos, dubliai perskaičiuoti.","swap_finalize_failed":"Apsikeitimo pritaikyti nepavyko, nes po galutinės patikros būtų pažeista privaloma taisyklė.","rejected":"Apsikeitimas atmestas.","hard_reject":"Apsikeitimas atmestas, nes pažeistų privalomą taisyklę.","history":"Apsikeitimų istorija","pending":"Laukiama","approved":"Patvirtinta","rejected_status":"Atmesta",
 "calendar_title":"Mano grafikas kalendoriui","calendar_help":"Galite atsisiųsti vienkartinį .ics failą arba vieną kartą užsiprenumeruoti privačią kalendoriaus nuorodą. Prenumerata atnaujinama paskelbus naują grafiką ir po svarbių faktinio grafiko pakeitimų. Jei Nustatymuose įjungti dubliai, jie taip pat įtraukiami.","download_ics":"ATSISIŲSTI MANO GRAFIKĄ (.ics)","calendar_feed":"Privati kalendoriaus prenumeratos nuoroda","calendar_feed_private":"Ši nuoroda veikia kaip slaptažodis į jūsų grafiką — nesidalinkite ja. Ji turi atsitiktinį ilgą kodą ir nėra rodoma kitiems rezidentams.","calendar_google":"GOOGLE CALENDAR","calendar_apple":"APPLE CALENDAR","calendar_other":"OUTLOOK CALENDAR","calendar_google_help":"Google Calendar kompiuteryje: Add other calendars → From URL → įklijuokite žemiau esančią privačią nuorodą. Tai daroma vieną kartą.","calendar_apple_help":"Apple Calendar gali užsiprenumeruoti nuorodą tiesiogiai. Paspaudus mygtuką turėtų atsidaryti Calendar prenumeratos langas.","calendar_other_help":"Outlook gali prenumeruoti tą pačią privačią iCalendar nuorodą (Add calendar → Subscribe from web). Jei naudojate kitą programą, naudokite .ics failą arba prenumeratos nuorodą, jei ji palaikoma.",
 "proof_title":"Mano grafiko patikra","proof_intro":"Vizuali patikra parodo, kas tiksliai atitiko jūsų poreikius ir kur liko neatitikimų. Čia nerodomas programinis kodas — tik galutiniai rezultatai.","matches":"ATITINKA","partial":"DALINAI","mismatch":"NEATITINKA","baseline":"Paskelbimo momentu","current":"Dabar","hard_ok":"Privalomas negalėjimas dirbti išlaikytas","hard_bad":"Privaloma taisyklė pažeista","soft_off_ok":"Norėtos laisvos dienos","preferred_ok":"Pageidautos darbo dienos","workload_ok":"Mėnesio krūvio tikslas","style_component":"Darbo pobūdžio kriterijus","missed_dates":"Neatitikusios datos","criterion":"Kriterijus","result":"Rezultatas","score":"Išpildymas","explanation":"Paaiškinimas","proof_all_good":"Pagal pateiktus duomenis privalomos taisyklės išlaikytos, o aktyvūs pageidavimai neturi ryškių neatitikimų.","proof_soft_issues":"Privalomos taisyklės išlaikytos, tačiau ne visi pageidavimai buvo įvykdyti.","proof_hard_issue":"Aptiktas privalomos taisyklės neatitikimas — grafiką būtina peržiūrėti.","no_active_preferences":"Šiai kategorijai aktyvaus pageidavimo nepateikėte.","swap_suggestion":"Jei privalomos taisyklės nepažeistos, bet pageidavimas liko neįvykdytas, galima ieškoti savanoriško sprendimo Apsikeitimų lange.",
 "rules_title":"Grafiko taisyklės","read":"Skaityti","edit":"Redaguoti","save_rules":"IŠSAUGOTI TAISYKLIŲ PAKEITIMUS","rules_saved":"Taisyklės atnaujintos.","edit_senior_only":"Taisykles redaguoti gali tik seniūnė.",
@@ -116,49 +133,49 @@ TR = {
 "EN": {
 "language":"Language","user":"User","profile":"Profile","resident_profile":"Resident profile","senior_profile":"Senior scheduler profile","resident_pin":"Personal PIN","admin_pin":"Senior scheduler PIN","local_resident":"Local test mode: personal PINs are not configured.","local_senior":"Local test mode: senior functions are unlocked only for the senior account.","bad_pin":"Incorrect PIN.",
 "login_title":"Sign in","login":"SIGN IN","logout":"SIGN OUT","signup":"CREATE ACCOUNT","signup_title":"First registration","password":"Password","password_repeat":"Repeat password","auth_email":"Email","auth_invalid":"Sign-in failed. Check your email and password.","signup_sent":"Account created. If email confirmation is enabled, confirm the email and then sign in.","signup_password_mismatch":"Passwords do not match.","claim_title":"Link this account","resident_claim_tab":"Resident","observer_claim_tab":"Department administrator / observer","observer_claim_help":"This account is for departmental oversight only. It is read-only: it can view the published and current schedules, swaps, backups, fairness and audit history, but cannot change anything.","observer_invite_code":"Department observer invite code","observer_claim":"ACTIVATE READ-ONLY ACCESS","observer_read_only":"TIK PERŽIŪRA","observer_role":"Department observer","observer_portal":"Department schedule oversight","observer_overview":"Overview","observer_schedule":"Schedules","observer_changes":"Change log","observer_fairness":"Teisingumas","observer_backups":"Backups","observer_rules":"Rules","observer_scope_note":"This account cannot generate, publish, approve, edit or undo schedules or swaps.","observer_privacy_note":"Private resident preferences, HARD-unavailable dates, personal notes, emails and account settings are not shown.","observer_baseline_schedule":"SYSTEM baseline — at publication","observer_actual_schedule":"ACTUAL schedule — now","observer_change_count":"Changed normal assignments","observer_normal_swaps":"Normal-shift swaps","observer_backup_swaps":"Backup swaps","observer_pending_swaps":"Pending","observer_approved_swaps":"Approved","observer_rejected_swaps":"Rejected","observer_no_changes":"There are no normal-assignment changes after publication.","observer_from":"From","observer_to":"Now","observer_change_log_help":"The SYSTEM baseline remains the fairness ledger. The ACTUAL schedule shows the real situation after bilateral voluntary swaps.","observer_backup_status":"Status","observer_planned_backup":"Planned backup","observer_actual_backup":"Actual backup","observer_activated":"Activated","observer_completed":"Actually covered","observer_no_schedule":"No schedule has been published for this month yet.","observer_access_ready":"Read-only department access activated.","claim_help":"Choose only your own initials and enter the one-time beta invite code provided to you.","invite_code":"Invite code","claim":"LINK ACCOUNT","claim_failed":"Could not link the account. Check the initials and invite code.","account_unlinked":"You are signed in, but this account is not linked to a resident yet.",
-"app_title":"Resident monthly scheduling system","app_caption":"Hard rules → transparency → soft preferences → controlled changes.","year":"Year","month":"Month","weekdays":"Weekdays","base_target":"Base shift target","deadline":"Preference deadline","days_left":"Days remaining","deadline_today":"Today is the deadline.","deadline_passed":"Deadline passed {n} day(s) ago.","deadline_future":"{n} day(s) remain until the deadline.","deadline_note":"Next month's preferences are due by the 13th day of the preceding month, inclusive.",
-"senior_dashboard":"Senior dashboard","preferences":"Preferences","settings":"Settings","generation":"Generation","schedule":"Schedule","summary":"Summary","transparency":"Transparency","credits_debts":"Credits and debts","backups":"Backups","swaps":"Swaps","calendar":"Calendar","proof":"Proof","senior_guide":"Senior guide","rules":"Rules",
+"app_title":"Resident monthly scheduling system","app_caption":"Hard rules → transparency → soft preferences → controlled changes.","year":"Year","month":"Month","weekdays":"Weekdays","base_target":"Base shift target","deadline":"Preference deadline","days_left":"Days remaining","deadline_today":"Today is the deadline.","deadline_passed":"Deadline passed {n} day(s) ago.","deadline_future":"{n} day(s) remain until the deadline.","deadline_note":"Next month's preferences are due by 00:00 on the 14th of the preceding month (the 13th is the last full day).",
+"senior_dashboard":"Senior dashboard","preferences":"Preferences","settings":"Settings","generation":"Generation","schedule":"Schedule","summary":"Summary","transparency":"Transparency","credits_debts":"Credits","backups":"Backups","swaps":"Swaps","calendar":"Calendar","proof":"Proof","senior_guide":"Senior guide","rules":"Rules",
 "my_preferences":"My monthly preferences","hard_unavailable":"Unavailable — RESIDENT HARD","hard_help":"You may mark the whole day or only the morning / afternoon. This is the resident’s highest-priority request: the engine first searches for zero losses. Only if that is impossible is the minimum unavoidable loss distributed as evenly as possible; ABSOLUTE HARD safety rules remain unbreakable.","hard_all_day":"Whole day","hard_morning":"Morning (08:00–14:00)","hard_afternoon":"Afternoon (14:00–20:00)","hard_partial_note":"If only morning or afternoon is marked, you may still receive a normal shift or backup duty in the other time block.","hard_overlap":"The same date cannot be marked as both whole-day and partial required unavailability.","soft_free":"Would like time off — preference","soft_help":"Choose whole day, morning, or afternoon. The system tries to honor this unless a higher-priority rule prevents it.","soft_overlap":"The same date cannot be marked as both whole-day and partial requested time off.","preferred":"Prefer to work — preference","preferred_help":"Choose whole day, morning, or afternoon. Voluntary unpopular work is prioritized when labour-law and rest-safety rules allow it.","preferred_overlap":"The same date cannot be marked as both whole-day and partial preferred work.","vacation":"Approved vacation / leave days","vacation_help":"Select approved vacation days. The scheduler will not assign work or backup on those days and will proportionally reduce the monthly workload target so approved leave is not treated as a fairness deficit.","vacation_overlap":"The same day is entered as both vacation and another justified absence; keep it in only one field.","note":"Additional note","note_ph":"Example: I would prefer not to have a double shift after several consecutive days.","save":"Save","saved":"Saved.","hard_conflict":"A preferred-work request conflicts with required unavailability in the same time block.","soft_conflict":"Requested time off and preferred work cannot overlap in the same time block.",
 "all_preferences":"All resident preferences","preference_load":"Preference volume","review":"Review","normal":"Normal","visibility_flag":"The Review flag is only a visibility prompt for the senior scheduler; it is not a penalty or automatic restriction.","submitted":"Submitted","updated":"Updated","hard_dates":"Unavailable — whole day","hard_am_dates":"Unavailable — morning","hard_pm_dates":"Unavailable — afternoon","soft_dates":"Time off — whole day","soft_am_dates":"Time off — morning","soft_pm_dates":"Time off — afternoon","preferred_dates":"Prefer work — whole day","preferred_am_dates":"Prefer work — morning","preferred_pm_dates":"Prefer work — afternoon","comment":"Comment",
-"settings_title":"My account and work-style settings","short_term":"Short-term monthly preferences","legal_safety_inputs":"Labour-law / rest-safety inputs","justified_absence":"Other justified absence (sickness or another approved reason)","justified_absence_help":"Hard no-work date. The scheduler assigns no shifts that day and proportionally recalculates this month’s internal shift target. A 38h/week norm is not hard-coded.","long_duty":"Start date of a long duty (>12–24h or 24h)","long_duty_help":"Entering the start date of a real long duty blocks the entire following calendar day from normal assignments as a conservative ≥24h rest safeguard.","labour_hard_summary":"Hard safety layer: ≤12h per workday in this schedule; ≥11h between separate workdays; after a marked long/night duty the next day has no normal shifts; at least one fully free day in every rolling 7 days; ≤48 known scheduled hours in any rolling 7 days. The generator additionally targets ~40h/7d and after two consecutive 12h double days allows only PM or rest on the next day.","labour_scope_note":"The system can validate only work it knows about. Other employers or unentered duties must be assessed separately.","long_term":"Long-term recurring preferences","long_term_help":"These rules are applied automatically every month until you change them. A month-specific SOFT preference overrides an opposite recurring SOFT preference; recurring “Unavailable” remains RESIDENT HARD. The time column applies to RESIDENT HARD; recurring SOFT weekday preferences are whole-day.","weekday_name":"Weekday","recurring_rule":"Recurring rule","recurring_time":"Time","rec_none":"None","rec_hard":"Unavailable (RESIDENT HARD)","rec_soft":"Would like the day off","rec_preferred":"Prefer to work","save_long_term":"SAVE LONG-TERM PREFERENCES","long_term_saved":"Long-term preferences saved.","email":"Email","email_required":"Every account should contain a valid email address.","weekday_pref":"Weekday pattern","weekend_pref":"Weekend pattern","holiday_pref":"Public holidays","holiday_pref_help":"Long-term preference for official Lithuanian public holidays. Holiday duty is offered first to residents who prefer working holidays, then to neutral residents, while residents who prefer rest are used only when needed. Among residents with the same choice, holiday work is distributed as evenly as possible using current and prior months.","holiday_rest":"Prefer to rest on holidays","holiday_neutral":"Neutral / no preference","holiday_work":"Prefer to work on holidays","spread_pref":"Shift distribution","avoid_double_shifts":"Avoid double shifts when possible","weekday_help":"−2 = relatively fewer weekdays, 0 = neutral, +2 = relatively more.","weekend_help":"−2 = fewer weekends, 0 = neutral, +2 = more.","spread_help":"−2 = more clustered, 0 = neutral, +2 = more dispersed.","notifications":"Notifications","notifications_on":"Receive email reminders about the preference-submission deadline","notification_default":"Notifications are on by default.","reminder_start":"Start reminders on day of month","reminder_help":"This setting only controls reminders about the next-month preference deadline. If preferences are still missing, reminders may be sent from the selected day through the deadline date.","include_backups_calendar":"Include backup duties in my .ics calendar","backup_email_alerts":"Email me when the senior activates my backup duty","phone_optional":"Phone number for SMS alerts (optional)","sms_future":"SMS preferences are prepared, but SMS delivery is not enabled in this beta yet.","backup_sms_alerts":"Send me an SMS when my backup duty is activated","backup_activation":"Backup activation","activate_backup":"CALL BACKUP NOW","backup_activated":"Backup activated.","backup_email_sent":"Backup alert email sent.","backup_email_failed":"Backup activated, but the alert email could not be sent.","undo_activation":"UNDO BACKUP ACTIVATION","activation_undone":"Backup activation undone.","smtp_admin_note":"The sending-mailbox password is one shared system secret; residents never enter it.","settings_saved":"Settings saved.","backup_bonus":"Backup bonuses","bonus_balance":"Available backup bonuses","bonus_help":"There are two opposite balances of the same type: when you actually cover another resident, you earn a REST credit; when another resident actually covers you, you incur a WORK debt. MORNING, AFTERNOON and NIGHT are tracked separately. New cover of the same type first settles your oldest work debt; only then does it create a rest credit.","use_bonus":"Use bonuses this month","bonus_target_effect":"At most 2 daytime rest credits in total may be used in one month. MORNING and AFTERNOON are tracked separately; NIGHT credits cannot reduce the current PGY1 daytime target.","bonus_insufficient":"You selected more bonuses than you currently have.",
-"dashboard_title":"Senior monthly control dashboard","completion":"Preference completion","missing_preferences":"Not submitted","missing_email":"Missing email","all_complete":"Everyone submitted preferences.","email_ready":"Email delivery is configured","email_not_ready":"Email delivery is not configured yet. Settings and message logic work, but SMTP environment variables are required for real delivery.","send_reminders":"SEND TODAY'S REMINDERS","reminders_result":"Reminder result","no_due_reminders":"No reminders are due today under the current settings.","email_log":"Email log",
-"generation_title":"Schedule generation and publication","senior_only":"Only the senior scheduler can use this function.","generate_draft":"GENERATE / REGENERATE DRAFT","solver_wait":"The system is searching for the best solution...","draft_saved":"Draft created. The official schedule has not changed.","no_solution":"No feasible schedule could be found under the current hard rules.","publish":"PUBLISH AND LOCK","published":"Schedule published and baseline locked.","publication_mail":"Publication emails","no_draft":"There is no draft to publish.","draft_outdated":"Preferences, recurring rules, or bonus selection changed after the draft was generated. Regenerate the draft before publishing.","state":"Status","draft":"Draft","published_state":"Paskelbtas","not_created":"Not created","hard_errors":"Privalomų taisyklių klaidos","fairness_score":"Teisingumo įvertis","monthly_fairness":"Mėnesio teisingumas","cumulative_fairness":"Kaupiamasis teisingumas","fairness_hierarchy":"Grafiko vertinimo hierarchija","fairness_hierarchy_intro":"Prioritetų tvarka: absoliučios saugos ir darbo taisyklės → kuo lygesnis SPS RO, SPS UG ir savaitgalių paskirstymas → rezidentų privalomi negalėjimai → poilsis ir darbo krūvis → švenčių pasirinkimai → kitų darbo vietų lygybė → kiti pageidavimai. Didesnis pateiktų pageidavimų skaičius nesuteikia didesnio prioriteto.","hard_validity":"Privalomų taisyklių atitiktis","hard_validity_pass":"0 privalomų taisyklių klaidų — tinkama","hard_validity_fail":"Yra privalomų taisyklių klaidų — skelbti negalima","fairness_monthly_explain":"Mėnesio teisingumas vertina tik pasirinktą mėnesį. Jis gali būti sąmoningai mažesnis, kai taisomas ankstesniais mėnesiais susikaupęs netolygumas.","fairness_cumulative_explain":"Kaupiamasis teisingumas apima visus anksčiau paskelbtus mėnesius ir pasirinktą mėnesį. Tai pagrindinis ilgalaikio grupės balanso rodiklis.","fairness_100_note":"100 % reiškia, kad sistemos paskirtas nesavanoriškas nepopuliarus krūvis ir kiti teisingumo komponentai yra optimaliai subalansuoti. Aiškiai savanoriškai pasirinkta penktadienio ar savaitgalio darbo data pati savaime teisingumo balo nemažina.","fairness_formula_month":"Mėnesio formulė: 100 − 18× savaitgalių skirtumas − 7× penktadienių skirtumas − 4× dvigubų pamainų skirtumas − 2× darbo dienų skirtumas.","fairness_formula_cumulative":"Kaupiamoji formulė tokia pati, tačiau kiekvienas skirtumas skaičiuojamas iš visų paskelbtų mėnesių sukauptų sumų.","fairness_breakdown":"Teisingumo išskaidymas","fairness_penalty":"Baudos taškai","fairness_scope":"Apimtis","fairness_metric":"Komponentas","fairness_spread":"Skirtumas (didž.−maž.)","fairness_history":"Teisingumo istorija","fairness_history_help":"Mėnesio teisingumas rodo balansą vieno mėnesio viduje; kaupiamasis teisingumas rodo, ar ilgainiui sistema artėja prie vienodo bendro krūvio.","fairness_ledger":"Sistemos teisingumo apskaita","actual_ledger":"Faktinio darbo apskaita","fairness_swap_neutral":"Abipusis savanoriškas apsikeitimas nekeičia sistemos teisingumo apskaitos: faktinis darbas pasikeičia, tačiau algoritmo paskirstymo balansas lieka tas pats.","fairness_forced_change":"Pateisinamas post-publication repair (liga, atostogos, force majeure, kritinis SPS pull-down) registruojamas ACTUAL audite, bet NEKEIČIA SYSTEM fairness / spread / post-debt apskaitos. Savanoriški swapai taip pat fairness-neutral; keičiasi tik faktinis grafikas ir retrospektyvinis request satisfaction.","fairness_no_history":"Dar nėra pakankamai paskelbtų mėnesių teisingumo istorijai.","fairness_priority_table":"Kaip skaityti hierarchiją","fairness_level":"Lygis","fairness_goal":"Tikslas","fairness_interpretation":"Kaip interpretuoti","fairness_hard_goal":"ABSOLUTE HARD: 0 saugos / fizinio neįmanomumo pažeidimų","voluntary_unpopular_goal":"Prioritetiškai vykdyti aiškiai savanoriškai pasirinktą nepopuliarų darbą, jei leidžia privalomos taisyklės ir poilsio sauga","voluntary_unpopular_explain":"Aiškiai pageidauta penktadienio ar savaitgalio darbo data laikoma savanoriškai prisiimtu nepopuliariu krūviu: ji nekonkuruoja su teisingumo balansavimu ir neblogina sistemos teisingumo apskaitos.","other_preferences_goal":"SOFT: griežtai SOFT-1 → SOFT-2 → SOFT-3; kiekviename range pirmiausia horizontalus water-filling, po to likęs įmanomas išpildymas","other_preferences_explain":"SOFT pageidavimai optimizuojami tik po TRUE ABSOLUTE HARD, SYSTEM HARD postų lygybės, RESIDENT HARD ir likusio workload/fatigue fairness; aukštesnis SOFT rangas užrakinamas prieš pereinant į žemesnį.","fairness_cumulative_goal":"Antrinis ilgalaikis tikslas: po gero einamojo mėnesio balanso taisyti ankstesnės SYSTEM istorijos likutinę nelygybę","fairness_monthly_goal":"SPS RO, SPS UG ir savaitgaliai paskirstomi kuo lygiau — paprastai žmonių skaičiai skiriasi ne daugiau kaip 1. Kitose darbo vietose pirmiausia stengiamasi, kad visi gautų bent po vieną galimybę, kai mėnesio vietų tam pakanka; didesnis skirtumas leidžiamas tik kai lygesnis variantas neįmanomas.","preference_avg":"Vidutinis pageidavimų išpildymas","weekend_spread":"Savaitgalių skirtumas",
+"settings_title":"My account and work-style settings","short_term":"Short-term monthly preferences","legal_safety_inputs":"Labour-law / rest-safety inputs","justified_absence":"Other justified absence (sickness or another approved reason)","justified_absence_help":"Hard no-work date. The scheduler assigns no shifts that day and proportionally recalculates this month’s internal shift target. A 38h/week norm is not hard-coded.","long_duty":"Start date of a long duty (>12–24h or 24h)","long_duty_help":"Entering the start date of a real long duty blocks the entire following calendar day from normal assignments as a conservative ≥24h rest safeguard.","labour_hard_summary":"Hard safety layer: ≤12h per workday in this schedule; ≥11h between separate workdays; after a marked long/night duty the next day has no normal shifts; at least one fully free day in every rolling 7 days; ≤48 known scheduled hours in any rolling 7 days. The generator additionally targets ~40h/7d and after two consecutive 12h double days allows only PM or rest on the next day.","labour_scope_note":"The system can validate only work it knows about. Other employers or unentered duties must be assessed separately.","long_term":"Long-term recurring preferences","long_term_help":"These rules are applied automatically every month until you change them. A month-specific SOFT preference overrides an opposite recurring SOFT preference; recurring “Unavailable” remains RESIDENT HARD. The time column applies to RESIDENT HARD; recurring SOFT weekday preferences are whole-day.","weekday_name":"Weekday","recurring_rule":"Recurring rule","recurring_time":"Time","rec_none":"None","rec_hard":"Unavailable (RESIDENT HARD)","rec_soft":"Would like the day off","rec_preferred":"Prefer to work","save_long_term":"SAVE LONG-TERM PREFERENCES","long_term_saved":"Long-term preferences saved.","email":"Email","email_required":"Every account should contain a valid email address.","shift_length_pref":"Preferred workday length","shift_length_help":"Persistent private work-style preference. The system tries to shape your workday length according to this choice when mandatory rules, rest requirements, and monthly workload allow it. Onko RO remains a separate 9-hour full-day shift.","shift_length_any":"No preference","shift_length_6":"Mostly 6 hours","shift_length_mixed":"Mixed – both 6-hour and 12-hour workdays are fine","shift_length_12":"Mostly 12 hours","weekday_pref":"Weekday pattern","weekend_pref":"Weekend pattern","holiday_pref":"Public holidays","holiday_pref_help":"Long-term preference for official Lithuanian public holidays. Holiday duty is offered first to residents who prefer working holidays, then to neutral residents, while residents who prefer rest are used only when needed. Among residents with the same choice, holiday work is distributed as evenly as possible using current and prior months.","holiday_rest":"Prefer to rest on holidays","holiday_neutral":"Neutral / no preference","holiday_work":"Prefer to work on holidays","spread_pref":"Shift distribution","avoid_double_shifts":"Avoid double shifts when possible","weekday_help":"−2 = relatively fewer weekdays, 0 = neutral, +2 = relatively more.","weekend_help":"−2 = fewer weekends, 0 = neutral, +2 = more.","spread_help":"−2 = more clustered, 0 = neutral, +2 = more dispersed.","notifications":"Notifications","notifications_on":"Receive email reminders about the preference-submission deadline","notification_default":"Notifications are on by default.","reminder_start":"Start reminders on day of month","reminder_help":"This setting only controls reminders about the next-month preference deadline. If preferences are still missing, reminders may be sent from the selected day through the deadline date.","include_backups_calendar":"Include backup duties in my .ics calendar","backup_email_alerts":"Email me when the senior activates my backup duty","phone_optional":"Phone number for SMS alerts (optional)","sms_future":"SMS preferences are prepared, but SMS delivery is not enabled in this beta yet.","backup_sms_alerts":"Send me an SMS when my backup duty is activated","backup_activation":"Backup activation","activate_backup":"CALL BACKUP NOW","backup_activated":"Backup activated.","backup_email_sent":"Backup alert email sent.","backup_email_failed":"Backup activated, but the alert email could not be sent.","undo_activation":"UNDO BACKUP ACTIVATION","activation_undone":"Backup activation undone.","smtp_admin_note":"The sending-mailbox password is one shared system secret; residents never enter it.","settings_saved":"Settings saved.","backup_bonus":"Backup bonuses","bonus_balance":"Available backup bonuses","bonus_help":"When you actually cover another resident, you earn a REST credit as a future benefit. The covered resident receives no debt. MORNING, AFTERNOON and NIGHT are tracked separately.","use_bonus":"Use bonuses this month","bonus_target_effect":"At most 2 daytime rest credits in total may be used in one month. MORNING and AFTERNOON are tracked separately; NIGHT credits cannot reduce the current PGY1 daytime target.","bonus_insufficient":"You selected more bonuses than you currently have.",
+"dashboard_title":"Senior monthly control dashboard","completion":"Preference completion","missing_preferences":"Not submitted","missing_email":"Missing email","all_complete":"Everyone submitted preferences.","email_ready":"Email channel configuration found","email_not_ready":"Email channel is not ready yet. The Senior control shows one clear fix and provides a channel test.","send_reminders":"SEND TODAY'S REMINDERS","reminders_result":"Reminder result","no_due_reminders":"No reminders are due today under the current settings.","email_log":"Email log",
+"generation_title":"Schedule generation and publication","senior_only":"Only the senior scheduler can use this function.","generate_draft":"GENERATE / REGENERATE DRAFT","solver_wait":"The system is searching for the best solution...","draft_saved":"Draft created. The official schedule has not changed.","no_solution":"No feasible schedule could be found under the current hard rules.","publish":"PUBLISH AND LOCK","published":"Schedule published and baseline locked.","publication_mail":"Publication emails","no_draft":"There is no draft to publish.","draft_outdated":"Preferences, recurring rules, or bonus selection changed after the draft was generated. Regenerate the draft before publishing.","state":"Status","draft":"Draft","published_state":"Paskelbtas","not_created":"Not created","hard_errors":"Privalomų taisyklių klaidos","fairness_score":"Teisingumo įvertis","monthly_fairness":"Mėnesio teisingumas","cumulative_fairness":"Kaupiamasis teisingumas","fairness_hierarchy":"Grafiko vertinimo hierarchija","fairness_hierarchy_intro":"Prioritetų tvarka: absoliučios saugos ir darbo taisyklės → kuo lygesnis SPS RO, SPS UG ir savaitgalių paskirstymas → rezidentų privalomi negalėjimai → poilsis ir darbo krūvis → švenčių pasirinkimai → visų ne-Onko darbo vietų struktūrinis water-filling → kiti pageidavimai. Didesnis pateiktų pageidavimų skaičius nesuteikia didesnio prioriteto.","hard_validity":"Privalomų taisyklių atitiktis","hard_validity_pass":"0 privalomų taisyklių klaidų — tinkama","hard_validity_fail":"Yra privalomų taisyklių klaidų — skelbti negalima","fairness_monthly_explain":"Mėnesio teisingumas vertina tik pasirinktą mėnesį. Jis gali būti sąmoningai mažesnis, kai taisomas ankstesniais mėnesiais susikaupęs netolygumas.","fairness_cumulative_explain":"Kaupiamasis teisingumas apima visus anksčiau paskelbtus mėnesius ir pasirinktą mėnesį. Tai pagrindinis ilgalaikio grupės balanso rodiklis.","fairness_100_note":"100 % reiškia, kad sistemos paskirtas nesavanoriškas nepopuliarus krūvis ir kiti teisingumo komponentai yra optimaliai subalansuoti. Aiškiai savanoriškai pasirinkta penktadienio ar savaitgalio darbo data pati savaime teisingumo balo nemažina.","fairness_formula_month":"Mėnesio formulė: 100 − 18× savaitgalių skirtumas − 7× penktadienių skirtumas − 4× dvigubų pamainų skirtumas − 2× darbo dienų skirtumas.","fairness_formula_cumulative":"Kaupiamoji formulė tokia pati, tačiau kiekvienas skirtumas skaičiuojamas iš visų paskelbtų mėnesių sukauptų sumų.","fairness_breakdown":"Teisingumo išskaidymas","fairness_penalty":"Baudos taškai","fairness_scope":"Apimtis","fairness_metric":"Komponentas","fairness_spread":"Skirtumas (didž.−maž.)","fairness_history":"Teisingumo istorija","fairness_history_help":"Mėnesio teisingumas rodo balansą vieno mėnesio viduje; kaupiamasis teisingumas rodo, ar ilgainiui sistema artėja prie vienodo bendro krūvio.","fairness_ledger":"Sistemos teisingumo apskaita","actual_ledger":"Faktinio darbo apskaita","fairness_swap_neutral":"Abipusis savanoriškas apsikeitimas nekeičia sistemos teisingumo apskaitos: faktinis darbas pasikeičia, tačiau algoritmo paskirstymo balansas lieka tas pats.","fairness_forced_change":"Pateisinamas post-publication repair (liga, atostogos, force majeure, kritinis SPS pull-down) registruojamas ACTUAL audite, bet NEKEIČIA SYSTEM fairness / spread / postų istorijos. Savanoriški swapai taip pat fairness-neutral; keičiasi tik faktinis grafikas ir retrospektyvinis request satisfaction.","fairness_no_history":"Dar nėra pakankamai paskelbtų mėnesių teisingumo istorijai.","fairness_priority_table":"Kaip skaityti hierarchiją","fairness_level":"Lygis","fairness_goal":"Tikslas","fairness_interpretation":"Kaip interpretuoti","fairness_hard_goal":"ABSOLUTE HARD: 0 saugos / fizinio neįmanomumo pažeidimų","voluntary_unpopular_goal":"Vykdyti aiškiai savanoriškai pasirinktą nepopuliarų darbą tik išlaikant aukštesnes SYSTEM struktūrines taisykles, įskaitant Friday raw spread 0–1","voluntary_unpopular_explain":"Pageidautas penktadienis yra SOFT: generatorius jį vykdo tik tada, kai išlaiko penktadienių structural floor/ceil raw spread 0–1 ir aukštesnes HARD taisykles. Po publikavimo abipusis ACTUAL swapas gali šį balansą pakeisti neperrašydamas SYSTEM fairness.","other_preferences_goal":"SOFT: griežtai SOFT-1 → SOFT-2 → SOFT-3; kiekviename range pirmiausia horizontalus water-filling, po to likęs įmanomas išpildymas","other_preferences_explain":"SOFT pageidavimai optimizuojami tik po TRUE ABSOLUTE HARD, SYSTEM HARD postų lygybės, RESIDENT HARD ir likusio workload/fatigue fairness; aukštesnis SOFT rangas užrakinamas prieš pereinant į žemesnį.","fairness_cumulative_goal":"Antrinis ilgalaikis tikslas: po gero einamojo mėnesio balanso taisyti ankstesnės SYSTEM istorijos likutinę nelygybę","fairness_monthly_goal":"SPS RO, SPS UG, savaitgaliai IR penktadieniai SYSTEM grafike turi raw spread 0–1. Penktadieniai water-fill'inami pagal visų užpildytų penktadienio priskyrimų floor/ceil dalį. Visos ne-Onko darbo vietos taip pat water-fill'inamos iki raw spread 0–1 prieš SOFT; platesnis postų koridorius leidžiamas tik jei siauresnis įrodytas neįmanomas.","preference_avg":"Vidutinis pageidavimų išpildymas","weekend_spread":"Savaitgalių skirtumas",
 "published_schedule":"Current published schedule","not_published":"No official schedule has been published for this month.","colors":"Permanent resident colors","download_xlsx":"DOWNLOAD FORMATTED SCHEDULE (.xlsx)","download_csv":"Download data list (.csv)",
-"summary_title":"Resident summary","frozen_fairness":"Publication fairness","current_after_changes":"Current state after voluntary changes","fairness_frozen_note":"SYSTEM fairness, workplace spread, and post-debt accounting are frozen from the publication baseline. Bilateral voluntary swaps and justified post-publication repairs (sickness, leave, force majeure, SPS pull-down) change the ACTUAL schedule but are EXCLUDED from fairness/spread/debt. Actual work and retrospective request satisfaction may be shown separately.","person":"Person","name":"Name","target":"Target","workload":"Workload","weekday_assignments":"Weekday assignments","weekday_days":"Distinct weekdays","weekend_assignments":"Weekend assignments","prior_weekends":"Prior weekends","cumulative_weekends":"Cumulative weekends","fridays":"Fridays","double_shifts":"Double shifts","max_consecutive":"Max consecutive days","max_rolling7_hours":"Max hours / rolling 7d","max_calendar_week_hours":"Max calendar-week hours","free_days":"Free days","preference_score":"Preference fulfillment, %","planned_backups":"Planned backups","effective_backups":"Actual / effective backups",
+"summary_title":"Resident summary","frozen_fairness":"Publication fairness","current_after_changes":"Current state after voluntary changes","fairness_frozen_note":"SYSTEM fairness, workplace spread, and future catch-up accounting are frozen from the publication baseline. Bilateral voluntary swaps and justified post-publication repairs (sickness, leave, force majeure, SPS pull-down) change the ACTUAL schedule but are EXCLUDED from fairness/spread/debt. Actual work and retrospective request satisfaction may be shown separately.","person":"Person","name":"Name","target":"Target","workload":"Workload","weekday_assignments":"Weekday assignments","weekday_days":"Distinct weekdays","weekend_assignments":"Weekend assignments","saturday_assignments":"Saturday assignments","sunday_assignments":"Sunday assignments","prior_weekends":"Prior weekends","cumulative_weekends":"Cumulative weekends","fridays":"Fridays","double_shifts":"Double shifts","max_consecutive":"Max consecutive days","max_rolling7_hours":"Max hours / rolling 7d","max_calendar_week_hours":"Max calendar-week hours","free_days":"Free days","preference_score":"Preference fulfillment, %","planned_backups":"Planned backups","effective_backups":"Actual / effective backups",
 "transparency_title":"Transparency","validity_heading":"1. Privalomų taisyklių patikra","validity_text":"0 klaidų reiškia, kad paskelbtas pradinis grafikas nepažeidė nė vienos privalomos taisyklės. Tai atitikties, o ne teisingumo procentas.","fairness_heading":"2. Grupės teisingumas","fairness_text":"Sistema skiria mėnesio ir kaupiamąjį teisingumą. Kaupiamasis teisingumas yra pagrindinis ilgalaikio balanso rodiklis, o mėnesio teisingumas apibūdina pasirinktą mėnesį.","fair_formula":"Abiem įverčiams naudojama ta pati formulė: 100 − 18× savaitgalių skirtumas − 7× penktadienių skirtumas − 4× dvigubų pamainų skirtumas − 2× darbo dienų skirtumas. Skiriasi tik apimtis: vienas mėnuo arba visų paskelbtų mėnesių suma.","metric_weekend":"Savaitgalių skirtumas","metric_friday":"Penktadienių skirtumas","metric_double":"Dvigubų pamainų skirtumas","metric_weekday":"Darbo dienų skirtumas",
 "personal_vs_group":"Personal preference fulfillment versus group fairness","balance_ratio":"Balance ratio","ratio_help":"Balance ratio = smaller percentage / larger percentage. 1.00 means the two scores are at the same level; it is not an absolute quality measure.","baseline_personal":"Personal at publication","current_personal":"Personal now","not_applicable":"N/A","all_resident_scores":"All resident preference scores",
-"backup_title":"Backup cover","backup_self_select":"Choose my monthly backup slots","backup_self_select_help":"Reservable groups are weekend SPS RO duty, weekday SPS RO and weekday SPS UG. Multiple slots may be selected; a reserved backup slot blocks overlapping normal work.","backup_claim_deadline":"Backup-choice deadline","backup_claim_saved":"Backup slots reserved.","backup_claim_released":"Backup choice released.","backup_claim_taken":"Another resident just took that slot. Please choose another.","backup_claim_locked":"The selection deadline has passed or the schedule is already published. Further backup-slot changes use the Swaps tab.","backup_claim_missing_penalty":"You have not selected any backup slot yet. If you do not choose by the deadline, you lose first-come selection priority and enter the first-priority pool for automatic assignment of remaining required backup slots.","backup_claim_yours":"Your reserved backups","backup_claim_board":"Backup reservations","backup_claim_free":"Free","backup_claim_auto_queue":"Automatic-assignment priority pool","backup_claim_auto_queue_help":"Residents who did not self-select any backup slot are considered first for remaining unclaimed required backup slots. The planner first respects RESIDENT HARD; only if no strict candidate exists may it use the fairest minimum-loss RESIDENT-HARD fallback. ABSOLUTE HARD is never relaxed.","release_backup_claim":"RELEASE MY SELECTION","backup_claim_reminder_kind":"Backup-choice reminder","backup_swap_title":"Backup swaps","backup_swap_help":"After publication, you may propose swapping any planned weekend / SPS RO / SPS UG backup slot. The swap is applied only if both remain eligible for the new slots.","my_backup_duty":"My backup slot","their_backup_duty":"Other resident's backup slot","request_backup_swap":"PROPOSE BACKUP SWAP","backup_swap_sent":"Backup swap proposal sent.","backup_swap_invalid":"This swap cannot be applied because at least one resident would be ineligible for the new backup slot.","backup_swap_accepted":"Backup swap accepted and applied.","backup_swap_rejected":"Backup swap rejected.","backup_definition":"Every filled weekend shift, SPS RO shift and SPS UG shift must have one named backup. The planner first chooses a resident who is free and respects RESIDENT HARD. If none exists, it may use the fairest minimum-loss RESIDENT-HARD fallback; ABSOLUTE HARD and overlapping normal work are never allowed.","my_backup_schedule":"My backup schedule","no_backups":"This resident has no backup duties this month.","covered_assignment":"Covered resident and schedule","covered_person":"Covered resident","covered_schedule":"Covered shift","planned_backup":"Planned backup","actual_backup":"Actual backup","effective_backup":"Effective backup","backup_note":"Note","manage_backups":"Senior backup control","backup_coverage":"Backup coverage","working_person_days":"Required covered shifts","covered_person_days":"Shifts with named backup","backup_complete":"Every filled weekend, SPS RO and SPS UG shift has a named backup.","backup_incomplete":"At least one weekend / SPS RO / SPS UG shift lacks an eligible backup. The schedule cannot be published.","resync_backups":"REFRESH BACKUPS FROM CURRENT SCHEDULE","backup_synced":"Backups recalculated automatically from the current schedule.","backup_capacity_block":"The draft cannot be published because at least one required weekend / SPS RO / SPS UG shift has no ABSOLUTE-HARD-safe resident who is free during that time block. RESIDENT HARD alone does not block publication: the minimum unavoidable loss is allocated fairly and reported.","cover_credit_type":"Automatically derived cover type","cover_6h":"MORNING 08:00–14:00 = 6h","cover_12h":"MORNING + AFTERNOON = two separate 6h events","cover_night12h":"NIGHT 20:00–08:00 = 12h","cover_credit_note":"The senior does not choose the type manually: it is derived from the concrete covered slot. Covering both MORNING and AFTERNOON creates two separate 6h cover events. NIGHT will be one 12h event once night slots exist in the scheduler.","actual_override":"Manual actual-backup override","mark_backup_completed":"MARK ACTUAL COVER COMPLETED","backup_completed":"Actual cover recorded. The system automatically updated both residents’ same-type balances.","undo_backup_completed":"UNDO ACTUAL COVER AND ITS BALANCE CHANGES","backup_completion_undone":"Actual cover and its balance effects were reversed.","completed_backup":"Completed","credit_balances":"Rest credits and work debts","bonus_units":"Credits","bonus_shift_value":"Available shift reduction","rest_credit_bank":"Rest-credit bank","work_debt_bank":"Work-debt bank","credit_type":"Credit / debt type","credit_am":"MORNING — 6h","credit_pm":"AFTERNOON — 6h","credit_night":"NIGHT — 12h","use_credit_am":"Redeem MORNING rest credits","use_credit_pm":"Redeem AFTERNOON rest credits","credit_month_cap":"At most 2 daytime rest credits in total may be used in one month.","night_bank_only":"NIGHT credits are bank-only for now; they cannot reduce the current PGY1 daytime target.","debt_policy":"Work-debt policy","debt_policy_text":"A work debt does not have to be repaid the next month. During months 0–2 it is simply banked; from month 3 the system gives soft priority to same-type backup opportunities; from month 6 priority becomes strong; after 12 months the debt is overdue and remains active until actually repaid.","debt_due":"Due","debt_age":"Age, months","debt_status":"Status","debt_open":"Open","debt_soft":"3+ months — priority","debt_strong":"6+ months — strong priority","debt_overdue":"12+ months — OVERDUE","netting_explain":"If you already have same-type work debt and actually cover another resident, the new cover first settles your oldest debt. If you are covered while holding a free unredeemed same-type rest credit, that credit is first used to offset the event and no new debt is created. A rest credit already reserved for planned time off is not taken away.","cover_effect_rest":"A new rest credit was created for the covering resident.","cover_effect_debt_settled":"The covering resident’s oldest same-type work debt was settled.","covered_effect_debt":"A new same-type work debt was created for the covered resident.","covered_effect_rest_used":"The covered resident’s free same-type rest credit was used as an offset; no new work debt was created.","max_credit_error":"At most 2 daytime rest credits in total may be selected for one month.","backup_record":"Backup record","record_actual":"RECORD ACTUAL BACKUP","actual_saved":"Actual backup recorded. Backup statistics will use this resident.","clear_actual":"RESTORE PLANNED BACKUP","actual_cleared":"Actual override removed; the planned backup is effective again.","no_eligible_backup":"No eligible resident is available for this shift. The backup must be free during the same time block and ABSOLUTE-HARD-safe; RESIDENT HARD is avoided first and relaxed only as a minimum-loss last resort.",
-"swap_title":"Voluntary swaps","swap_note":"Voluntary swaps change only the ACTUAL schedule. Before consent, each affected resident sees a consequence table. The swap is blocked only by ABSOLUTE/operational and labour-time guardrails such as overlap, approved absence, >12h/day, <11h daily rest, >6 workdays/7d or >60h/7d. SYSTEM fairness remains frozen.","repair_title":"Unplanned post-publication repairs","repair_help":"Sickness, leave, another justified absence, or force majeure changes only the ACTUAL schedule. The SYSTEM fairness baseline frozen at publication and fairness_history remain unchanged; the absent resident receives no fairness debt. V2.5.57: if the absent resident covered SPS RO / SPS UG, critical coverage is preserved first by pulling a same-block resident from a lower-priority NON-MANDATORY post; the optional donor post may remain empty. Only when no safe donor transfer exists is a resident free in that target block used as fallback. ABSOLUTE safety, overlap and mandatory coverage remain hard. Pull-downs and other justified repairs are EXCLUDED from SYSTEM fairness, workplace spread, and post-debt accounting.","repair_assignment":"Assignment to replace","repair_replacement":"Covering resident","repair_reason":"Reason category","repair_reason_sickness":"Sickness","repair_reason_leave":"Leave","repair_reason_approved":"Other justified absence","repair_reason_force":"Force majeure / unexpected event","repair_note":"Internal note (optional)","apply_repair":"APPLY UNPLANNED REPAIR","repair_applied":"Repair applied to the ACTUAL schedule. SYSTEM fairness, workplace spread, and post debt remain tied to the publication baseline; the repair is excluded from them. Actual schedule and request satisfaction were recalculated.","repair_invalid":"This repair cannot be applied because of an operational safety / HARD rule","repair_no_candidate":"No safely eligible covering resident is available for this shift.","repair_history":"Unplanned repair history","repair_load":"Additional repair load this month","repair_load_help":"This is an operational audit counter only. It is NOT used in fairness, workplace spread, post debt, or future compensation. A critical pull-down is a station change during an already scheduled work block, not an extra fairness burden.","repair_fairness_neutral":"FAIRNESS NEUTRAL","repair_from":"Absent resident","repair_to":"Covered by","repair_date":"Date / shift","my_assignment":"My assignment","their_assignment":"Other person's assignment","request_swap":"PROPOSE SWAP","request_sent":"Swap request sent.","incoming":"Incoming requests","accept":"ACCEPT","reject":"REJECT","accepted":"Swap approved and applied.","accepted_pending":"Both residents accepted the swap. In the beta, the senior scheduler performs the final hard-rule validation and applies it.","finalize_swap":"APPLY APPROVED SWAP","swap_applied":"Swap applied, hard rules revalidated, and backups recalculated.","swap_finalize_failed":"The swap could not be applied because final validation would violate a hard rule.","rejected":"Swap rejected.","hard_reject":"Swap rejected because it would violate a hard rule.","history":"Swap history","pending":"Pending","approved":"Approved","rejected_status":"Rejected",
+"backup_title":"Backup cover","backup_self_select":"Choose my monthly backup slots","backup_self_select_help":"Reservable mandatory groups are position-based: SPS RO on any day/block, SPS UG on any day/block, Centro UG 120 morning, and full 9h Onko RO. CENTRO RO is planned automatically as best-effort. Multiple slots may be selected; a reserved backup slot blocks overlapping normal work.","backup_claim_deadline":"Backup-choice deadline","backup_claim_saved":"Backup slots reserved.","backup_claim_released":"Backup choice released.","backup_claim_taken":"Another resident just took that slot. Please choose another.","backup_claim_locked":"The selection deadline has passed or the schedule is already published. Further backup-slot changes use the Swaps tab.","backup_claim_missing_penalty":"You have not selected any backup slot yet. If you do not choose by the deadline, you lose first-come selection priority and enter the first-priority pool for automatic assignment of remaining required backup slots.","backup_claim_yours":"Your reserved backups","backup_claim_board":"Backup reservations","backup_claim_free":"Free","backup_claim_auto_queue":"Automatic-assignment priority pool","backup_claim_auto_queue_help":"Residents who did not self-select any backup slot are considered first for remaining unclaimed required backup slots. The planner first respects RESIDENT HARD; only if no strict candidate exists may it use the fairest minimum-loss RESIDENT-HARD fallback. ABSOLUTE HARD is never relaxed.","release_backup_claim":"RELEASE MY SELECTION","backup_claim_reminder_kind":"Backup-choice reminder","backup_swap_title":"Backup swaps","backup_swap_help":"After publication, you may propose swapping any planned mandatory backup slot. The swap is applied only if both remain eligible for the new slots.","my_backup_duty":"My backup slot","their_backup_duty":"Other resident's backup slot","request_backup_swap":"PROPOSE BACKUP SWAP","backup_swap_sent":"Backup swap proposal sent.","backup_swap_invalid":"This swap cannot be applied because at least one resident would be ineligible for the new backup slot.","backup_swap_accepted":"Backup swap accepted and applied.","backup_swap_rejected":"Backup swap rejected.","backup_definition":"Mandatory named backup is position-based: SPS RO on every day/block, SPS UG on every day/block, Centro UG 120 morning, and full 9h Onko RO. CENTRO RO is covered as widely as safe remaining capacity allows; missing CENTRO RO backup does not block publication. ABSOLUTE HARD and overlapping normal work are never allowed.","my_backup_schedule":"My backup schedule","no_backups":"This resident has no backup duties this month.","covered_assignment":"Covered resident and schedule","covered_person":"Covered resident","covered_schedule":"Covered shift","planned_backup":"Planned backup","actual_backup":"Actual backup","effective_backup":"Effective backup","backup_note":"Note","manage_backups":"Senior backup control","backup_coverage":"Backup coverage","working_person_days":"Required covered shifts","covered_person_days":"Shifts with named backup","backup_complete":"Every mandatory covered shift has a named backup.","backup_incomplete":"At least one mandatory covered shift lacks an eligible backup. The schedule cannot be published.","resync_backups":"REFRESH BACKUPS FROM CURRENT SCHEDULE","backup_synced":"Backups recalculated automatically from the current schedule.","backup_capacity_block":"The draft cannot be published if at least one mandatory covered shift has no ABSOLUTE-HARD-safe resident who is free during that block. Missing CENTRO RO best-effort coverage does not block publication. RESIDENT HARD alone does not block publication: the minimum unavoidable loss is allocated fairly and reported.","cover_credit_type":"Automatically derived cover type","cover_6h":"MORNING 08:00–14:00 = 6h","cover_12h":"MORNING + AFTERNOON = two separate 6h events","cover_night12h":"NIGHT 20:00–08:00 = 12h","cover_credit_note":"The senior does not choose the type manually: it is derived from the concrete covered slot. Covering both MORNING and AFTERNOON creates two separate 6h cover events. NIGHT will be one 12h event once night slots exist in the scheduler.","actual_override":"Manual actual-backup override","mark_backup_completed":"MARK ACTUAL COVER COMPLETED","backup_completed":"Actual cover recorded. A rest credit was awarded to the covering resident; no debt is created for the covered resident.","undo_backup_completed":"UNDO ACTUAL COVER AND ITS CREDIT","backup_completion_undone":"Actual cover and the covering resident’s credit were reversed.","completed_backup":"Completed","credit_balances":"Rest credits","bonus_units":"Credits","bonus_shift_value":"Available shift reduction","rest_credit_bank":"Rest-credit bank","credit_type":"Credit type","credit_am":"MORNING — 6h","credit_pm":"AFTERNOON — 6h","credit_night":"NIGHT — 12h","use_credit_am":"Redeem MORNING rest credits","use_credit_pm":"Redeem AFTERNOON rest credits","credit_month_cap":"At most 2 daytime rest credits in total may be used in one month.","night_bank_only":"NIGHT credits are bank-only for now; they cannot reduce the current PGY1 daytime target.","netting_explain":"A credit is a one-way benefit for the resident who actually covers. The covered resident receives no debt and keeps any existing rest credits.","cover_effect_rest":"A new rest credit was awarded to the covering resident.","max_credit_error":"At most 2 daytime rest credits in total may be selected for one month.","backup_record":"Backup record","record_actual":"RECORD ACTUAL BACKUP","actual_saved":"Actual backup recorded. Backup statistics will use this resident.","clear_actual":"RESTORE PLANNED BACKUP","actual_cleared":"Actual override removed; the planned backup is effective again.","no_eligible_backup":"No eligible resident is available for this shift. The backup must be free during the same time block and ABSOLUTE-HARD-safe; RESIDENT HARD is avoided first and relaxed only as a minimum-loss last resort.",
+"swap_title":"Voluntary swaps","swap_note":"Voluntary swaps change only the ACTUAL schedule. Before consent, each affected resident sees a consequence table. The swap is blocked by ABSOLUTE/operational and labour-time guardrails, exact monthly workload equality, and even Onko pairing (0/2/4...). Consecutive Onko may be an explicit ACK consequence, but parity may never be overridden. SYSTEM fairness remains frozen. Workplace/post fairness, modality mix, US exposure and diversity never block a mutually accepted ACTUAL swap.","repair_title":"Unplanned post-publication repairs","repair_help":"Sickness, leave, another justified absence, or force majeure changes only the ACTUAL schedule. The SYSTEM fairness baseline frozen at publication and fairness_history remain unchanged; the absent resident receives no fairness debt. V2.5.57: if the absent resident covered SPS RO / SPS UG, critical coverage is preserved first by pulling a same-block resident from a lower-priority NON-MANDATORY post; the optional donor post may remain empty. Only when no safe donor transfer exists is a resident free in that target block used as fallback. ABSOLUTE safety, overlap and mandatory coverage remain hard. Pull-downs and other justified repairs are EXCLUDED from SYSTEM fairness, workplace spread, and future catch-up accounting.","repair_assignment":"Assignment to replace","repair_replacement":"Covering resident","repair_reason":"Reason category","repair_reason_sickness":"Sickness","repair_reason_leave":"Leave","repair_reason_approved":"Other justified absence","repair_reason_force":"Force majeure / unexpected event","repair_note":"Internal note (optional)","apply_repair":"APPLY UNPLANNED REPAIR","repair_applied":"Repair applied to the ACTUAL schedule. SYSTEM fairness, workplace spread, and future catch-up remain tied to the publication baseline; the repair is excluded from them. Actual schedule and request satisfaction were recalculated.","repair_invalid":"This repair cannot be applied because of an operational safety / HARD rule","repair_no_candidate":"No safely eligible covering resident is available for this shift.","repair_history":"Unplanned repair history","repair_load":"Additional repair load this month","repair_load_help":"This is an operational audit counter only. It is NOT used in fairness, workplace spread, future catch-up, or future compensation. A critical pull-down is a station change during an already scheduled work block, not an extra fairness burden.","repair_fairness_neutral":"FAIRNESS NEUTRAL","repair_from":"Absent resident","repair_to":"Covered by","repair_date":"Date / shift","my_assignment":"My assignment","their_assignment":"Other person's assignment","request_swap":"PROPOSE SWAP","request_sent":"Swap request sent.","incoming":"Incoming requests","accept":"ACCEPT","reject":"REJECT","accepted":"Swap approved and applied.","accepted_pending":"Both residents accepted the swap. In the beta, the senior scheduler performs the final hard-rule validation and applies it.","finalize_swap":"APPLY APPROVED SWAP","swap_applied":"Swap applied, hard rules revalidated, and backups recalculated.","swap_finalize_failed":"The swap could not be applied because final validation would violate a hard rule.","rejected":"Swap rejected.","hard_reject":"Swap rejected because it would violate a hard rule.","history":"Swap history","pending":"Pending","approved":"Approved","rejected_status":"Rejected",
 "calendar_title":"My calendar schedule","calendar_help":"Download a one-time .ics snapshot or subscribe once to a private calendar feed. The feed is refreshed after a new schedule is published and after important ACTUAL schedule changes. Backups are included when enabled in Settings.","download_ics":"DOWNLOAD MY SCHEDULE (.ics)","calendar_feed":"Private calendar subscription URL","calendar_feed_private":"Treat this URL like a password to your schedule; do not share it. It contains a long random token and is not shown to other residents.","calendar_google":"GOOGLE CALENDAR","calendar_apple":"APPLE CALENDAR","calendar_other":"OUTLOOK CALENDAR","calendar_google_help":"On a computer in Google Calendar: Add other calendars → From URL → paste the private URL shown below. This is a one-time setup.","calendar_apple_help":"Apple Calendar can subscribe directly. The button should open the Calendar subscription prompt.","calendar_other_help":"Outlook can subscribe to the same private iCalendar URL (Add calendar → Subscribe from web). For another app, use the .ics file or subscription URL if supported.",
 "proof_title":"My schedule proof","proof_intro":"This visual check shows exactly what matched your needs and where mismatches remain. It displays final results rather than program code.","matches":"MATCHES","partial":"PARTIAL","mismatch":"DOES NOT MATCH","baseline":"At publication","current":"Now","hard_ok":"Hard unavailability respected","hard_bad":"Hard rule violated","soft_off_ok":"Requested days off","preferred_ok":"Preferred work dates","workload_ok":"Monthly workload target","style_component":"Work-style criterion","missed_dates":"Mismatched dates","criterion":"Criterion","result":"Result","score":"Fulfillment","explanation":"Explanation","proof_all_good":"Based on the submitted data, hard rules are respected and active soft preferences have no major mismatch.","proof_soft_issues":"Hard rules are respected, but some soft preferences were not fully fulfilled.","proof_hard_issue":"A hard-rule mismatch was detected and the schedule requires review.","no_active_preferences":"No active preference was submitted for this category.","swap_suggestion":"If no hard rule is violated but a soft preference remains unmet, you can look for a voluntary solution in the Swaps tab.",
 "rules_title":"Schedule rules","read":"Read","edit":"Edit","save_rules":"SAVE RULE CHANGES","rules_saved":"Rules updated.","edit_senior_only":"Only the senior scheduler can edit the rules.","yes":"YES","no":"NO","reminder_kind":"Reminder","publication_kind":"Schedule publication","date":"Date","day":"Day","time":"Time","department":"Department","shift":"Shift","morning":"Morning","afternoon":"Afternoon","full_day":"Full day","status":"Status","details":"Details","sent":"Sent","failed":"Failed","skipped":"Skipped"
 }}
 
 TR["LT"].update({
-"research":"Anketa","research_title":"Radiology Scheduler anketos langas","research_survey":"Anketa","research_dashboard":"Tyrimo skydas","research_phase":"Etapas","research_baseline":"Prieš naudojimą","research_followup":"Po naudojimo","research_likert_help":"1 = visiškai nesutinku · 5 = visiškai sutinku","research_submit":"IŠSAUGOTI ANKETĄ","research_saved":"Tyrimo anketa išsaugota.","research_privacy":"Atsakymai analizei saugomi atskirai nuo grafiko. G.M. mato tik grupės suvestines ir anoniminius komentarus; R.Š. tyrimo lange gali matyti deidentifikuotus atsakymus. Individualūs vardai šiame lange nerodomi.","research_response_count":"Atsakymų skaičius","research_mean":"Vidurkis","research_change":"Pokytis","research_operational":"Operaciniai mėnesio rodikliai","research_survey_results":"Anketos rezultatai","research_deidentified":"Deidentifikuoti atsakymai","research_comments":"Anoniminiai komentarai","research_gm_note":"Seniūnės vaizde rodomi tik grupės lygio rezultatai, kad individualūs atsakymai nebūtų naudojami personalo vertinimui.","research_rs_note":"R.Š. tyrėjo vaizde papildomai rodomi deidentifikuoti individualūs įrašai kokybės kontrolei ir vėlesnei analizei.","research_no_data":"Dar nėra tyrimo duomenų.","research_month_note":"Operaciniai rodikliai skaičiuojami pasirinktam mėnesiui; anketų suvestinė apima visus pateiktus įrašus.","research_stress":"Kiek stresą kelia grafiko sudarymo / keitimo procesas? (0–10)","research_changes":"Kiek kartų per mėnesį paprastai prašote ar atliekate grafiko pakeitimą?","research_contact":"Kaip dažnai reikia kreiptis į seniūnę dėl neaiškaus ar neteisingo grafiko?","research_problem":"Didžiausia dabartinio proceso problema","research_improve":"Ką labiausiai reikėtų pagerinti?","research_easy":"Sistema lengva naudotis","research_mobile":"Mobilioji versija lengva naudotis","research_actual":"Sistema rodo realų aktualų grafiką po pakeitimų","research_system_actual":"Naudingas skirtumas tarp sistemos pradinio ir faktinio grafiko","research_continue":"Norėčiau tęsti šios sistemos naudojimą vietoje ankstesnio metodo","research_access_denied":"Tyrimo skydas prieinamas tik R.Š. ir G.M.","research_hard_errors":"Privalomų taisyklių klaidos","research_changed_assignments":"Pakeistos normalios pamainos","research_normal_swaps":"Normalių apsikeitimų","research_backup_swaps":"Dublių apsikeitimų","research_completed_covers":"Realiai įvykdyti pavadavimai"
+"research":"Anketa","research_title":"Radiology Scheduler anketos langas","research_survey":"Anketa","research_dashboard":"Tyrimo skydas","research_phase":"Etapas","research_baseline":"Prieš naudojimą","research_followup":"Po naudojimo","research_likert_help":"1 = visiškai nesutinku · 5 = visiškai sutinku","research_submit":"IŠSAUGOTI ANKETĄ","research_saved":"Tyrimo anketa išsaugota.","research_privacy":"Atsakymai analizei saugomi atskirai nuo grafiko. Seniūnė SR mato tik grupės suvestines ir anoniminius komentarus; ŠR tyrimo lange gali matyti deidentifikuotus atsakymus. Individualūs vardai šiame lange nerodomi.","research_response_count":"Atsakymų skaičius","research_mean":"Vidurkis","research_change":"Pokytis","research_operational":"Operaciniai mėnesio rodikliai","research_survey_results":"Anketos rezultatai","research_deidentified":"Deidentifikuoti atsakymai","research_comments":"Anoniminiai komentarai","research_gm_note":"Seniūnės vaizde rodomi tik grupės lygio rezultatai, kad individualūs atsakymai nebūtų naudojami personalo vertinimui.","research_rs_note":"ŠR tyrėjo vaizde papildomai rodomi deidentifikuoti individualūs įrašai kokybės kontrolei ir vėlesnei analizei.","research_no_data":"Dar nėra tyrimo duomenų.","research_month_note":"Operaciniai rodikliai skaičiuojami pasirinktam mėnesiui; anketų suvestinė apima visus pateiktus įrašus.","research_stress":"Kiek stresą kelia grafiko sudarymo / keitimo procesas? (0–10)","research_changes":"Kiek kartų per mėnesį paprastai prašote ar atliekate grafiko pakeitimą?","research_contact":"Kaip dažnai reikia kreiptis į seniūnę dėl neaiškaus ar neteisingo grafiko?","research_problem":"Didžiausia dabartinio proceso problema","research_improve":"Ką labiausiai reikėtų pagerinti?","research_easy":"Sistema lengva naudotis","research_mobile":"Mobilioji versija lengva naudotis","research_actual":"Sistema rodo realų aktualų grafiką po pakeitimų","research_system_actual":"Naudingas skirtumas tarp sistemos pradinio ir faktinio grafiko","research_continue":"Norėčiau tęsti šios sistemos naudojimą vietoje ankstesnio metodo","research_access_denied":"Tyrimo skydas prieinamas tik ŠR ir SR","research_hard_errors":"Privalomų taisyklių klaidos","research_changed_assignments":"Pakeistos normalios pamainos","research_normal_swaps":"Normalių apsikeitimų","research_backup_swaps":"Dublių apsikeitimų","research_completed_covers":"Realiai įvykdyti pavadavimai"
 })
 TR["EN"].update({
-"research":"Research","research_title":"Radiology Scheduler research window","research_survey":"Research survey","research_dashboard":"Research dashboard","research_phase":"Phase","research_baseline":"Before use","research_followup":"After use","research_likert_help":"1 = strongly disagree · 5 = strongly agree","research_submit":"SAVE RESEARCH SURVEY","research_saved":"Research survey saved.","research_privacy":"Research answers are stored separately from scheduling data. G.M. sees group summaries and anonymous comments only; the R.Š. research view can inspect de-identified responses. Individual names are not shown in this window.","research_response_count":"Response count","research_mean":"Mean","research_change":"Change","research_operational":"Monthly operational metrics","research_survey_results":"Survey results","research_deidentified":"De-identified responses","research_comments":"Anonymous comments","research_gm_note":"The senior view shows group-level results only so individual responses are not used for personnel evaluation.","research_rs_note":"The R.Š. researcher view additionally shows de-identified individual records for quality control and later analysis.","research_no_data":"No research data yet.","research_month_note":"Operational metrics use the selected month; survey summaries include all submitted responses.","research_stress":"How stressful is the scheduling / change process? (0–10)","research_changes":"How many schedule changes do you usually request or participate in per month?","research_contact":"How often do you need to contact the senior because the schedule is unclear or incorrect?","research_problem":"Biggest problem with the current process","research_improve":"What should be improved most?","research_easy":"The platform is easy to use","research_mobile":"The mobile version is easy to use","research_actual":"The platform reflects the real current schedule after changes","research_system_actual":"The SYSTEM versus ACTUAL distinction is useful","research_continue":"I would prefer to continue using this platform rather than return to the previous method","research_access_denied":"The research dashboard is available only to R.Š. and G.M.","research_hard_errors":"HARD errors","research_changed_assignments":"Changed normal assignments","research_normal_swaps":"Normal swaps","research_backup_swaps":"Backup swaps","research_completed_covers":"Completed actual covers"
+"research":"Research","research_title":"Radiology Scheduler research window","research_survey":"Research survey","research_dashboard":"Research dashboard","research_phase":"Phase","research_baseline":"Before use","research_followup":"After use","research_likert_help":"1 = strongly disagree · 5 = strongly agree","research_submit":"SAVE RESEARCH SURVEY","research_saved":"Research survey saved.","research_privacy":"Research answers are stored separately from scheduling data. The current senior SR sees group summaries and anonymous comments only; the ŠR research view can inspect de-identified responses. Individual names are not shown in this window.","research_response_count":"Response count","research_mean":"Mean","research_change":"Change","research_operational":"Monthly operational metrics","research_survey_results":"Survey results","research_deidentified":"De-identified responses","research_comments":"Anonymous comments","research_gm_note":"The senior view shows group-level results only so individual responses are not used for personnel evaluation.","research_rs_note":"The ŠR researcher view additionally shows de-identified individual records for quality control and later analysis.","research_no_data":"No research data yet.","research_month_note":"Operational metrics use the selected month; survey summaries include all submitted responses.","research_stress":"How stressful is the scheduling / change process? (0–10)","research_changes":"How many schedule changes do you usually request or participate in per month?","research_contact":"How often do you need to contact the senior because the schedule is unclear or incorrect?","research_problem":"Biggest problem with the current process","research_improve":"What should be improved most?","research_easy":"The platform is easy to use","research_mobile":"The mobile version is easy to use","research_actual":"The platform reflects the real current schedule after changes","research_system_actual":"The SYSTEM versus ACTUAL distinction is useful","research_continue":"I would prefer to continue using this platform rather than return to the previous method","research_access_denied":"The research dashboard is available only to ŠR and SR","research_hard_errors":"HARD errors","research_changed_assignments":"Changed normal assignments","research_normal_swaps":"Normal swaps","research_backup_swaps":"Backup swaps","research_completed_covers":"Completed actual covers"
 })
 
 # V2.5.53 — wording aligned with critical exposure + weekly recovery constitution.
 # The legacy 0–100 summary score remains visible for continuity, but it is NOT
 # the optimizer hierarchy and never overrules the explicit lexicographic locks.
 TR["LT"].update({
-    "fairness_100_note":"100 % yra suvestinis diagnostinis rodiklis, o ne solverio prioritetų formulė. V2.5.53 sprendžia leksikografiškai: TRUE ABSOLUTE HARD → kritinis SPS RO / SPS UG / savaitgalių 0–1 water-filling → RESIDENT HARD → critical spacing → weekly load/recovery water-filling → kitas burden → kitų postų guardrail → SOFT → post debt catch-up. Savanoriškai pasirinktas savaitgalis vis tiek skaičiuojamas kaip reali ekspozicija ir nuovargio krūvis.",
-    "fairness_formula_month":"Rodoma 0–100 formulė yra tęstinis suvestinis indikatorius (savaitgaliai / penktadieniai / dubliai / darbo dienos), bet ji NĖRA solverio prioritetų hierarchija. Kritinių SPS RO, SPS UG ir savaitgalių spreadą saugo atskiri 0–1 konstituciniai guardrailai.",
-    "fairness_formula_cumulative":"Kaupiamasis 0–100 indikatorius naudoja paskelbtų mėnesių sukauptą istoriją. Papildomai postų lygybė sekama atskirai per cumulative exposure ir POST DEBT, kad laikinas necritical nukrypimas būtų kompensuotas ateityje.",
-    "voluntary_unpopular_goal":"Konkreti pageidaujama darbo data yra SOFT-2; ją vykdyti tik nepažeidžiant kritinio SPS RO / SPS UG / savaitgalių water-filling ir aukštesnių taisyklių.",
-    "voluntary_unpopular_explain":"Savanoriškai pageidauta savaitgalio ar SPS data gali pagerinti individualų SOFT išpildymą, tačiau pati pamaina vis tiek skaičiuojama į kritinę exposure ir fatigue apskaitą. Pageidavimas negali sukurti 2+ kritinio spread vien todėl, kad žmogus pats pasirinko tą datą.",
-    "other_preferences_explain":"SOFT optimizuojami tik aukštesniuose užraktuose: po TRUE ABSOLUTE HARD, kritinio SPS RO / SPS UG / savaitgalių 0–1 water-filling, RESIDENT HARD, kritinio temporal spacing, weekly load/recovery water-filling, kitų burden taisyklių ir noncritical postų guardrail. SOFT-1 → SOFT-2 → SOFT-3; kiekviename range horizontalus water-filling. Legitimus SOFT negali pralaužti critical 0–1, ≤48h/7d ar recovery užraktų.",
+    "fairness_100_note":"100 % yra suvestinis diagnostinis rodiklis, o ne solverio prioritetų formulė. Pirmame mėnesyje be ankstesnės savaitgalių istorijos aiškiai pasirinktas savaitgalio „Pageidauju dirbti“ laikomas savanoriška nepopuliaria pamaina: įvykdytas savanoriškas vienetas gali būti išimtas iš DABARTINIO savaitgalio / SPS RO fairness skaičiaus, o likęs nesavanoriškas krūvis lieka 0–1 water-fill. Tikras RAW dirbtas savaitgalio krūvis vis tiek išsaugomas istorijoje ir veikia vėlesnių mėnesių balansą.",
+    "fairness_formula_month":"Rodoma 0–100 formulė yra tęstinis suvestinis indikatorius, bet ji NĖRA solverio prioritetų hierarchija. SPS UG ir penktadienių exposure išlieka raw 0–1 struktūriniai guardrail. Pirmame mėnesyje su savaitgalio savanoriais SPS RO / savaitgalio 0–1 fairness taikomas likusiam NESAVANORIŠKAM krūviui; RAW matomas skirtumas rodomas atskirai ir nėra paslepiamas.",
+    "fairness_formula_cumulative":"Kaupiamasis 0–100 indikatorius naudoja paskelbtų mėnesių sukauptą istoriją. Papildomai postų lygybė sekama atskirai per cumulative exposure ir FUTURE CATCH-UP, kad laikinas necritical nukrypimas būtų kompensuotas ateityje.",
+    "voluntary_unpopular_goal":"Savaitgalio „Pageidauju dirbti“ pirmame mėnesyje be istorijos gauna atskirą savanoriškos nepopuliarios pamainos sluoksnį: po ABSOLUTE HARD ir RESIDENT HARD sistema pirmiausia bando išpildyti savanorius, o likusį nesavanorišką savaitgalių krūvį water-fillina 0–1.",
+    "voluntary_unpopular_explain":"Visa diena „Pageidauju dirbti“ savaitgalį reiškia vieną savanorišką tos dienos vienetą, o ne automatiškai AM+PM. Jei grafikas nepriklausomai skiria ir antrą pusdienį, papildomas vienetas lieka fairness apskaitoje. RAW realiai dirbtos pamainos išsaugomos ir kitą mėnesį grįžta į cumulative balansą.",
+    "other_preferences_explain":"Įprastas SOFT vis dar optimizuojamas tik aukštesniuose užraktuose ir negali pralaužti saugos, RESIDENT HARD, SPS UG, penktadienių ar kitų struktūrinių guardrail. Vienintelė aiški išimtis — pirmo mėnesio savanoriškas savaitgalio „Pageidauju dirbti“: savanoriškas vienetas gali būti išimtas iš dabartinio SPS RO / savaitgalio fairness skaičiaus, o likęs nesavanoriškas krūvis privalo likti 0–1.",
 })
 TR["EN"].update({
-    "fairness_100_note":"100% is a summary diagnostic, not the solver priority formula. V2.5.53 solves lexicographically: TRUE ABSOLUTE HARD → critical SPS RO / SPS UG / weekend 0–1 water-filling → RESIDENT HARD → critical spacing → weekly load/recovery water-filling → other burden → other-post guardrail → SOFT → post-debt catch-up. A voluntarily preferred weekend still counts as real weekend exposure and fatigue burden.",
-    "fairness_formula_month":"The displayed 0–100 formula is a continuity summary indicator (weekends / Fridays / doubles / weekdays), NOT the solver hierarchy. Critical SPS RO, SPS UG and weekend spread is protected separately by constitutional 0–1 guardrails.",
-    "fairness_formula_cumulative":"The cumulative 0–100 indicator uses published-month history. Post equality is also tracked separately through cumulative exposure and POST DEBT so temporary noncritical imbalance is repaid later.",
-    "voluntary_unpopular_goal":"An exact preferred work date is SOFT-2 and is fulfilled only inside the higher critical SPS RO / SPS UG / weekend water-fill locks.",
-    "voluntary_unpopular_explain":"A voluntarily preferred weekend or SPS date can improve individual SOFT satisfaction, but the assignment still counts toward critical exposure and fatigue. Volunteering cannot create a critical spread of 2+ merely because the resident requested the date.",
-    "other_preferences_explain":"SOFT is optimized only inside higher locks: TRUE ABSOLUTE HARD, critical SPS RO / SPS UG / weekend 0–1 water-filling, RESIDENT HARD, critical temporal spacing, weekly load/recovery water-filling, other burden fairness and the noncritical-post guardrail. SOFT-1 → SOFT-2 → SOFT-3, each with horizontal water-filling. Legitimate SOFT cannot break critical 0–1, the ≤48h/7d ceiling or recovery locks.",
+    "fairness_100_note":"100% is a summary diagnostic, not the solver priority formula. In the first month with no prior weekend history, an explicit weekend “prefer to work” is treated as volunteering for unpopular duty: an honored volunteer unit may sit outside the CURRENT weekend / SPS RO fairness count, while the remaining non-voluntary burden stays at 0–1 water-fill. The real RAW weekend workload is still saved to history and affects later-month balancing.",
+    "fairness_formula_month":"The displayed 0–100 formula is a continuity summary indicator, NOT the solver hierarchy. SPS UG and Friday remain raw 0–1 structural guardrails. In a first-month volunteer case, SPS RO / weekend 0–1 fairness is applied to the remaining NON-voluntary burden; the RAW visible spread is reported separately rather than hidden.",
+    "fairness_formula_cumulative":"The cumulative 0–100 indicator uses published-month history. Post equality is also tracked separately through cumulative exposure and FUTURE CATCH-UP so temporary noncritical imbalance is repaid later.",
+    "voluntary_unpopular_goal":"A weekend “prefer to work” in the first no-history month gets a dedicated unpopular-duty volunteer layer: after ABSOLUTE HARD and RESIDENT HARD, the engine first tries to honor willing residents and water-fills the remaining non-voluntary weekend burden at 0–1.",
+    "voluntary_unpopular_explain":"A whole-day weekend “prefer to work” means one voluntary day unit, not an automatic AM+PM double. If the schedule independently needs a second half-day, that extra unit remains in the fairness count. RAW worked exposure is retained in history and returns to cumulative balancing in later months.",
+    "other_preferences_explain":"Ordinary SOFT is still optimized only inside higher safety, Resident-HARD, SPS UG, Friday and structural guardrails. The one explicit exception is the first-month weekend-work volunteer rule: an honored volunteer unit may sit outside current SPS RO / weekend fairness, while the remaining non-voluntary burden must stay at 0–1.",
 })
 
 # V2.5.55 — voluntary swap consequence/ACK layer with labour-time reality guardrails.
@@ -180,7 +197,7 @@ TR["EN"].update({
     "swap_48_only_exception":"The acknowledgement applies only to this specific voluntary swap. It never bypasses ABSOLUTE HARD, approved absence, overlap/coverage, ≤12h/day, ≥11h daily rest, ≤6 workdays/7d or ≤60h/7d. Post-double recovery and a self-overridden Resident-HARD request may be knowingly accepted in a swap and are therefore shown as ACK warnings rather than automatic blocks.",
     "swap_preview_invalid":"This swap cannot be proposed / accepted because another mandatory rule would be violated: {reason}",
     "swap_48_reaccept":"The swap consequences changed after the request was created. A fresh explicit acknowledgement is required; recreate the swap request.",
-    "swap_note":"Voluntary swaps change only the ACTUAL schedule. Each affected resident sees a consequence table before consent. The swap is blocked by ABSOLUTE/operational and labour-time guardrails: overlap, approved absence, >12h/day, <11h rest, >6 workdays/7d or the active swap hard cap (up to 60h/7d). New 12h doubles, >40/>48h load, six-day streaks, post-double recovery patterns and self-overridden Resident-HARD requests are ACK warnings. SYSTEM fairness remains frozen.",
+    "swap_note":"Voluntary swaps change only the ACTUAL schedule. Each affected resident sees a consequence table before consent. The swap is blocked by ABSOLUTE/operational and labour-time guardrails: overlap, approved absence, >12h/day, <11h rest, >6 workdays/7d or the active swap hard cap (up to 60h/7d). New 12h doubles, >40/>48h load, six-day streaks, post-double recovery patterns and self-overridden Resident-HARD requests are ACK warnings. SYSTEM fairness remains frozen. Workplace/post fairness, modality mix, US exposure and diversity never block a mutually accepted ACTUAL swap.",
     "labour_hard_summary":"Generation: ≤12h/day; ≥11h between workdays; at least 1 fully free day per rolling 7d; ≤48 known hours/7d; target ~40h/7d; after 2 consecutive doubles the next day is PM-only or off. Post-publication voluntary swaps use a separate consequence + ACK mode: >48h is not an automatic blocker, while >12h/day, <11h rest, >6 workdays/7d, the active swap hard cap and ABSOLUTE/overlap/coverage remain blockers.",
     "fairness_hierarchy_intro":"During generation, absolute safety/work rules come first. SPS RO, SPS UG and weekends are then distributed as evenly as possible, followed by resident required unavailability, rest/workload protection and other preferences. After publication, voluntary swaps use a separate consequence table and explicit acknowledgement.",
 })
@@ -215,19 +232,19 @@ TR["LT"].update({
 "research_checkpoint":"Tyrimo matavimo taškas","research_baseline_checkpoint":"Pradinis vertinimas · prieš paleidimą (2026 rugsėjis)","research_month3_checkpoint":"3 mėn. pakartotinis vertinimas (2026 gruodis)","research_month6_checkpoint":"6 mėn. pakartotinis vertinimas (2027 kovas)",
 "research_checkpoint_done":"Užpildyta","research_checkpoint_locked":"Dar neaktyvuota","research_checkpoint_pending":"Neužpildyta","research_next_task":"Kitas tyrimo veiksmas","research_resident_note":"Rezidentui reikia tik trijų trumpų anketų per visą tyrimą: pradinio vertinimo, po ~3 mėn. ir po ~6 mėn.",
 "research_completion":"Anketų užpildymas","research_expected":"Numatyta","research_export":"Eksportas analizei","research_download_surveys":"ATSISIŲSTI DEIDENTIFIKUOTAS ANKETAS (.csv)","research_download_monthly":"ATSISIŲSTI MĖNESIO RODIKLIUS (.csv)",
-"research_monthly_table":"Spalis–kovas: automatiniai operaciniai rodikliai","research_scheduler_section":"G.M. grafikų sudarytojos darbo krūvis","research_scheduler_intro":"G.M. pildo du trumpus įrašus kiekvienam tyrimo mėnesiui: iškart paruošus grafiką ir mėnesiui pasibaigus. Operacinių apsikeitimų ir pavadavimų skaičius sistema renka automatiškai.",
-"research_scheduler_month":"Tyrimo mėnuo","research_scheduler_checkpoint":"G.M. matavimo taškas","research_after_creation":"Iškart paruošus grafiką","research_after_month":"Mėnesiui pasibaigus",
+"research_monthly_table":"Spalis–kovas: automatiniai operaciniai rodikliai","research_scheduler_section":"SR / Seniūnės grafikų sudarymo darbo krūvis","research_scheduler_intro":"SR kaip dabartinė Seniūnė pildo du trumpus įrašus kiekvienam tyrimo mėnesiui: iškart paruošus grafiką ir mėnesiui pasibaigus. Operacinių apsikeitimų ir pavadavimų skaičius sistema renka automatiškai.",
+"research_scheduler_month":"Tyrimo mėnuo","research_scheduler_checkpoint":"Seniūnės SR matavimo taškas","research_after_creation":"Iškart paruošus grafiką","research_after_month":"Mėnesiui pasibaigus",
 "research_workflow_method":"Kaip šį mėnesį buvo sudarytas grafikas?","research_method_tool":"Tik sistema","research_method_excel":"Tik Excel","research_method_shadow":"Excel + sistema: lygiagretus palyginimas",
 "research_total_minutes":"Bendras tavo aktyvus laikas grafikui paruošti (min.)","research_corrections":"Rankinių korekcijų / iteracijų skaičius","research_resident_contacts":"Kiek rezidentų kontaktų / derinimų reikėjo?","research_communication_minutes":"Kiek laiko užėmė komunikacija dėl grafiko? (min.)",
 "research_scheduler_stress":"Grafiko sudarymo stresas (0–10)","research_fairness_confidence":"Pasitikėjimas, kad paskirstymas teisingas (1–5)","research_hard_confidence":"Pasitikėjimas, kad privalomos taisyklės išlaikytos (1–5)","research_scheduler_satisfaction":"Pasitenkinimas galutiniu grafiku (1–5)",
 "research_excel_minutes":"Excel laikas (min.)","research_tool_minutes":"Sistemos laikas (min.)","research_excel_corrections":"Excel korekcijų sk.","research_tool_corrections":"Sistemos korekcijų / pakartotinių generavimų sk.",
 "research_post_minutes":"Laikas po publikavimo pakeitimams / problemoms (min.)","research_post_interventions":"Kiek pakeitimų reikėjo tavo tiesioginio įsikišimo?","research_post_contacts":"Kiek žinučių / skambučių dėl grafiko gavai per mėnesį?",
 "research_actual_confidence":"Pasitikėjimas, kad portalas rodė realų faktinį grafiką (1–5)","research_use_next":"Ar rinktumeisi sistemą kitam mėnesiui?","research_yes":"Taip","research_unsure":"Neaišku","research_no":"Ne",
-"research_scheduler_notes":"Pastabos / kas užėmė daugiausia laiko","research_scheduler_saved":"G.M. tyrimo įrašas išsaugotas.","research_scheduler_status":"G.M. duomenų užpildymas",
+"research_scheduler_notes":"Pastabos / kas užėmė daugiausia laiko","research_scheduler_saved":"Seniūnės SR tyrimo įrašas išsaugotas.","research_scheduler_status":"Seniūnės SR duomenų užpildymas",
 "research_generation_telemetry":"Automatiniai generavimo rodikliai","research_generation_attempts":"Generavimo bandymų","research_solver_seconds":"Skaičiavimo laikas, s","research_generation_success":"Sėkmingų generavimų",
 "research_observer_tab":"Tyrimo atsiliepimai","research_observer_intro":"Tik peržiūros teisės grafikui nesikeičia. Šiame lange galima tik pateikti tyrimo atsiliepimą apie stebėsenos patogumą.","research_observer_checkpoint":"Administratorės vertinimas",
 "research_obs_actual":"Lengva nustatyti, kas realiai dirba kiekvieną pamainą.","research_obs_changes":"Lengva peržiūrėti pakeitimus po publikavimo.","research_obs_system_actual":"Sistemos pradinio ir faktinio grafiko skirtumas yra naudingas.","research_obs_privacy":"Sistema suteikia pakankamai matomumo neatskleisdama nereikalingų privačių rezidentų duomenų.","research_obs_log":"Pakeitimų žurnalas yra suprantamas.","research_obs_fairness":"Teisingumo informacija yra suprantama.","research_obs_trust":"Pasitikiu portale rodoma operacine informacija.","research_obs_missing":"Kokios informacijos trūksta, kai reikia suprasti realią skyriaus situaciją?","research_observer_saved":"Administratorės tyrimo feedback išsaugotas.",
-"research_data_quality":"Duomenų pilnumas","research_missing_scheduler":"Trūksta G.M. įrašo","research_complete":"Pilna","research_researcher_only":"Ši išsami skiltis matoma tik R.Š. tyrėjo paskyroje."
+"research_data_quality":"Duomenų pilnumas","research_missing_scheduler":"Trūksta Seniūnės SR įrašo","research_complete":"Pilna","research_researcher_only":"Ši išsami skiltis matoma tik ŠR tyrėjo paskyroje."
 })
 TR["EN"].update({
 "research_role_resident":"Resident · study participant","research_role_researcher":"Resident · researcher","research_role_senior":"Resident · senior scheduler",
@@ -235,19 +252,63 @@ TR["EN"].update({
 "research_checkpoint":"Research checkpoint","research_baseline_checkpoint":"Baseline · pre-launch (September 2026)","research_month3_checkpoint":"3-month follow-up (December 2026)","research_month6_checkpoint":"6-month follow-up (March 2027)",
 "research_checkpoint_done":"Completed","research_checkpoint_locked":"Not active yet","research_checkpoint_pending":"Not completed","research_next_task":"Next research task","research_resident_note":"Residents complete only three short surveys during the whole study: baseline, ~3 months, and ~6 months.",
 "research_completion":"Survey completion","research_expected":"Expected","research_export":"Analysis export","research_download_surveys":"DOWNLOAD DE-IDENTIFIED SURVEYS (.csv)","research_download_monthly":"DOWNLOAD MONTHLY METRICS (.csv)",
-"research_monthly_table":"October–March: automatic operational metrics","research_scheduler_section":"G.M. scheduler workload","research_scheduler_intro":"G.M. completes two short records per study month: immediately after preparing the schedule and after the month ends. Operational swap / cover counts are collected automatically.",
-"research_scheduler_month":"Study month","research_scheduler_checkpoint":"G.M. checkpoint","research_after_creation":"Immediately after schedule preparation","research_after_month":"After the month is complete",
+"research_monthly_table":"October–March: automatic operational metrics","research_scheduler_section":"SR / senior scheduler workload","research_scheduler_intro":"SR as the current senior completes two short records per study month: immediately after preparing the schedule and after the month ends. Operational swap / cover counts are collected automatically.",
+"research_scheduler_month":"Study month","research_scheduler_checkpoint":"Senior SR checkpoint","research_after_creation":"Immediately after schedule preparation","research_after_month":"After the month is complete",
 "research_workflow_method":"How was this month's schedule prepared?","research_method_tool":"Tool only","research_method_excel":"Excel only","research_method_shadow":"Excel + Tool parallel comparison",
 "research_total_minutes":"Total active time you spent preparing the schedule (min)","research_corrections":"Manual corrections / iterations","research_resident_contacts":"Resident contacts / coordination episodes","research_communication_minutes":"Time spent on schedule communication (min)",
 "research_scheduler_stress":"Schedule-preparation stress (0–10)","research_fairness_confidence":"Confidence allocation is fair (1–5)","research_hard_confidence":"Confidence HARD rules are respected (1–5)","research_scheduler_satisfaction":"Satisfaction with final schedule (1–5)",
 "research_excel_minutes":"Excel time (min)","research_tool_minutes":"Tool time (min)","research_excel_corrections":"Excel corrections","research_tool_corrections":"Tool corrections / regenerations",
 "research_post_minutes":"Time spent on post-publication changes/problems (min)","research_post_interventions":"Changes requiring your direct intervention","research_post_contacts":"Schedule-related messages/calls received during month",
 "research_actual_confidence":"Confidence portal reflected the true ACTUAL schedule (1–5)","research_use_next":"Would you choose the Tool next month?","research_yes":"Yes","research_unsure":"Unsure","research_no":"No",
-"research_scheduler_notes":"Notes / what consumed the most time","research_scheduler_saved":"G.M. research record saved.","research_scheduler_status":"G.M. data completion",
+"research_scheduler_notes":"Notes / what consumed the most time","research_scheduler_saved":"Senior SR research record saved.","research_scheduler_status":"Senior SR data completion",
 "research_generation_telemetry":"Automatic generation telemetry","research_generation_attempts":"Generation attempts","research_solver_seconds":"Solver time, s","research_generation_success":"Successful generations",
 "research_observer_tab":"Research feedback","research_observer_intro":"Read-only scheduling rights remain unchanged. This tab only allows research feedback about the monitoring experience.","research_observer_checkpoint":"Administrator evaluation",
 "research_obs_actual":"It is easy to determine who is actually working each shift.","research_obs_changes":"It is easy to review changes made after publication.","research_obs_system_actual":"The SYSTEM baseline versus ACTUAL distinction is useful.","research_obs_privacy":"The platform provides enough visibility without exposing unnecessary private resident information.","research_obs_log":"The change log is understandable.","research_obs_fairness":"The fairness information is understandable.","research_obs_trust":"I trust the operational information shown in the portal.","research_obs_missing":"What information is missing when you need to understand the real departmental staffing situation?","research_observer_saved":"Administrator research feedback saved.",
-"research_data_quality":"Data completeness","research_missing_scheduler":"Missing G.M. record","research_complete":"Complete","research_researcher_only":"This detailed section is visible only to the R.Š. researcher account."
+"research_data_quality":"Data completeness","research_missing_scheduler":"Missing senior SR record","research_complete":"Complete","research_researcher_only":"This detailed section is visible only to the ŠR researcher account."
+})
+
+# V2.5.96 — monthly baseline fairness + live ACTUAL ledger; no future catch-up.
+TR["LT"].update({
+    "metric_saturday":"Šeštadienių skirtumas",
+    "metric_sunday":"Sekmadienių skirtumas",
+    "fairness_hierarchy_intro":"Kiekvienas mėnuo prasideda nuo švaraus SYSTEM baseline: ABSOLUTE HARD → kritinis struktūrinis water-fill (SPS RO, SPS UG, ŠEŠTADIENIAI, SEKMADIENIAI ir penktadieniai) → RESIDENT HARD / poilsis / tikslus workload → aktyvūs pageidavimai ir darbo pobūdžio nustatymai → likusių postų optimizavimas. 12 val. darbo dienos pageidavimas gali perskirstyti jau reikalingas dvigubas pamainas ir dėl to išplėsti dublių skirtumą, jei HARD ir kritinis water-fill lieka validūs. Po publikavimo leidžiami ACTUAL pakeitimai gali water-fill pakeisti. Ankstesnių mėnesių fairness kitam mėnesiui catch-up nesukuria.",
+    "fairness_monthly_explain":"SYSTEM mėnesio fairness rodo algoritmo baseline publikavimo momentu. ACTUAL mėnesio fairness perskaičiuojamas iš realaus dabartinio darbo po manual override'ų, swapų, repair ir realiai įvykdytų dublių. Platesnis ACTUAL spread leidžiamas ir rodomas, bet nėra perkeliamas kaip skola į kitą mėnesį.",
+    "fairness_cumulative_explain":"Istorija yra tik auditas / stebėjimas. Ji NENAUDOJAMA kito mėnesio solverio kompensacijai ar catch-up paskyrimams.",
+    "fairness_100_note":"Fairness procentas yra diagnostinis mėnesio balanso rodiklis. SYSTEM baseline turi laikytis generatoriaus water-fill; ACTUAL gali nukrypti po leidžiamų žmogaus sprendimų ir tada rodomas toks, koks yra realybėje.",
+    "fairness_formula_cumulative":"Istoriniai mėnesių rodikliai rodomi palyginimui, tačiau nėra solverio įvestis ir nesukuria ateities future catch-up / catch-up.",
+    "fairness_swap_neutral":"SYSTEM baseline lieka užšaldytas auditui, tačiau swapas ar manual override pakeičia ACTUAL fairness statistiką pagal realų darbą. Tai nėra ateities fairness skola.",
+    "fairness_forced_change":"Post-publication repair ir realiai įvykdytas dublio cover keičia ACTUAL realaus darbo fairness statistiką. SYSTEM publikavimo baseline lieka nepakeistas auditui. Jokio future catch-up nėra.",
+    "fairness_frozen_note":"SYSTEM = publikavimo momento algoritmo water-fill baseline. ACTUAL = realus dabartinis pasiskirstymas po override'ų, swapų, repair ir completed cover. Abu rodomi atskirai; ACTUAL istorija yra tik stebėjimui ir niekada nevaldo kito mėnesio generatoriaus.",
+    "fairness_cumulative_goal":"Nėra fairness catch-up sluoksnio. Kiekvienas mėnuo vėl pradedamas nuo neutralaus water-fill baseline.",
+    "voluntary_unpopular_goal":"Kritiniai nesavanoriško krūvio komponentai pirmiausia water-fill'inami. Tada aktyvūs individualūs pageidavimai ir darbo pobūdžio nustatymai tenkinami maksimaliai, kol nepažeidžiamos privalomos taisyklės ir kritiniai struktūriniai guardrailai.",
+    "voluntary_unpopular_explain":"Aktyvus pageidavimas nėra lyginamas su neutraliu N/A kaip konkuruojančiu noru. Pvz., jei tik vienas rezidentas pasirenka dažniausiai 12 val. darbo dienas, sistema turi jam skirti kuo daugiau jau matematiškai reikalingų AM+PM dienų, jei tai nepažeidžia HARD ir kritinio water-fill. Po publikavimo abipusis swapas gali keisti ACTUAL balansą dar plačiau.",
+    "other_preferences_explain":"Po privalomų taisyklių ir kritinio struktūrinio water-fill sistema aktyviai maksimalizuoja realiai pateiktų pageidavimų bei darbo pobūdžio nustatymų išpildymą. Neutralūs žmonės nekonkuruoja su aiškiai išreikštu pageidavimu. Darbo dienos trukmės pageidavimas gali perskirstyti dvigubas pamainas, tačiau negali kurti papildomo bendro dublių poreikio ar pažeisti ABSOLUTE/HARD bei kritinių šeštadienio/sekmadienio/SPS guardrailų.",
+    "swap_note":"Savanoriškas swapas keičia ACTUAL grafiką ir ACTUAL fairness statistiką. SYSTEM baseline auditui neperrašomas. Water-fill nėra post-publication swapo blokatorius, todėl leidžiamas ACTUAL spread padidėjimas aiškiai atsispindi statistikoje. Jokio kito mėnesio catch-up dėl to nėra.",
+    "repair_help":"Liga, atostogos ar force majeure keičia ACTUAL grafiką. Realaus darbo fairness perskaičiuojamas pagal tai, kas iš tikrųjų dirba; SYSTEM publikavimo baseline lieka auditui. Šis skirtumas niekada nekuria fairness skolos ar kito mėnesio catch-up.",
+    "repair_applied":"Pakeitimas pritaikytas ACTUAL grafikui. ACTUAL fairness perskaičiuotas pagal realų darbą; SYSTEM baseline liko nepakeistas auditui. Future catch-up nėra.",
+    "repair_load_help":"Operacinis audito skaitiklis. Realiai pakeistas darbas įeina į ACTUAL mėnesio statistiką, tačiau nėra paverčiamas ateities fairness skola.",
+    "repair_fairness_neutral":"ACTUAL FAIRNESS PERSKAIČIUOTA",
+})
+TR["EN"].update({
+    "metric_saturday":"Saturday spread",
+    "metric_sunday":"Sunday spread",
+    "fairness_hierarchy_intro":"Every month starts from a clean SYSTEM baseline: ABSOLUTE HARD → critical structural water-fill (SPS RO, SPS UG, SATURDAYS, SUNDAYS and Fridays) → RESIDENT HARD / rest / exact workload → active preferences and work-style settings → remaining workplace optimization. A 12-hour workday preference may redistribute the already-needed double-shift pool and widen double spread when HARD and critical water-fill remain valid. Allowed ACTUAL changes may diverge after publication. Prior-month fairness never creates future catch-up.",
+    "fairness_monthly_explain":"SYSTEM monthly fairness is the algorithmic publication baseline. ACTUAL monthly fairness is recalculated from real current work after manual overrides, swaps, repairs and completed backup covers. A wider ACTUAL spread is allowed and shown, but never carried forward as a debt.",
+    "fairness_cumulative_explain":"History is audit/monitoring only. It is NOT used by the next month's solver for compensation or catch-up assignments.",
+    "fairness_100_note":"The fairness percentage is a diagnostic monthly balance indicator. SYSTEM must satisfy the generator water-fill baseline; ACTUAL may diverge after allowed human decisions and is shown exactly as reality stands.",
+    "fairness_formula_cumulative":"Historical monthly metrics are displayed for comparison only; they are not solver input and create no future future catch-up/catch-up.",
+    "fairness_swap_neutral":"SYSTEM remains frozen for audit, but a swap or manual override changes ACTUAL fairness statistics according to real work. This never becomes a future fairness debt.",
+    "fairness_forced_change":"Post-publication repair and a completed backup cover change ACTUAL real-work fairness statistics. The SYSTEM publication baseline remains unchanged for audit. There is no future catch-up.",
+    "fairness_frozen_note":"SYSTEM = the publication-time algorithmic water-fill baseline. ACTUAL = the real current distribution after overrides, swaps, repairs and completed covers. Both are shown separately; ACTUAL history is monitoring-only and never controls the next month's generator.",
+    "fairness_cumulative_goal":"There is no fairness catch-up layer. Every month starts again from a neutral water-fill baseline.",
+    "voluntary_unpopular_goal":"Critical involuntary burden is water-filled first. Active individual preferences and work-style settings are then fulfilled as much as possible while mandatory rules and critical structural guardrails remain valid.",
+    "voluntary_unpopular_explain":"An active preference is not treated as competing with a neutral N/A. For example, if only one resident prefers mostly 12-hour days, the system should allocate as many of the already-required AM+PM days to that resident as feasible while preserving HARD and critical water-fill. Accepted post-publication swaps may alter ACTUAL balance further.",
+    "other_preferences_explain":"After mandatory rules and critical structural water-fill are protected, the system actively maximizes fulfillment of expressed preferences and work-style settings. Neutral residents do not compete with an explicit preference. Workday-length preferences may redistribute double shifts, but cannot create extra total double demand or violate ABSOLUTE/HARD or critical Saturday/Sunday/SPS guardrails.",
+    "swap_note":"A voluntary swap changes the ACTUAL schedule and ACTUAL fairness statistics. The SYSTEM baseline remains frozen for audit. Water-fill is not a post-publication swap blocker, so an allowed ACTUAL spread increase is visible in the statistics. No later-month catch-up is created.",
+    "repair_help":"Sickness, leave or force majeure changes ACTUAL. Real-work fairness is recalculated from who actually works; SYSTEM remains the frozen publication baseline. The difference never creates a fairness debt or next-month catch-up.",
+    "repair_applied":"Repair applied to ACTUAL. ACTUAL fairness was recalculated from real work; SYSTEM baseline remains frozen for audit. No future catch-up is created.",
+    "repair_load_help":"Operational audit counter. Changed real work enters ACTUAL monthly statistics but is never converted into a future fairness debt.",
+    "repair_fairness_neutral":"ACTUAL FAIRNESS UPDATED",
 })
 
 RESEARCH_ITEMS = {
@@ -329,6 +390,290 @@ def badge(initials, include_name=True):
     label=initials+(f" — {p['name']}" if include_name and p else "")
     return f'<span style="display:inline-block;background:{c};color:{contrast_text(c)};padding:5px 10px;border-radius:8px;font-weight:700;margin:2px 4px 2px 0;">{html.escape(label)}</span>'
 
+
+def _person_name(initials):
+    p=next((x for x in DEFAULT_PEOPLE if x["initials"]==initials),None)
+    return p["name"] if p else initials
+
+
+def _swap_shift_text(slot):
+    if slot is None:
+        return "—"
+    return (
+        f"{slot.day:02d} {WEEKDAYS[lang][slot.weekday]} · "
+        f"{slot.department} · {block_label(slot.block)}"
+    )
+
+
+def _render_swap_people_line(person_a, person_b, arrow="↔"):
+    st.markdown(
+        f'<div style="font-size:1.08rem;display:flex;align-items:center;gap:10px;'
+        f'flex-wrap:wrap;margin:4px 0 10px 0;">'
+        f'{badge(person_a,include_name=True)}'
+        f'<span style="font-size:1.45rem;font-weight:800;color:#666;">{html.escape(arrow)}</span>'
+        f'{badge(person_b,include_name=True)}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_shift_tile(title, person, slot, accent=None):
+    c=accent or PERSON_COLORS.get(person,"#777777")
+    st.markdown(
+        f'<div style="border:2px solid {c};border-radius:14px;padding:12px 14px;'
+        f'min-height:112px;background:linear-gradient(180deg,{c}18,rgba(255,255,255,0.03));">'
+        f'<div style="font-size:.76rem;font-weight:800;letter-spacing:.04em;opacity:.72;'
+        f'text-transform:uppercase;margin-bottom:7px;">{html.escape(title)}</div>'
+        f'{badge(person,include_name=False)}'
+        f'<div style="font-size:1.02rem;font-weight:700;margin-top:8px;">'
+        f'{html.escape(_swap_shift_text(slot))}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_swap_request_card(req, idx, total, slot_map, incoming=False):
+    a=str(req.get("person_a") or "")
+    b=str(req.get("person_b") or "")
+    sa=slot_map.get(int(req.get("slot_a") or -1))
+    sb=slot_map.get(int(req.get("slot_b") or -1))
+    c=PERSON_COLORS.get(a,"#777777")
+    title=(
+        f"GAUTA UŽKLAUSA {idx}/{total} · DB #{req.get('id')}"
+        if incoming and lang=="LT" else
+        f"INCOMING REQUEST {idx}/{total} · DB #{req.get('id')}"
+        if incoming else
+        f"MANO PASIŪLYMAS {idx}/{total} · DB #{req.get('id')}"
+        if lang=="LT" else
+        f"MY OFFER {idx}/{total} · DB #{req.get('id')}"
+    )
+    st.markdown(
+        f'<div style="border-left:8px solid {c};border-radius:16px;padding:12px 16px;'
+        f'background:rgba(127,127,127,.07);margin:8px 0 10px 0;">'
+        f'<div style="font-size:.82rem;font-weight:900;letter-spacing:.055em;'
+        f'text-transform:uppercase;">{html.escape(title)}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    _render_swap_people_line(a,b,"→")
+    c1,c2=st.columns(2)
+    with c1:
+        _render_shift_tile(
+            ("SIŪLO / GIVES" if lang=="LT" else "OFFERS"),
+            a,sa,PERSON_COLORS.get(a)
+        )
+    with c2:
+        _render_shift_tile(
+            ("PRAŠO / WANTS" if lang=="LT" else "REQUESTS"),
+            b,sb,PERSON_COLORS.get(b)
+        )
+
+
+
+def _swap_hard_user_explanation(code, details=""):
+    """Plain-language explanation for a true ACTUAL swap blocker."""
+    lt={
+        "ONKO_EVEN_PARITY":(
+            "Onko porų taisyklė",
+            "Po apsikeitimo bent vieno rezidento Onko skaičius taptų nelyginis. Onko ACTUAL grafike turi likti 0 / 2 / 4 / …"
+        ),
+        "ONKO_COVERAGE":(
+            "Privalomas Onko padengimas",
+            "Apsikeitimas sugadintų reikiamą bendrą Onko padengimą."
+        ),
+        "OVERLAPPING_ASSIGNMENTS":(
+            "Persidengiančios pamainos",
+            "Po apsikeitimo tam pačiam rezidentui tuo pačiu metu būtų paskirtos dvi persidengiančios pamainos."
+        ),
+        "MAX_HOURS_PER_DAY":(
+            "Maksimali darbo trukmė per dieną",
+            "Po apsikeitimo būtų viršyta ACTUAL swapo maksimali 12 val. darbo trukmė per vieną dieną."
+        ),
+        "MAX_WORKDAYS_7D":(
+            "Maksimalus darbo dienų skaičius per 7 dienas",
+            "Po apsikeitimo rezidentas dirbtų daugiau nei leidžiamos 6 darbo dienos per slenkantį 7 dienų langą."
+        ),
+        "MAX_HOURS_7D":(
+            "Maksimali darbo trukmė per 7 dienas",
+            "Po apsikeitimo būtų viršytas ACTUAL swapo absoliutus valandų limitas per slenkantį 7 dienų langą (iki 60 val.)."
+        ),
+        "MIN_DAILY_REST":(
+            "Minimalus 11 val. paros poilsis",
+            "Po apsikeitimo tarp dviejų darbo dienų liktų mažiau nei 11 val. nepertraukiamo poilsio."
+        ),
+        "POST_DUTY_REST":(
+            "Privalomas poilsis po budėjimo",
+            "Apsikeitimas paskirtų darbą dieną, kuri turi likti laisva po ilgo budėjimo."
+        ),
+        "ABSOLUTE_UNAVAILABILITY":(
+            "Absoliutus nebuvimas",
+            "Apsikeitimas paskirtų darbą per atostogas ar kitą absoliučiai pateisintą nebuvimą."
+        ),
+        "BLOCKED_SLOT":(
+            "Uždaryta / neegzistuojanti pamaina",
+            "Apsikeitimas bandytų užpildyti pamainą, kuri pagal klinikos modelį tuo metu yra uždaryta."
+        ),
+        "MANDATORY_COVERAGE":(
+            "Privalomas klinikos padengimas",
+            "Po apsikeitimo liktų neužpildyta privaloma klinikos pamaina."
+        ),
+        "MANDATORY_BACKUP_AVAILABILITY":(
+            "Privalomas backup padengimas",
+            "Po apsikeitimo kritinei pamainai neliktų nė vieno HARD-available, nepersidengiančio backup rezidento."
+        ),
+        "OTHER_OPERATIONAL_HARD":(
+            "Kita operational HARD taisyklė",
+            "Šis apsikeitimas pažeistų kitą neapeinamą saugos / darbo laiko / klinikos padengimo taisyklę."
+        ),
+    }
+    en={
+        "ONKO_EVEN_PARITY":("Even Onko parity","The swap would leave an odd Onko count. ACTUAL Onko must remain 0 / 2 / 4 / …"),
+        "ONKO_COVERAGE":("Required Onko coverage","The swap would break required overall Onko coverage."),
+        "OVERLAPPING_ASSIGNMENTS":("No overlapping shifts","The swap would give a resident overlapping assignments at the same time."),
+        "MAX_HOURS_PER_DAY":("Maximum hours per day","The swap would exceed the ACTUAL 12-hour daily maximum."),
+        "MAX_WORKDAYS_7D":("Maximum workdays in 7 days","The swap would exceed 6 working days in a rolling 7-day window."),
+        "MAX_HOURS_7D":("Maximum hours in 7 days","The swap would exceed the ACTUAL absolute rolling-7-day limit (up to 60 hours)."),
+        "MIN_DAILY_REST":("Minimum 11-hour daily rest","The swap would leave less than 11 uninterrupted hours of rest between workdays."),
+        "POST_DUTY_REST":("Mandatory post-duty rest","The swap would assign work on a required post-duty rest day."),
+        "ABSOLUTE_UNAVAILABILITY":("Absolute unavailability","The swap would assign work during vacation or another absolute justified absence."),
+        "BLOCKED_SLOT":("Closed / blocked shift","The swap would fill a shift that is closed in the clinic model."),
+        "MANDATORY_COVERAGE":("Mandatory clinical coverage","The swap would leave a mandatory clinical shift unfilled."),
+        "MANDATORY_BACKUP_AVAILABILITY":("Required backup availability","The swap would leave a critical shift without any HARD-available non-overlapping backup resident."),
+        "OTHER_OPERATIONAL_HARD":("Other operational HARD rule","The swap would violate another non-relaxable safety, work-time or clinical-coverage rule."),
+    }
+    table=lt if lang=="LT" else en
+    return table.get(str(code),table["OTHER_OPERATIONAL_HARD"])
+
+
+def _render_swap_hard_block(preview_stats, fallback_reason=""):
+    rows=((preview_stats or {}).get("global",{}) or {}).get("swap_hard_block_rows") or []
+    if not rows:
+        st.error(
+            ("Apsikeitimas negalimas: " if lang=="LT" else "Swap cannot be completed: ")
+            + str(fallback_reason or "unknown reason")
+        )
+        return
+
+    pretty=[]
+    for r in rows:
+        code=str(r.get("code") or "OTHER_OPERATIONAL_HARD")
+        title,why=_swap_hard_user_explanation(code,r.get("details",""))
+        pretty.append({
+            ("HARD taisyklė" if lang=="LT" else "HARD rule"):title,
+            ("Kodėl negalima" if lang=="LT" else "Why blocked"):why,
+            ("Techninė detalė" if lang=="LT" else "Technical detail"):str(r.get("details") or ""),
+        })
+
+    first=pretty[0]
+    st.error(
+        (
+            f"APSIKEITIMAS NEGALIMAS — pažeidžiama HARD taisyklė: {first['HARD taisyklė']}"
+            if lang=="LT" else
+            f"SWAP BLOCKED — HARD rule violated: {first['HARD rule']}"
+        )
+    )
+    st.dataframe(pd.DataFrame(pretty),use_container_width=True,hide_index=True)
+
+
+def _friday_waterfill_proof(stats):
+    pdata=((stats or {}).get("people") or {})
+    counts={i:int((d or {}).get("friday_assignments",0) or 0) for i,d in pdata.items()}
+    vals=list(counts.values())
+    total=int(sum(vals))
+    n=len(vals)
+    lo=int(total//n) if n else 0
+    hi=int((total+n-1)//n) if n else 0
+    spread=(max(vals)-min(vals)) if vals else 0
+    passed=bool(vals and spread<=1 and all(lo<=v<=hi for v in vals))
+    return {"counts":counts,"total":total,"n":n,"floor":lo,"ceil":hi,"spread":spread,"passed":passed}
+
+
+def _delete_confirm(token, applied=False):
+    state_key="_confirm_delete_schedule_action"
+    label=("IŠTRINTI / UNDO" if lang=="LT" else "DELETE / UNDO") if applied else ("IŠTRINTI" if lang=="LT" else "DELETE")
+    if st.button(label,key=f"delete_open_{token}",use_container_width=True):
+        st.session_state[state_key]=token
+    if st.session_state.get(state_key)!=token:
+        return False
+    st.warning(
+        ("Patvirtinkite. Jei veiksmas jau pakeitė ACTUAL, sistema bandys saugiai grąžinti ankstesnę būseną. Jei tie slotai po to buvo pakeisti dar kartą, DELETE bus atmestas, kad nesugadintų naujesnio grafiko."
+         if lang=="LT" else
+         "Confirm. If this action already changed ACTUAL, the system will safely restore the previous state. If those slots changed again later, DELETE will be refused to protect newer changes.")
+    )
+    c1,c2=st.columns(2)
+    with c1:
+        yes=st.button("PATVIRTINTI DELETE" if lang=="LT" else "CONFIRM DELETE",type="primary",key=f"delete_yes_{token}",use_container_width=True)
+    with c2:
+        no=st.button("ATŠAUKTI" if lang=="LT" else "CANCEL",key=f"delete_no_{token}",use_container_width=True)
+    if no:
+        st.session_state.pop(state_key,None)
+        st.rerun()
+    if yes:
+        st.session_state.pop(state_key,None)
+        return True
+    return False
+
+
+def _prepare_swap_action_undo(row,y,m):
+    meta=_swap_meta_decode(row.get("reason"))
+    kind=str(meta.get("kind") or "")
+    phase=str(meta.get("phase") or "")
+    applied=bool(kind=="emergency_rescue" or phase=="applied")
+    if not applied:
+        return None,None
+
+    fresh=refresh_result_payload(db.load_schedule(y,m,"current"),y,m)
+    candidate=deepcopy(fresh)
+    candidate.assignments=dict(fresh.assignments)
+    sa=int(row["slot_a"]); sb=int(row["slot_b"])
+
+    if kind=="emergency_rescue":
+        if sa in candidate.assignments:
+            raise RuntimeError("Emergency Rescue source slotas nebėra tuščias — po Rescue jis jau buvo pakeistas." if lang=="LT" else "Emergency Rescue source is no longer vacant; it changed after the Rescue.")
+        if candidate.assignments.get(sb)!=row.get("person_a"):
+            raise RuntimeError("Emergency Rescue target slotas po Rescue jau buvo pakeistas." if lang=="LT" else "Emergency Rescue target changed after the Rescue.")
+        candidate.assignments[sa]=row.get("person_a")
+        candidate.assignments[sb]=row.get("person_b")
+        mode="voluntary_swap_actual"
+    else:
+        if candidate.assignments.get(sa)!=row.get("person_b") or candidate.assignments.get(sb)!=row.get("person_a"):
+            raise RuntimeError("Šio swapo slotai po pritaikymo jau buvo pakeisti dar kartą — automatinis UNDO nebesaugus." if lang=="LT" else "These swap slots changed again after application; automatic UNDO is no longer safe.")
+        candidate.assignments[sa]=row.get("person_a")
+        candidate.assignments[sb]=row.get("person_b")
+        mode="voluntary_swap_actual"
+
+    candidate=revalidate_loaded_result(
+        y,m,people_for_stored_result(candidate,y,m),candidate,
+        backup_assignments=None,validation_mode=mode,
+    )
+    desired,backup_errors=plan_backups(y,m,candidate)
+    if backup_errors:
+        raise RuntimeError(("UNDO negalimas: nepavyksta atkurti privalomo backup plano: " if lang=="LT" else "UNDO blocked: required backup plan cannot be rebuilt: ")+str(backup_errors[0]))
+    candidate=revalidate_loaded_result(
+        y,m,people_for_stored_result(candidate,y,m),candidate,
+        backup_assignments=desired,validation_mode=mode,
+    )
+    errs=list(((candidate.stats or {}).get("global") or {}).get("errors") or [])
+    if errs:
+        raise RuntimeError(("UNDO negalimas dėl operational HARD: " if lang=="LT" else "UNDO blocked by operational HARD: ")+str(errs[0]))
+    return candidate,desired
+
+
+def _delete_swap_row(row,y,m):
+    candidate,desired=_prepare_swap_action_undo(row,y,m)
+    saved=db.delete_swap_action_v2586(
+        int(row["id"]),
+        serialize_result(candidate) if candidate is not None else None,
+        desired if desired is not None else None,
+    )
+    if saved.get("undone_actual"):
+        try: persist_actual_satisfaction(y,m)
+        except Exception: pass
+        try: refresh_calendar_subscription_feeds([row.get("person_a"),row.get("person_b")])
+        except Exception: pass
+    return saved
+
+
 def month_label(y,m): return f"{MONTHS[lang][m-1]} {y}"
 def block_label(b): return {"AM":tr("morning"),"PM":tr("afternoon"),"FULL":tr("full_day")}[b]
 def pretty_day(y,m,d): return f"{d:02d} {WEEKDAYS[lang][date(y,m,d).weekday()]}"
@@ -344,6 +689,11 @@ def deadline_for(y,m):
     if m==1: return date(y-1,12,dd)
     return date(y,m-1,dd)
 
+def preference_cutoff_for(y,m):
+    """Exact cutoff: immediately after the configured last full submission day."""
+    last_full_day=deadline_for(y,m)
+    return datetime.combine(last_full_day+timedelta(days=1),time(0,0),tzinfo=ZoneInfo("Europe/Vilnius"))
+
 def deadline_message(y,m):
     dl=deadline_for(y,m); today=date.today(); diff=(dl-today).days
     if diff>0: msg=tr("deadline_future").format(n=diff)
@@ -351,10 +701,48 @@ def deadline_message(y,m):
     else: msg=tr("deadline_passed").format(n=abs(diff))
     return dl,msg,diff
 
+def ensure_zero_preference_submissions_if_due(y,m):
+    """Operator-side automatic completion of missing preference forms after cutoff.
+
+    Missing residents become submitted with exactly zero monthly requests. This never
+    creates HARD/SOFT wishes and is transparent via submission_source=deadline_zero.
+    """
+    cutoff=preference_cutoff_for(y,m)
+    now_lt=datetime.now(ZoneInfo("Europe/Vilnius"))
+    if now_lt < cutoff:
+        return {"ok":True,"due":False,"count":0,"initials":[]}
+    try:
+        return db.auto_submit_zero_preferences_v2594(y,m,cutoff.isoformat())
+    except Exception as e:
+        # Do not break the whole app if a transient DB call fails; senior dashboard
+        # will still show any genuinely missing rows and generation stays inspectable.
+        return {"ok":False,"due":True,"count":0,"initials":[],"error":str(e)}
+
+_SMTP_SECRET_KEYS={
+    "SCHEDULER_SMTP_HOST":"host",
+    "SCHEDULER_SMTP_PORT":"port",
+    "SCHEDULER_SMTP_USER":"user",
+    "SCHEDULER_SMTP_PASSWORD":"password",
+    "SCHEDULER_SMTP_USE_TLS":"use_tls",
+    "SCHEDULER_SMTP_USE_SSL":"use_ssl",
+    "SCHEDULER_EMAIL_FROM":"from_email",
+    "SCHEDULER_SMTP_PROVIDER":"provider",
+}
+
 def config_value(name, default=""):
+    """Read deployment configuration from root Streamlit secrets, nested [smtp], or environment.
+
+    V2.5.93 accepts both the historical SCHEDULER_* secret names and a simpler
+    nested [smtp] block without ever exposing the password in the UI.
+    """
     try:
         if name in st.secrets:
             return str(st.secrets[name])
+        key=_SMTP_SECRET_KEYS.get(name)
+        if key and "smtp" in st.secrets:
+            block=st.secrets["smtp"]
+            if key in block:
+                return str(block[key])
     except Exception:
         pass
     return os.environ.get(name, default)
@@ -373,9 +761,39 @@ def authenticated_user(sb):
     except Exception:
         return None
 
+def _auth_uid(user):
+    return str(getattr(user,"id","") or "").strip()
+
+
+def clear_cross_account_session_state(*, keep_client=True):
+    """Remove user-specific Streamlit state on logout/account switch.
+
+    The Supabase client may be kept so its authenticated session survives the
+    rerun. Everything else is rebuilt for the exact auth.uid().
+    """
+    keep={"supabase_client"} if keep_client else set()
+    # Language is UI-only and carries no resident data.
+    keep.add("language")
+    for key in list(st.session_state.keys()):
+        if key not in keep:
+            st.session_state.pop(key,None)
+
+
+def enforce_auth_session_identity(user):
+    """Fail closed if Streamlit state belongs to another authenticated account."""
+    uid=_auth_uid(user)
+    if not uid:
+        return
+    previous=str(st.session_state.get("_identity_auth_uid") or "")
+    if previous and previous!=uid:
+        clear_cross_account_session_state(keep_client=True)
+    st.session_state["_identity_auth_uid"]=uid
+
+
 def render_auth_gate():
     sb=get_supabase_client(); user=authenticated_user(sb)
     if user is not None:
+        enforce_auth_session_identity(user)
         return sb,user
     st.title(tr("login_title"))
     login_tab,signup_tab=st.tabs([tr("login_title"),tr("signup_title")])
@@ -403,19 +821,48 @@ def render_auth_gate():
                     try:
                         response=sb.auth.sign_up({"email":email.strip(),"password":p1})
                         st.success(tr("signup_sent"))
+                        st.caption(
+                            "Registracijos bandymų skaičiaus mūsų sistemoje neribojame. Invite kodas sunaudojamas tik vėliau, kai sėkmingai susiejamas rezidento profilis."
+                            if lang=="LT" else
+                            "Our app does not limit registration attempts. The invite code is consumed only later, when the resident profile is successfully linked."
+                        )
                         if getattr(response,"session",None) is not None:
                             st.rerun()
                     except Exception as e:
-                        st.error(str(e))
+                        msg=str(e or "")
+                        low=msg.lower()
+                        if "email rate limit" in low or "rate limit exceeded" in low:
+                            st.error(
+                                "Supabase laikinai pasiekė Auth el. laiškų limitą. Tavo invite kodas NEPANAUDOTAS ir paskyra nuo šio bandymo neužsirakino. "
+                                "Gali bandyti dar kartą vėliau tiek kartų, kiek reikia. Šio providerio valandinio email limito aplikacija pati nunulinti negali."
+                                if lang=="LT" else
+                                "Supabase temporarily reached the Auth email limit. Your invite code is NOT consumed and this attempt did not lock the account. "
+                                "You can retry later as many times as needed. The app cannot reset the provider's hourly email quota itself."
+                            )
+                        else:
+                            st.error(msg)
     st.stop()
 
 def require_linked_profile(sb,user):
     db.set_client(sb)
-    profile=db.current_profile()
-    if profile and profile.get("approved") and (
-        profile.get("initials") or profile.get("access_role")=="observer"
-    ):
-        return profile
+    auth_uid=_auth_uid(user)
+    if not auth_uid:
+        st.error("AUTH IDENTITY ERROR: authenticated user has no UID.")
+        st.stop()
+
+    profile=db.current_profile(auth_uid)
+    if profile:
+        if str(profile.get("user_id") or "")!=auth_uid:
+            st.error(
+                "IDENTITY SAFETY LOCK: prisijungusi paskyra neatitinka rezidento profilio. Prieiga sustabdyta."
+                if lang=="LT" else
+                "IDENTITY SAFETY LOCK: authenticated account does not match the resident profile. Access stopped."
+            )
+            st.stop()
+        if profile.get("approved") and (
+            profile.get("initials") or profile.get("access_role")=="observer"
+        ):
+            return profile
 
     directory=db.directory()
     st.title(tr("claim_title"))
@@ -510,27 +957,33 @@ def historical_holiday_counts_before(y,m):
     return out
 
 
-def historical_weekend_tail_streak_before(y,m):
-    """Consecutive weekend-exposure streak at the end of the immediately prior published month."""
-    out={p["initials"]:0 for p in DEFAULT_PEOPLE}
+def _previous_month_effective_actual_assignments(y,m):
+    """Immediately prior month's real/effective work for cross-boundary safety only."""
     py,pm=(y-1,12) if m==1 else (y,m-1)
     try:
-        rows=db.published_baselines_before(y,m)
+        rows=db.list_published_schedules()
+        row=next((r for r in reversed(rows) if int(r.get("year",0))==py and int(r.get("month",0))==pm),None)
+        if not row or not row.get("current_json"):
+            return py,pm,{}
+        payload=row.get("current_json") or {}
+        ass={int(k):v for k,v in (payload.get("assignments") or {}).items()}
+        return py,pm,effective_actual_assignments(ass,db.list_backups(py,pm))
     except Exception:
-        return out
-    row=next((r for r in reversed(rows) if int(r.get("year",0))==py and int(r.get("month",0))==pm),None)
-    if not row:
+        return py,pm,{}
+
+
+def historical_weekend_tail_streak_before(y,m):
+    """Prior-month ACTUAL weekend tail streak; spacing only, never catch-up."""
+    out={p["initials"]:0 for p in DEFAULT_PEOPLE}
+    py,pm,ass=_previous_month_effective_actual_assignments(y,m)
+    if not ass:
         return out
     try:
-        payload=row.get("baseline_json") or {}
-        ass={int(k):v for k,v in (payload.get("assignments") or {}).items()}
         slot_map={s.idx:s for s in make_slots(py,pm)}
         anchors=sorted({(sl.day if sl.weekday==5 else sl.day-1) for sl in slot_map.values() if sl.weekday>=5})
         for ini in out:
-            worked={
-                (slot_map[sid].day if slot_map[sid].weekday==5 else slot_map[sid].day-1)
-                for sid,who in ass.items() if who==ini and sid in slot_map and slot_map[sid].weekday>=5
-            }
+            worked={(slot_map[sid].day if slot_map[sid].weekday==5 else slot_map[sid].day-1)
+                    for sid,who in ass.items() if who==ini and sid in slot_map and slot_map[sid].weekday>=5}
             streak=0
             for a in reversed(anchors):
                 if a in worked: streak+=1
@@ -538,6 +991,24 @@ def historical_weekend_tail_streak_before(y,m):
             out[ini]=streak
     except Exception:
         return {p["initials"]:0 for p in DEFAULT_PEOPLE}
+    return out
+
+
+def historical_previous_last_day_onko_before(y,m):
+    """Prior-month ACTUAL last-day Onko state for cross-boundary safety only."""
+    out={p["initials"]:False for p in DEFAULT_PEOPLE}
+    py,pm,ass=_previous_month_effective_actual_assignments(y,m)
+    if not ass:
+        return out
+    try:
+        slot_map={s.idx:s for s in make_slots(py,pm)}
+        last_day=calendar.monthrange(py,pm)[1]
+        for sid,ini in ass.items():
+            sl=slot_map.get(int(sid))
+            if sl is not None and ini in out and sl.day==last_day and sl.department=="Onko RO centre":
+                out[ini]=True
+    except Exception:
+        return {p["initials"]:False for p in DEFAULT_PEOPLE}
     return out
 
 
@@ -604,7 +1075,11 @@ def _build_request_ledger(y,m,initials,p,s,rp,recurring_rows,claims,slot_lookup,
     # that actually contain official public-holiday duty slots.
     if int(s.get("holiday_preference",0) or 0) and public_holiday_days_in_month(y,m):
         add("holiday_preference","SOFT_HOLIDAY",source="account_settings",value=max(-1,min(1,int(s.get("holiday_preference",0) or 0))))
-    if bool(s.get("avoid_doubles",False)): add("avoid_doubles","SOFT1_TIME_PROTECTION",source="account_settings",value=True)
+    shift_len=max(0,min(3,int(s.get("shift_length_preference",0) or 0)))
+    if shift_len:
+        add("shift_length_preference","SOFT3_SCHEDULE_SHAPE",source="account_settings",value=shift_len)
+    if bool(s.get("avoid_doubles",False)) and shift_len==0:
+        add("avoid_doubles","SOFT1_TIME_PROTECTION",source="account_settings",value=True)
 
     # ABSOLUTE HARD / safety facts are audited but excluded from the preference % denominator.
     for d in sorted(set(p.get("vacation",set()))): add("vacation","ABSOLUTE_HARD",d,"FULL","monthly",score=False)
@@ -626,11 +1101,14 @@ def _build_request_ledger(y,m,initials,p,s,rp,recurring_rows,claims,slot_lookup,
 
 def load_people(y,m):
     prefs=db.all_preferences(y,m); settings=db.all_account_settings(); recurring=db.all_recurring_preferences(); people=[]
-    fairness_prior=db.fairness_cumulative_before(y,m)
-    holiday_prior=historical_holiday_counts_before(y,m)
-    rotation_prior=historical_rotation_counts_before(y,m)
-    resident_hard_prior=historical_resident_hard_losses_before(y,m)
+    # V2.5.96: fairness history is audit-only; never solver input for a new month.
+    fairness_prior={}
+    holiday_prior={}
+    rotation_prior={}
+    resident_hard_prior={}
+    # Cross-month safety/spacing state remains because it is not fairness catch-up.
     weekend_tail=historical_weekend_tail_streak_before(y,m)
+    previous_last_day_onko=historical_previous_last_day_onko_before(y,m)
     claim_rows=db.list_backup_claims(y,m)
     claims_by_initials={}
     for r in claim_rows:
@@ -649,12 +1127,12 @@ def load_people(y,m):
         # Specific monthly requests override an opposite recurring whole-day pattern on that date.
         any_short_pref=short_pref|short_pref_am|short_pref_pm
         any_short_soft=short_soft|short_soft_am|short_soft_pm
-        # V2.5.52 anti-gaming: recurring weekend SOFT is not accepted because it
-        # can become a disguised "never schedule me weekends" rule. Exact monthly
-        # weekend dates remain valid SOFT; genuine recurring impossibility belongs
-        # in RESIDENT HARD.
+        # V2.5.90 BASELINE WEEKEND VOLUNTEER OVERRIDE.
+        # Recurring weekend "Noriu laisvos" remains blocked because it can dump
+        # unavoidable weekend burden onto peers. The OPPOSITE signal is allowed:
+        # recurring weekend "Pageidauju dirbti" is a voluntary unpopular-duty offer.
         recurring_soft_allowed={d for d in set(rp["soft_free"]) if date(y,m,d).weekday()<5}
-        recurring_pref_allowed={d for d in set(rp["preferred"]) if date(y,m,d).weekday()<5}
+        recurring_pref_allowed=set(rp["preferred"])
         effective_soft=(recurring_soft_allowed-any_short_pref)|short_soft
         effective_pref=(recurring_pref_allowed-any_short_soft)|short_pref
         # Long-term RESIDENT HARD cannot be overridden by an opposite monthly SOFT
@@ -691,17 +1169,33 @@ def load_people(y,m):
             soft_free=effective_soft,soft_free_am=effective_soft_am,soft_free_pm=effective_soft_pm,
             preferred=effective_pref,preferred_am=effective_pref_am,preferred_pm=effective_pref_pm,
             weekday_preference=0,weekend_preference=0,holiday_preference=max(-1,min(1,int(s.get("holiday_preference",0) or 0))),spread_preference=int(s.get("spread_preference",0)),
-            avoid_doubles=bool(s.get("avoid_doubles",False)),note=p.get("note",""),
+            shift_length_preference=max(0,min(3,int(s.get("shift_length_preference",0) or 0))),
+            avoid_doubles=(max(0,min(3,int(s.get("shift_length_preference",0) or 0)))==1 or bool(s.get("avoid_doubles",False))),note=p.get("note",""),
             request_items=request_items,rest_credit_am_to_use=credits_am,rest_credit_pm_to_use=credits_pm,
-            prior_weekend_count=int(prior.get("weekend",0)),
-            prior_holiday_count=int(holiday_prior.get(initials,0)),
-            prior_friday_count=int(prior.get("friday",0)),
-            prior_double_count=int(prior.get("double",0)),
-            prior_weekday_day_count=int(prior.get("weekday_day",0)),
-            prior_rotation_counts=dict(rotation_prior.get(initials,{})),
+            prior_weekend_count=0,
+            prior_holiday_count=0,
+            prior_friday_count=0,
+            prior_double_count=0,
+            prior_weekday_day_count=0,
+            prior_rotation_counts={},
             prior_consecutive_weekend_streak=int(weekend_tail.get(initials,0)),
-            prior_resident_hard_loss_count=int(resident_hard_prior.get(initials,0))))
+            prior_last_day_onko=bool(previous_last_day_onko.get(initials,False)),
+            prior_resident_hard_loss_count=0))
     return people
+
+
+def people_for_stored_result(result, y, m):
+    """Use the immutable publication-time request snapshot whenever available.
+
+    This is both semantically correct and operationally resilient: post-publication
+    swap/revalidation must use the frozen request set, so it should not re-read
+    preferences/account_settings/recurring_preferences on every Streamlit rerun.
+    Legacy payloads without a snapshot fall back to live load_people().
+    """
+    frozen=people_from_request_snapshot(getattr(result,"request_snapshot",None))
+    if frozen:
+        return frozen
+    return load_people(y,m)
 
 
 def refresh_result_payload(payload, y, m, use_actual_backups=True):
@@ -721,13 +1215,24 @@ def refresh_result_payload(payload, y, m, use_actual_backups=True):
             backup_override=db.list_backups(y,m)
         except Exception:
             backup_override=stored.backup_snapshot
-    refreshed=revalidate_loaded_result(
-        y,m,load_people(y,m),stored,
-        backup_assignments=backup_override
-    )
+    try:
+        refreshed=revalidate_loaded_result(
+            y,m,people_for_stored_result(stored,y,m),stored,
+            backup_assignments=backup_override,
+            validation_mode=("voluntary_swap_actual" if use_actual_backups else "generation"),
+        )
+    except TypeError as exc:
+        # Deployment-safety guard: never let a mixed app/engine deployment crash
+        # the whole Apsikeitimai page with a raw unexpected-keyword TypeError.
+        if "validation_mode" in str(exc):
+            raise RuntimeError(
+                "APP_ENGINE_VERSION_MISMATCH: deployed app.py expects the V2.5.82 "
+                "scheduler_engine.py API. Redeploy BOTH files from the same package."
+            ) from exc
+        raise
     if use_actual_backups:
         # V2.5.57: CURRENT stats are operational / satisfaction facts only.
-        # All fairness, post spread, post debt and longitudinal catch-up remain
+        # All fairness, post spread, future catch-up and longitudinal catch-up remain
         # anchored to baseline_json/fairness_history and must not be inferred
         # from CURRENT after voluntary swaps or fairness-neutral repairs.
         gg=refreshed.stats.setdefault("global",{})
@@ -780,41 +1285,20 @@ def _parse_iso_dt(value):
     except Exception: return None
 
 
-def _debt_age_months(incurred_at,y,m):
-    d=_parse_iso_dt(incurred_at)
-    if d is None: return 0
-    return max(0,(int(y)-d.year)*12+(int(m)-d.month))
 
-
-def _debt_priority_snapshot(y,m):
-    """Priority for automatic required backup allocation. 0–2m does not outrank peers."""
-    out={}
-    for r in db.list_open_work_debts():
-        typ=(r.get("debt_type") or "").upper()
-        if typ not in ("AM","PM","NIGHT"): continue
-        age=_debt_age_months(r.get("incurred_at"),y,m)
-        # strong_group outranks the previous non-selector rule only from month 6.
-        strong_group=0 if age>=12 else 1 if age>=6 else 2
-        soft_group=0 if 3<=age<6 else 1
-        key=(r["initials"],typ)
-        cand=(strong_group,r.get("due_at") or "9999",soft_group,-age)
-        if key not in out or cand<out[key]:
-            out[key]=cand
-    return out
-
-
-def _debt_status_label(row):
-    age=_debt_age_months(row.get("incurred_at"),date.today().year,date.today().month)
-    if age>=12: return tr("debt_overdue"),age
-    if age>=6: return tr("debt_strong"),age
-    if age>=3: return tr("debt_soft"),age
-    return tr("debt_open"),age
-
-def schedule_grid(y,m,result):
+def schedule_grid(y,m,result,status_rows=None):
     _,ndays=calendar.monthrange(y,m); rows={}
     for s in make_slots(y,m):
         key=f"{s.department} [{block_label(s.block)}]"; rows.setdefault(key,{d:"" for d in range(1,ndays+1)})
         rows[key][s.day]="BLOCK" if s.blocked else result.assignments.get(s.idx,"")
+    for r in (status_rows or []):
+        ini=str(r.get("initials") or "")
+        try: day=int(r.get("day"))
+        except Exception: continue
+        if not ini or not (1<=day<=ndays): continue
+        key=f"NEDIRBA · {ini}" if lang=="LT" else f"NOT WORKING · {ini}"
+        rows.setdefault(key,{d:"" for d in range(1,ndays+1)})
+        rows[key][day]=ini
     df=pd.DataFrame.from_dict(rows,orient="index"); df.columns=[f"{d:02d}\n{WEEKDAYS[lang][date(y,m,d).weekday()]}" for d in range(1,ndays+1)]
     return df
 
@@ -923,7 +1407,7 @@ def _preview_manual_backup_takeover(y,m,result,covered_slot,initials,exclude_bac
     continuous weekly rest, and >60h/7d. 48h remains a visible warning because the
     exact legal interpretation depends on the active work-time regime/accounting period.
     """
-    people=load_people(y,m)
+    people=people_for_stored_result(result,y,m)
     byinit={p.initials:p for p in people}
     p=byinit.get(str(initials))
     rows=[]; blockers=[]; warnings=[]
@@ -1092,17 +1576,16 @@ def _operational_repair_validation(y,m,result,new_assignments):
     constraints. They must not prevent a justified post-publication repair. Safety, coverage,
     overlap, HARD unavailability, rest and known-hours rules remain enforced.
     """
-    people=load_people(y,m)
+    people=people_for_stored_result(result,y,m)
     slots=make_slots(y,m)
-    # Give validate_schedule the ACTUAL post-repair workload as operational targets so
-    # publication-time target deviations themselves are not treated as HARD errors.
-    actual_targets={p.initials:0.0 for p in people}
-    slot_by_id={x.idx:x for x in slots}
-    for sid,initials in new_assignments.items():
-        sl=slot_by_id.get(int(sid))
-        if sl is not None and initials in actual_targets:
-            actual_targets[initials]+=sl.workload2/2.0
-    stats=validate_schedule(y,m,people,slots,new_assignments,actual_targets)
+    # V2.5.85: use the published SYSTEM targets as the immutable workload-credit
+    # ledger. Emergency Rescue changes placement only; no target units move.
+    stats=validate_schedule(
+        y,m,people,slots,new_assignments,result.targets,
+        satisfaction_people=people,
+        backup_assignments=(result.backup_snapshot or []),
+        validation_mode="emergency_rescue",
+    )
     errs=list(stats.get("global",{}).get("errors",[]))
     planning_only=[]; blocking=[]
     for e in errs:
@@ -1175,7 +1658,7 @@ def _critical_repair_candidate_rows(y,m,result,target_slot,repair_load):
     2) only if no such ABSOLUTE-safe transfer exists do we expose residents who
        are free in that block as fallback cover.
     Within a tier, avoid new Resident-HARD losses. V2.5.57 deliberately does NOT
-    rank same-block pull-down donors by post spread or post debt: they were already
+    rank same-block pull-down donors by post spread or future catch-up: they were already
     scheduled to work that block, so changing station for emergency coverage is
     fairness-neutral and must not create a new structural fairness burden.
     """
@@ -1223,18 +1706,15 @@ def _critical_repair_candidate_rows(y,m,result,target_slot,repair_load):
 def plan_backups(y,m,result):
     """Backup plan with the same ABSOLUTE-HARD / RESIDENT-HARD constitution.
 
-    First use only residents whose Resident-HARD request is fully respected. If a
-    required covered shift has no such candidate, do not destroy the whole monthly
-    schedule: use the ABSOLUTE-HARD-safe fallback pool and assign the unavoidable
-    Resident-HARD burden to the currently/historically least-burdened resident.
+    For a published schedule, resident constraints come from the immutable request
+    snapshot. ACTUAL Rescue/swap placement never rewrites the request model.
     """
-    people=load_people(y,m)
+    people=people_for_stored_result(result,y,m)
     byinit={p.initials:p for p in people}
     initials=[p.initials for p in people]
     claims=db.list_backup_claims(y,m)
     claim_by_slot={int(r["covered_slot"]):r for r in claims}
     claimers={r["initials"] for r in claims}
-    debt_priority=_debt_priority_snapshot(y,m)
     backup_load={i:0 for i in initials}
     pair_load={}
     same_time_load={}
@@ -1247,10 +1727,12 @@ def plan_backups(y,m,result):
     desired=[]; errors=[]
     slots=make_slots(y,m)
 
-    occupied=[sl for sl in slots if backup_required_slot(sl) and result.assignments.get(sl.idx)]
-    occupied=sorted(occupied,key=lambda sl:(sl.day,{"AM":0,"FULL":1,"PM":2}.get(sl.block,9),sl.idx))
+    required=[sl for sl in slots if backup_required_slot(sl) and result.assignments.get(sl.idx)]
+    best_effort=[sl for sl in slots if backup_best_effort_slot(sl) and result.assignments.get(sl.idx) and sl not in required]
+    occupied=[(sl,True) for sl in required] + [(sl,False) for sl in best_effort]
+    occupied=sorted(occupied,key=lambda pair:(0 if pair[1] else 1,pair[0].day,{"AM":0,"FULL":1,"PM":2}.get(pair[0].block,9),pair[0].idx))
 
-    for sl in occupied:
+    for sl,is_required in occupied:
         covered=result.assignments.get(sl.idx)
         strict=_eligible_backup_candidates(y,m,result,sl,people,allow_resident_hard=False)
         fallback=_eligible_backup_candidates(y,m,result,sl,people,allow_resident_hard=True)
@@ -1271,18 +1753,16 @@ def plan_backups(y,m,result):
                 eligible=list(fallback)
                 resident_hard_relaxed=bool(eligible)
             if not eligible:
-                errors.append({
-                    "day":sl.day,"shift":block_label(sl.block),"department":sl.department,
-                    "covered_person":covered,"covered_slot":sl.idx,
-                    "reason":"no ABSOLUTE-HARD-safe non-overlapping backup",
-                })
+                if is_required:
+                    errors.append({
+                        "day":sl.day,"shift":block_label(sl.block),"department":sl.department,
+                        "covered_person":covered,"covered_slot":sl.idx,
+                        "reason":"no ABSOLUTE-HARD-safe non-overlapping backup",
+                    })
                 continue
 
             def rank(b):
                 time_key=(sl.day,sl.block,b); pair_key=(b,covered)
-                typ="NIGHT" if sl.block=="NIGHT" else sl.block
-                pri=debt_priority.get((b,typ),(2,"9999",1,0))
-                strong_group,due_key,soft_group,neg_age=pri
                 # If Resident-HARD must be relaxed, burden equality outranks all
                 # ordinary backup/debt tie-breakers.
                 rh_key=(
@@ -1291,10 +1771,7 @@ def plan_backups(y,m,result):
                 ) if resident_hard_relaxed else (0,0)
                 return (
                     *rh_key,
-                    strong_group,
-                    due_key if strong_group<2 else "9999",
                     0 if b not in claimers else 1,
-                    soft_group,neg_age,
                     backup_load.get(b,0),
                     same_time_load.get(time_key,0),
                     pair_load.get(pair_key,0),
@@ -1314,6 +1791,7 @@ def plan_backups(y,m,result):
             "planned_backup":backup,
             "resident_hard_relaxed":bool(resident_hard_relaxed and resident_hard_unavailable_for_block(byinit[backup],sl.day,sl.block)),
             "claim_overridden_by_higher_priority":bool(claim_overridden),
+            "coverage_priority":"required" if is_required else "best_effort",
         })
         same_time_load[(sl.day,sl.block,backup)]=same_time_load.get((sl.day,sl.block,backup),0)+1
         backup_load[backup]=backup_load.get(backup,0)+1
@@ -1343,10 +1821,12 @@ def summary_df(result,y,m):
     for i,d in result.stats.get("people",{}).items():
         row={
             tr("person"):i,tr("name"):d.get("name",""),tr("target"):d.get("target"),
-            tr("workload"):d.get("workload"),
+            tr("workload"):d.get("workload_credit",d.get("workload")),
             tr("weekday_assignments"):d.get("weekday_assignments"),
             tr("weekday_days"):d.get("weekday_days"),
             tr("weekend_assignments"):d.get("weekend_assignments"),
+            tr("saturday_assignments"):d.get("saturdays"),
+            tr("sunday_assignments"):d.get("sundays"),
             tr("prior_weekends"):d.get("prior_weekend_count"),
             ("Šventės" if lang=="LT" else "Holidays"):d.get("holiday_assignments",0),
             ("Ankstesnės šventės" if lang=="LT" else "Prior holidays"):d.get("prior_holiday_count",0),
@@ -1362,6 +1842,8 @@ def summary_df(result,y,m):
             tr("planned_backups"):planned.get(i,0),
             tr("effective_backups"):effective.get(i,0),
         }
+        if d.get("workload_credit_policy")=="FROZEN_SYSTEM_LEDGER":
+            row[("ACTUAL slotų svoris (ne target)" if lang=="LT" else "ACTUAL placement workload (not target)")]=d.get("actual_assignment_workload",d.get("workload"))
         # V2.5.15: exact monthly number of assignments in every workplace.
         rotation_counts=d.get("rotation_counts") or {}
         for cat in ROTATION_CATEGORIES:
@@ -1384,6 +1866,180 @@ def preference_scores_df(result):
     ])
 
 
+def resident_wishes_audit_df(result):
+    """Senior-facing pre-publication request audit for every resident.
+
+    Uses the CURRENT candidate's own validated request ledger, so the senior can
+    inspect exactly what the generated DRAFT would satisfy before publication.
+    """
+    rows=[]
+    for initials,d in (result.stats.get("people",{}) or {}).items():
+        details=list(d.get("request_detail_rows") or [])
+        included=[r for r in details if r.get("included_in_score")]
+        preferred=[r for r in included if r.get("kind")=="preferred"]
+        soft_free=[r for r in included if r.get("kind")=="soft_free"]
+        missed=[r for r in included if not r.get("fulfilled")]
+        components=d.get("preference_components") or {}
+        workstyle=components.get("shift_length_preference")
+        if workstyle is None:
+            workstyle=components.get("avoid_doubles")
+        rotation_counts=d.get("rotation_counts") or {}
+
+        def ratio(items):
+            if not items:
+                return "—"
+            return f"{sum(1 for r in items if r.get('fulfilled'))}/{len(items)}"
+
+        hard_req=int(d.get("resident_hard_requested",0) or 0)
+        hard_ok=int(d.get("resident_hard_honored",0) or 0)
+        hard_txt=(f"{hard_ok}/{hard_req}" if hard_req else "—")
+        missed_preview=[]
+        for r in missed[:3]:
+            missed_preview.append(f"{r.get('date','—')} {r.get('block','—')} · {r.get('type','—')}")
+        if len(missed)>3:
+            missed_preview.append(f"+{len(missed)-3}")
+
+        overall=d.get("overall_request_score")
+        soft_score=d.get("soft_preference_score")
+        rows.append({
+            ("Žmogus" if lang=="LT" else "Person"):initials,
+            ("Vardas" if lang=="LT" else "Name"):d.get("name",""),
+            ("Target" if lang=="LT" else "Target"):d.get("target"),
+            ("Krūvis" if lang=="LT" else "Workload"):d.get("workload_credit",d.get("workload")),
+            ("RESIDENT HARD" if lang=="LT" else "RESIDENT HARD"):hard_txt,
+            ("Noriu laisvos" if lang=="LT" else "Requested off"):ratio(soft_free),
+            ("Pageidauju dirbti" if lang=="LT" else "Prefer to work"):ratio(preferred),
+            ("SOFT %" if lang=="LT" else "SOFT %"):("—" if soft_score is None else soft_score),
+            ("Bendras išpildymas %" if lang=="LT" else "Overall satisfaction %"):("—" if overall is None else overall),
+            ("Workstyle %" if lang=="LT" else "Workstyle %"):("—" if workstyle is None else round(float(workstyle),1)),
+            ("Šeštadieniai" if lang=="LT" else "Saturdays"):int(d.get("saturdays",0) or 0),
+            ("Sekmadieniai" if lang=="LT" else "Sundays"):int(d.get("sundays",0) or 0),
+            ("Dubliai" if lang=="LT" else "Doubles"):int(d.get("doubles",0) or 0),
+            "Onko RO":int(rotation_counts.get("Onko RO",0) or 0),
+            "SPS RO":int(rotation_counts.get("SPS RO",0) or 0),
+            "SPS UG":int(rotation_counts.get("SPS UG",0) or 0),
+            ("Neįvykdyta" if lang=="LT" else "Missed"):len(missed),
+            ("Neįvykdytų santrauka" if lang=="LT" else "Missed summary"):"; ".join(missed_preview) if missed_preview else "—",
+            "__hard_losses":int(d.get("resident_hard_losses",0) or 0),
+            "__score_sort":101.0 if overall is None else float(overall),
+        })
+    if not rows:
+        return pd.DataFrame()
+    rows.sort(key=lambda r:(-r["__hard_losses"], r["__score_sort"], -r[("Neįvykdyta" if lang=="LT" else "Missed")], r[("Žmogus" if lang=="LT" else "Person")]))
+    for r in rows:
+        r.pop("__hard_losses",None); r.pop("__score_sort",None)
+    return pd.DataFrame(rows)
+
+
+
+def resident_group_satisfaction_df(result):
+    """Privacy-safe group view for ordinary residents.
+
+    Only initials, name and overall fulfillment percentage are exposed.
+    Peer HARD/SOFT counts, request dates/blocks, workstyle details, missed counts
+    and request-level rows are deliberately not serialized to the resident UI.
+    """
+    rows=[]
+    for initials,d in (result.stats.get("people",{}) or {}).items():
+        overall=d.get("overall_request_score")
+        rows.append({
+            ("Žmogus" if lang=="LT" else "Person"):initials,
+            ("Vardas" if lang=="LT" else "Name"):d.get("name",""),
+            ("Bendras išpildymas %" if lang=="LT" else "Overall satisfaction %"):(
+                "—" if overall is None else overall
+            ),
+        })
+    return pd.DataFrame(rows)
+
+
+def render_resident_wishes_audit(
+    result, *, draft_mode=False, key_suffix="", senior_view=False
+):
+    """Role-aware request audit.
+
+    Senior: full all-resident category + request-level audit.
+    Resident: only group overall satisfaction percentages.
+    """
+    if senior_view:
+        if draft_mode:
+            st.markdown("### JUODRAŠČIO PAGEIDAVIMŲ AUDITAS" if lang=="LT" else "### DRAFT REQUEST AUDIT")
+            st.caption(
+                "Tai yra būtent dabar sugeneruoto JUODRAŠČIO rezultatas. Seniūnė gali įvertinti, ar pageidavimai maksimaliai išpildyti, prieš paspausdama PASKELBTI / PATVIRTINTI. Regeneravus lentelė persiskaičiuos iš naujo."
+                if lang=="LT" else
+                "This is the currently generated DRAFT. The senior can inspect whether requests are maximized before pressing PUBLISH / CONFIRM. Regeneration recalculates this table."
+            )
+        else:
+            st.markdown("### SYSTEM pageidavimų auditas" if lang=="LT" else "### SYSTEM request audit")
+            st.caption(
+                "Ši lentelė rodo publikavimo momento SYSTEM rezultatą ir TIK tuo run metu užšaldytus pageidavimus. "
+                "Vėliau pakeisti Nustatymai čia retroaktyviai nepridedami. Workstyle eilutėje rodomi konkretūs 6 h / 12 h / Onko skaičiai."
+                if lang=="LT" else
+                "This table shows the publication-time SYSTEM result and ONLY the requests frozen for that run. "
+                "Settings changed later are not added retroactively. Workstyle rows show concrete 6 h / 12 h / Onko counts."
+            )
+
+        audit_df=resident_wishes_audit_df(result)
+        if audit_df.empty:
+            st.caption("Nėra rezidentų audito duomenų." if lang=="LT" else "No resident audit data.")
+            return
+        st.dataframe(audit_df,use_container_width=True,hide_index=True,height=610)
+
+        people=list((result.stats.get("people",{}) or {}).keys())
+        if not people:
+            return
+        selected=st.selectbox(
+            "Detaliai patikrinti rezidentą" if lang=="LT" else "Inspect resident in detail",
+            people,
+            key=f"summary_request_person_{key_suffix}",
+        )
+        pdict=(result.stats.get("people",{}).get(selected,{}) or {})
+        misses=list(pdict.get("unhonored_request_details") or [])
+        if misses:
+            st.markdown("#### Neįvykdyti prašymai" if lang=="LT" else "#### Missed requests")
+            st.dataframe(request_details_df(misses,selected),use_container_width=True,hide_index=True)
+        else:
+            st.success(
+                "Šiam rezidentui į score įtrauktų neįvykdytų prašymų nėra."
+                if lang=="LT" else
+                "This resident has no scored missed requests."
+            )
+        with st.expander(
+            "Rodyti įvykdytus prašymus" if lang=="LT" else "Show honored requests",
+            expanded=False
+        ):
+            honored=list(pdict.get("honored_request_details") or [])
+            if honored:
+                st.dataframe(
+                    request_details_df(honored,selected),
+                    use_container_width=True,hide_index=True
+                )
+            else:
+                st.caption(
+                    "Nėra score įtrauktų struktūruotų prašymų."
+                    if lang=="LT" else
+                    "No scored structured requests."
+                )
+        return
+
+    # Resident profile: privacy-safe group view only.
+    st.markdown(
+        "### Grupės pageidavimų išpildymas"
+        if lang=="LT" else
+        "### Group request satisfaction"
+    )
+    st.caption(
+        "Privatumo sumetimais čia rodoma tik kiekvieno rezidento bendra pageidavimų išpildymo procentinė reikšmė. Kitų rezidentų HARD/SOFT kiekiai, datos, workstyle ir konkretūs prašymai nėra rodomi. Savo detalų auditą matai savo asmeninėje patikroje."
+        if lang=="LT" else
+        "For confidentiality, this table shows only each resident's overall request-satisfaction percentage. Other residents' HARD/SOFT counts, dates, workstyle and individual requests are not shown. Your own detailed audit remains available in your personal proof view."
+    )
+    safe_df=resident_group_satisfaction_df(result)
+    if safe_df.empty:
+        st.caption("Nėra grupės statistikos." if lang=="LT" else "No group statistics.")
+        return
+    st.dataframe(safe_df,use_container_width=True,hide_index=True,height=610)
+
+
+
 def _plain_request_sentence(r, initials=""):
     """Human-readable single-sentence explanation of one request result.
 
@@ -1399,6 +2055,28 @@ def _plain_request_sentence(r, initials=""):
     fulfilled=bool(r.get("fulfilled"))
     who=(f"{initials}: " if initials else "")
     if lang=="LT":
+        if r.get("kind") in ("shift_length_preference","avoid_doubles") and r.get("workstyle_proof"):
+            wp=r.get("workstyle_proof") or {}
+            mode=int(wp.get("mode") or 0)
+            if mode==3:
+                threshold=int(wp.get("fulfilled_threshold_min") or 0)
+                cohort=int(wp.get("prefer12_cohort_size") or 0)
+                return (
+                    f"{who}SYSTEM generavimo metu buvo užšaldytas pageidavimas „prefer 12 h“. "
+                    f"Grafike skirta {int(wp.get('double_days') or 0)} 12 h dienų ir "
+                    f"{int(wp.get('single_days') or 0)} 6 h dienų; Onko 9 h dienų — {int(wp.get('onko_9h_days') or 0)}. "
+                    f"Visos grupės dublių intervalas šiame SYSTEM yra {int(wp.get('group_double_min') or 0)}–{int(wp.get('group_double_max') or 0)}. "
+                    f"Kad 12 h workstyle būtų laikomas išpildytu, šiam run pakanka būti viršutiniame intervalo krašte: ≥{threshold} 12 h dienų. "
+                    f"12 h pageidavimą turėjo {cohort} rezidentas(-ai). "
+                    + ("Todėl pageidavimas ĮVYKDYTAS." if fulfilled else "Todėl pageidavimas NEĮVYKDYTAS ir reikia peržiūrėti solverio workstyle paskirstymą.")
+                )
+            if mode==1:
+                return (
+                    f"{who}SYSTEM generavimo metu buvo užšaldytas pageidavimas „prefer 6 h“. "
+                    f"Skirta {int(wp.get('double_days') or 0)} 12 h dienų ir {int(wp.get('single_days') or 0)} 6 h dienų. "
+                    f"Šio run 6 h workstyle riba yra ≤{int(wp.get('fulfilled_threshold_max') or 0)} 12 h dienų. "
+                    + ("Pageidavimas ĮVYKDYTAS." if fulfilled else "Pageidavimas NEĮVYKDYTAS.")
+                )
         if fulfilled:
             if r.get("kind")=="preferred":
                 return f"{who}{date_txt} {block}: „{typ}“ — ĮVYKDYTA, nes grafike yra tinkama darbo pamaina ({station})."
@@ -1410,8 +2088,21 @@ def _plain_request_sentence(r, initials=""):
         if r.get("kind")=="preferred":
             return f"{who}{date_txt} {block}: „{typ}“ — NEĮVYKDYTA, nes grafike nėra tinkamos darbo pamainos šiame bloke."
         return f"{who}{date_txt} {block}: „{typ}“ — NEĮVYKDYTA pagal parodytą rezultatą ({station})."
+    if r.get("kind") in ("shift_length_preference","avoid_doubles") and r.get("workstyle_proof"):
+        wp=r.get("workstyle_proof") or {}
+        mode=int(wp.get("mode") or 0)
+        if mode==3:
+            return (
+                f"{who}The frozen SYSTEM input was 'prefer 12 h'. "
+                f"The schedule contains {int(wp.get('double_days') or 0)} 12 h days and "
+                f"{int(wp.get('single_days') or 0)} 6 h days; Onko 9 h days: {int(wp.get('onko_9h_days') or 0)}. "
+                f"Group double-day range is {int(wp.get('group_double_min') or 0)}–{int(wp.get('group_double_max') or 0)}; "
+                f"this run counts the 12 h preference as honored at ≥{int(wp.get('fulfilled_threshold_min') or 0)} double-days. "
+                + ("HONORED." if fulfilled else "NOT HONORED.")
+            )
     if fulfilled:
         if r.get("kind")=="preferred":
+
             return f"{who}{date_txt} {block}: '{typ}' — HONORED because the schedule contains an eligible assignment ({station})."
         if r.get("kind") in ("resident_hard","soft_free"):
             return f"{who}{date_txt} {block}: '{typ}' — HONORED because no overlapping work/backup exists in that block."
@@ -1443,19 +2134,117 @@ def _plain_verify_instruction(r, initials=""):
     return "Verify the specific statement against the SYSTEM grid / Post Matrix."
 
 
+
+def _workstyle_request_text(r):
+    wp=r.get("workstyle_proof") or {}
+    mode=int(wp.get("mode") or r.get("requested_value") or 0)
+    if lang=="LT":
+        return {
+            1:"Prefer 6 h darbo dienas — FROZEN SYSTEM input",
+            2:"Mišrus 6 h / 12 h darbo stilius — FROZEN SYSTEM input",
+            3:"Prefer 12 h darbo dienas — FROZEN SYSTEM input",
+        }.get(mode,"Darbo dienos trukmės pageidavimas — FROZEN SYSTEM input")
+    return {
+        1:"Prefer 6 h workdays — FROZEN SYSTEM input",
+        2:"Mixed 6 h / 12 h workstyle — FROZEN SYSTEM input",
+        3:"Prefer 12 h workdays — FROZEN SYSTEM input",
+    }.get(mode,"Workday-length preference — FROZEN SYSTEM input")
+
+
+def _workstyle_schedule_text(r):
+    wp=r.get("workstyle_proof") or {}
+    if not wp:
+        return r.get("station","—")
+    mode=int(wp.get("mode") or 0)
+    base=(
+        f"12 h: {int(wp.get('double_days') or 0)} d.; "
+        f"6 h: {int(wp.get('single_days') or 0)} d.; "
+        f"Onko 9 h: {int(wp.get('onko_9h_days') or 0)} d."
+    )
+    if mode==3:
+        base+=(
+            f"; grupės 12 h dienų intervalas {int(wp.get('group_double_min') or 0)}–"
+            f"{int(wp.get('group_double_max') or 0)}; išpildymo riba ≥"
+            f"{int(wp.get('fulfilled_threshold_min') or 0)}"
+        )
+    elif mode==1:
+        base+=f"; išpildymo riba ≤{int(wp.get('fulfilled_threshold_max') or 0)} 12 h dienų"
+    return base
+
+
+def _workstyle_verify_text(r, initials=""):
+    wp=r.get("workstyle_proof") or {}
+    mode=int(wp.get("mode") or 0)
+    if lang=="LT":
+        if mode==3:
+            return (
+                f"Grafike suskaičiuok {initials or 'rezidento'} dienas, kur yra ir AM, ir PM normalios pamainos: "
+                f"jų turi būti {int(wp.get('double_days') or 0)}. Šio SYSTEM grupės max yra "
+                f"{int(wp.get('group_double_max') or 0)}, o 12 h pageidavimo išpildymo riba ≥"
+                f"{int(wp.get('fulfilled_threshold_min') or 0)}. Onko 9 h į 12 h dublių skaičių neįtraukiamas."
+            )
+        return "Patikrink 6 h / 12 h dienų skaičių prieš frozen SYSTEM grafiką; Onko 9 h skaičiuojamas atskirai."
+    if mode==3:
+        return (
+            f"Count {initials or 'the resident'} days with both AM and PM normal assignments: "
+            f"there should be {int(wp.get('double_days') or 0)}. Group maximum is "
+            f"{int(wp.get('group_double_max') or 0)} and the 12 h fulfillment threshold is ≥"
+            f"{int(wp.get('fulfilled_threshold_min') or 0)}. Onko 9 h does not count as a 12 h double-day."
+        )
+    return "Verify the 6 h / 12 h day counts against the frozen SYSTEM schedule."
+
+
 def request_details_df(rows, initials=""):
-    """Plain-language resident/senior request audit table (V2.5.60)."""
+    """Plain-language resident/senior request audit table.
+
+    V2.5.87: workstyle rows are rendered from the FROZEN SYSTEM request snapshot
+    and contain concrete 6 h / 12 h / Onko counts rather than a generic FULL row.
+    """
     out=[]
     for r in rows or []:
         fulfilled=bool(r.get("fulfilled"))
+        is_workstyle=bool(
+            r.get("kind") in ("shift_length_preference","avoid_doubles")
+            and r.get("workstyle_proof")
+        )
+        requested=(
+            _workstyle_request_text(r)
+            if is_workstyle else
+            f"{r.get('type','—')} · {r.get('date','—')} · {r.get('block','—')}"
+        )
+        shown=(
+            _workstyle_schedule_text(r)
+            if is_workstyle else
+            (r.get("station","—") if r.get("station","—")!="—" else ("Nėra persidengiančio paskyrimo" if lang=="LT" else "No overlapping assignment"))
+        )
+        verify=(
+            _workstyle_verify_text(r,initials)
+            if is_workstyle else
+            _plain_verify_instruction(r,initials)
+        )
+        fix_hint=(r.get("swap_hint","—") if not fulfilled else "—")
+        if not fulfilled and r.get("kind")=="preferred":
+            try:
+                _rd=str(r.get("date") or "")
+                _dt=date.fromisoformat(_rd) if _rd and _rd!="—" else None
+            except Exception:
+                _dt=None
+            if _dt is not None and _dt.weekday()>=5:
+                fix_hint=(
+                    "Sistema pirmiausia bandė įvykdyti tavo savanorišką savaitgalio pasirinkimą, bet aukštesnės grafiko taisyklės to neleido. "
+                    "Sugeneravus grafiką gali pasiūlyti asmeninį apsikeitimą Apsikeitimų lange."
+                    if lang=="LT" else
+                    "The engine first tried to honor your voluntary weekend choice, but higher scheduling rules prevented it. "
+                    "After generation you can propose a personal swap in the Swaps window."
+                )
         out.append({
             ("Lygis" if lang=="LT" else "Level"):r.get("priority","—"),
-            ("Ko prašei" if lang=="LT" else "What was requested"):f"{r.get('type','—')} · {r.get('date','—')} · {r.get('block','—')}",
-            ("Ką rodo grafikas" if lang=="LT" else "What the schedule shows"):(r.get("station","—") if r.get("station","—")!="—" else ("Nėra persidengiančio paskyrimo" if lang=="LT" else "No overlapping assignment")),
+            ("Ko prašei" if lang=="LT" else "What was requested"):requested,
+            ("Ką rodo grafikas" if lang=="LT" else "What the schedule shows"):shown,
             ("Rezultatas" if lang=="LT" else "Result"):("ĮVYKDYTA" if fulfilled else "NEĮVYKDYTA") if lang=="LT" else ("HONORED" if fulfilled else "NOT HONORED"),
             ("Aiškus paaiškinimas" if lang=="LT" else "Plain-language explanation"):_plain_request_sentence(r,initials),
-            ("Kaip patikrinti" if lang=="LT" else "How to verify"):_plain_verify_instruction(r,initials),
-            ("Jei nori taisyti" if lang=="LT" else "If you want to fix it"):(r.get("swap_hint","—") if not fulfilled else "—"),
+            ("Kaip patikrinti" if lang=="LT" else "How to verify"):verify,
+            ("Jei nori taisyti" if lang=="LT" else "If you want to fix it"):fix_hint,
         })
     return pd.DataFrame(out)
 
@@ -1508,10 +2297,11 @@ def schedule_list_df(y,m,result):
     return pd.DataFrame(out)
 
 
-def backup_table(y,m,result):
+def backup_table(y,m,result,backup_rows_override=None):
     slots={s.idx:s for s in make_slots(y,m)}
     rows=[]
-    for r in db.list_backups(y,m):
+    backup_rows=list(backup_rows_override) if backup_rows_override is not None else db.list_backups(y,m)
+    for r in backup_rows:
         sid=int(r["covered_slot"])
         s=slots.get(sid)
         if s is None:
@@ -1606,7 +2396,7 @@ def build_ics(y,m,result,initials):
     calname=f"{name} — Radiologija" if lang=="LT" else f"{name} — Radiology"
     lines=[
         "BEGIN:VCALENDAR","VERSION:2.0",
-        "PRODID:-//Radiology Scheduler//V2.5.67//EN",
+        "PRODID:-//Radiology Scheduler//V2.5.68//EN",
         "CALSCALE:GREGORIAN","METHOD:PUBLISH",
         f"X-WR-CALNAME:{ics_escape(calname)}",
         "X-WR-TIMEZONE:Europe/Vilnius",
@@ -1700,7 +2490,7 @@ def build_calendar_subscription_ics(initials, published_rows=None):
     calname=f"{name} — Radiologija" if cal_lang=="LT" else f"{name} — Radiology"
     lines=[
         "BEGIN:VCALENDAR","VERSION:2.0",
-        "PRODID:-//Radiology Scheduler//V2.5.67//EN",
+        "PRODID:-//Radiology Scheduler//V2.5.68//EN",
         "CALSCALE:GREGORIAN","METHOD:PUBLISH",
         f"X-WR-CALNAME:{ics_escape(calname)}",
         "X-WR-TIMEZONE:Europe/Vilnius",
@@ -1776,11 +2566,12 @@ def refresh_calendar_subscription_feeds(initials_list=None):
 
 
 
-def build_xlsx(y,m,result):
+def build_xlsx(y,m,result,document_status=None,backup_rows_override=None):
     out=BytesIO(); wb=xlsxwriter.Workbook(out,{"in_memory":True}); ws=wb.add_worksheet("Grafikas" if lang=="LT" else "Schedule"); sm=wb.add_worksheet("Suvestinė" if lang=="LT" else "Summary"); bk=wb.add_worksheet("Dubliai" if lang=="LT" else "Backups")
     dark="#1F2937"; light="#F3F4F6"; weekend="#E5E7EB"; border="#D1D5DB"; title=wb.add_format({"bold":True,"font_size":16,"font_color":"#FFFFFF","bg_color":dark}); header=wb.add_format({"bold":True,"bg_color":light,"border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True}); wh=wb.add_format({"bold":True,"bg_color":weekend,"border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True}); cell=wb.add_format({"border":1,"border_color":border,"text_wrap":True}); blocked=wb.add_format({"border":1,"border_color":border,"bg_color":"#BFC4CA","align":"center"})
     pf={i:wb.add_format({"bold":True,"bg_color":c,"font_color":contrast_text(c),"border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True}) for i,c in PERSON_COLORS.items()}
-    _,nd=calendar.monthrange(y,m); last=1+nd; ws.merge_range(0,0,0,last,("Rezidentų grafikas — " if lang=="LT" else "Resident schedule — ")+month_label(y,m),title); ws.write(1,0,tr("department"),header); ws.write(1,1,tr("shift"),header)
+    _,nd=calendar.monthrange(y,m); last=1+nd; status_prefix=(str(document_status).strip()+" — ") if document_status else ""
+    ws.merge_range(0,0,0,last,status_prefix+("Rezidentų grafikas — " if lang=="LT" else "Resident schedule — ")+month_label(y,m),title); ws.write(1,0,tr("department"),header); ws.write(1,1,tr("shift"),header)
     for d in range(1,nd+1): ws.write(1,1+d,f"{d:02d}\n{WEEKDAYS[lang][date(y,m,d).weekday()]}",wh if date(y,m,d).weekday()>=5 else header)
     rowkeys=[]; slots=make_slots(y,m)
     for s in slots:
@@ -1811,7 +2602,8 @@ def build_xlsx(y,m,result):
         bk.write(1,d,f"{d:02d}\n{WEEKDAYS[lang][date(y,m,d).weekday()]}",wh if date(y,m,d).weekday()>=5 else header)
     effective_map={}
     slot_map={s.idx:s for s in slots}
-    for r in db.list_backups(y,m):
+    backup_rows=list(backup_rows_override) if backup_rows_override is not None else db.list_backups(y,m)
+    for r in backup_rows:
         sid=int(r["covered_slot"]); s=slot_map.get(sid)
         if s is None: continue
         eff=r["actual_backup"] or r["planned_backup"]
@@ -1835,7 +2627,7 @@ def build_xlsx(y,m,result):
             rr+=1
     bk.set_column(0,0,10); bk.set_column(1,nd,20); bk.freeze_panes(2,1)
 
-    detail_start=rr+2; bdf=backup_table(y,m,result)
+    detail_start=rr+2; bdf=backup_table(y,m,result,backup_rows_override=backup_rows_override)
     if not bdf.empty:
         bk.write(detail_start,0,tr("details"),title)
         for c,col in enumerate(bdf.columns): bk.write(detail_start+1,c,col,header)
@@ -1843,20 +2635,84 @@ def build_xlsx(y,m,result):
             for c,v in enumerate(row): bk.write(rr,c,"" if pd.isna(v) else v,cell)
     wb.close(); out.seek(0); return out.getvalue()
 
-def smtp_ready(): return bool(config_value("SCHEDULER_SMTP_HOST","").strip() and config_value("SCHEDULER_EMAIL_FROM","").strip())
+def _truthy_cfg(value,default=False):
+    if value is None or str(value).strip()=="": return bool(default)
+    return str(value).strip().lower() in ("1","true","yes","on","y")
+
+def smtp_config():
+    return _smtp_config_core(config_value)
+
+def smtp_diagnostics():
+    cfg=smtp_config()
+    return cfg,_smtp_missing_core(cfg)
+
+def smtp_ready():
+    _cfg,missing=smtp_diagnostics()
+    return not missing
+
+def smtp_probe():
+    cfg,missing=smtp_diagnostics()
+    if missing:
+        return False,("Trūksta konfigūracijos: " if lang=="LT" else "Missing configuration: ")+", ".join(missing)
+    return _smtp_probe_core(cfg)
 
 def send_email(to_addr,subject,body,ics_bytes=None,ics_name=None):
-    if not smtp_ready(): return False,("El. pašto siuntimas nesukonfigūruotas" if lang=="LT" else "Email delivery is not configured")
-    msg=EmailMessage(); msg["Subject"]=subject; msg["From"]=config_value("SCHEDULER_EMAIL_FROM"); msg["To"]=to_addr; msg.set_content(body)
-    if ics_bytes: msg.add_attachment(ics_bytes,maintype="text",subtype="calendar",filename=ics_name or "grafikas.ics")
-    host=config_value("SCHEDULER_SMTP_HOST"); port=int(config_value("SCHEDULER_SMTP_PORT","587")); user=config_value("SCHEDULER_SMTP_USER",""); pwd=config_value("SCHEDULER_SMTP_PASSWORD",""); tls=config_value("SCHEDULER_SMTP_USE_TLS","1")!="0"
+    cfg,missing=smtp_diagnostics()
+    if missing:
+        detail=("El. pašto kanalas nesukonfigūruotas: " if lang=="LT" else "Email channel is not configured: ")+", ".join(missing)
+        return False,detail
+    return _send_email_core(cfg,to_addr,subject,body,ics_text=ics_bytes,ics_name=ics_name)
+
+def deliver_lifecycle_notification(event_key,event_type,initials,y,m,to_email,subject,body,ics_bytes=None,ics_name=None):
+    """Idempotent lifecycle delivery: durable DB outbox first, immediate SMTP second.
+
+    If SMTP fails, the row remains FAILED and the background worker can retry it.
+    If the event was already sent, reruns do not duplicate the email.
+    """
+    ics_text=None
+    if ics_bytes is not None:
+        ics_text=ics_bytes.decode("utf-8") if isinstance(ics_bytes,(bytes,bytearray)) else str(ics_bytes)
+    row=db.enqueue_notification_v25100(
+        event_key,event_type,initials,y,m,to_email,subject,body,
+        scheduled_for=datetime.now(timezone.utc).isoformat(),ics_text=ics_text,ics_name=ics_name
+    )
+    if str(row.get("status") or "")=="sent":
+        return True,"already sent"
+    if not str(to_email or "").strip():
+        return False,tr("missing_email")
+    ok,detail=send_email(to_email,subject,body,ics_bytes,ics_name)
     try:
-        with smtplib.SMTP(host,port,timeout=20) as s:
-            if tls: s.starttls()
-            if user: s.login(user,pwd)
-            s.send_message(msg)
-        return True,""
-    except Exception as e: return False,str(e)
+        db.mark_notification_delivery_v25100(int(row.get("id")),ok,detail)
+    except Exception:
+        pass
+    return ok,detail
+
+def retry_failed_lifecycle_notifications(y,m,event_types=None):
+    if isinstance(event_types,str): event_types={event_types}
+    elif event_types is not None: event_types=set(event_types)
+    rows=db.failed_notification_outbox_v25100(y,m,100)
+    if event_types is not None:
+        rows=[r for r in rows if str(r.get("event_type") or "") in event_types]
+    results=[]
+    for row in rows:
+        email=str(row.get("to_email") or "").strip()
+        if not email:
+            # Refresh from current resident settings before declaring it blocked.
+            email=str((db.get_account_settings(str(row.get("initials") or "")) or {}).get("email") or "").strip()
+            if email:
+                row=db.enqueue_notification_v25100(
+                    row.get("event_key"),row.get("event_type"),row.get("initials"),y,m,email,
+                    row.get("subject") or "",row.get("body") or "",
+                    scheduled_for=datetime.now(timezone.utc).isoformat(),ics_text=row.get("ics_text"),ics_name=row.get("ics_name")
+                )
+        if not email:
+            results.append((row.get("initials"),"blocked",tr("missing_email"))); continue
+        ics=(row.get("ics_text") or None)
+        ok,detail=send_email(email,row.get("subject") or "",row.get("body") or "",ics,row.get("ics_name"))
+        try: db.mark_notification_delivery_v25100(int(row.get("id")),ok,detail)
+        except Exception: pass
+        results.append((row.get("initials"),"sent" if ok else "failed",detail))
+    return results
 
 def send_backup_activation_email(y,m,result,backup_row):
     eff=backup_row.get("actual_backup") or backup_row.get("planned_backup")
@@ -1879,6 +2735,96 @@ def send_backup_activation_email(y,m,result,backup_row):
     return send_email(email,subject,body)
 
 
+
+def send_swap_request_email(y,m,request_row):
+    """Best-effort operational email. DB request already exists before this runs."""
+    target=str(request_row.get("person_b") or "")
+    proposer=str(request_row.get("person_a") or "")
+    request_id=int(request_row.get("id") or 0)
+    settings=db.get_account_settings(target)
+    email=(settings.get("email") or "").strip()
+    kind=f"swap_request_{request_id}"
+    send_date=date.today().isoformat()
+
+    if not email:
+        detail=tr("missing_email")
+        try: db.record_email(target,kind,y,m,send_date,"failed",detail)
+        except Exception: pass
+        return False,detail
+
+    slot_map={s.idx:s for s in make_slots(y,m)}
+    sa=slot_map.get(int(request_row.get("slot_a") or -1))
+    sb=slot_map.get(int(request_row.get("slot_b") or -1))
+    subject=(
+        f"Naujas apsikeitimo prašymas nuo {proposer}"
+        if lang=="LT" else
+        f"New swap request from {proposer}"
+    )
+    body=(
+        f"Sveiki,\n\nGavote naują apsikeitimo prašymą nuo {proposer} ({_person_name(proposer)}).\n\n"
+        f"Jis/ji siūlo: {_swap_shift_text(sa)}\n"
+        f"Mainais prašo jūsų pamainos: {_swap_shift_text(sb)}\n\n"
+        f"Prašymo DB numeris: #{request_id}\n"
+        f"Prisijunkite prie Shift Happens → Apsikeitimai ir PRIIMKITE arba ATMESKITE prašymą.\n"
+        if lang=="LT" else
+        f"Hello,\n\nYou received a new swap request from {proposer} ({_person_name(proposer)}).\n\n"
+        f"They offer: {_swap_shift_text(sa)}\n"
+        f"They request your shift: {_swap_shift_text(sb)}\n\n"
+        f"Database request number: #{request_id}\n"
+        f"Open Shift Happens → Swaps and ACCEPT or REJECT the request.\n"
+    )
+    public=config_value("SCHEDULER_PUBLIC_URL","").strip()
+    if public:
+        body += (f"\nPortalas: {public}\n" if lang=="LT" else f"\nPortal: {public}\n")
+    ok,detail=send_email(email,subject,body)
+    try:
+        db.record_email(target,kind,y,m,send_date,"sent" if ok else "failed",detail)
+    except Exception:
+        pass
+    return ok,detail
+
+
+
+def send_backup_swap_request_email(y,m,request_row):
+    target=str(request_row.get("target") or "")
+    proposer=str(request_row.get("requester") or "")
+    request_id=int(request_row.get("id") or 0)
+    settings=db.get_account_settings(target)
+    email=(settings.get("email") or "").strip()
+    kind=f"backup_swap_request_{request_id}"
+    send_date=date.today().isoformat()
+
+    if not email:
+        detail=tr("missing_email")
+        try: db.record_email(target,kind,y,m,send_date,"failed",detail)
+        except Exception: pass
+        return False,detail
+
+    subject=(
+        f"Naujas dublio apsikeitimo prašymas nuo {proposer}"
+        if lang=="LT" else
+        f"New backup swap request from {proposer}"
+    )
+    body=(
+        f"Sveiki,\n\nGavote naują DUBLIO apsikeitimo prašymą nuo {proposer} ({_person_name(proposer)}).\n"
+        f"Prašymo DB numeris: #{request_id}.\n\n"
+        f"Prisijunkite prie Shift Happens → Apsikeitimai ir priimkite arba atmeskite prašymą.\n"
+        if lang=="LT" else
+        f"Hello,\n\nYou received a new BACKUP swap request from {proposer} ({_person_name(proposer)}).\n"
+        f"Database request number: #{request_id}.\n\n"
+        f"Open Shift Happens → Swaps and accept or reject the request.\n"
+    )
+    public=config_value("SCHEDULER_PUBLIC_URL","").strip()
+    if public:
+        body += (f"\nPortalas: {public}\n" if lang=="LT" else f"\nPortal: {public}\n")
+    ok,detail=send_email(email,subject,body)
+    try:
+        db.record_email(target,kind,y,m,send_date,"sent" if ok else "failed",detail)
+    except Exception:
+        pass
+    return ok,detail
+
+
 def publication_emails(y,m,result):
     settings=db.all_account_settings(); results=[]; public=config_value("SCHEDULER_PUBLIC_URL","").strip()
     for p in DEFAULT_PEOPLE:
@@ -1890,37 +2836,590 @@ def publication_emails(y,m,result):
         ok,detail=send_email(email,subject,body,build_ics(y,m,result,i),f"{safe_filename(i)}_{y}_{m:02d}.ics"); status="sent" if ok else "failed"; db.record_email(i,"publication",y,m,send_date,status,detail); results.append((i,status,detail))
     return results
 
+def _parse_iso_dt(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z","+00:00"))
+    except Exception:
+        return None
+
+
+def _vilnius_now():
+    return datetime.now(ZoneInfo("Europe/Vilnius"))
+
+
+def _workflow_card(title,body,state="draft"):
+    palette={
+        "draft":("#E8F0FE","#174EA6","#8AB4F8"),
+        "swap_open":("#FFF4E5","#8A4B08","#F6B26B"),
+        "expired":("#FDECEC","#9C1C1C","#E57373"),
+        "swap_closed":("#FFF8D9","#6B5600","#E4C441"),
+        "final":("#E6F4EA","#176B36","#81C995"),
+    }
+    bg,fg,border=palette.get(state,palette["draft"])
+    st.markdown(
+        f"""<div style=\"border:2px solid {border};background:{bg};color:{fg};border-radius:16px;padding:16px 18px;margin:8px 0 14px 0;\">
+        <div style=\"font-weight:800;font-size:1.05rem;letter-spacing:.02em;\">{html.escape(str(title))}</div>
+        <div style=\"margin-top:6px;line-height:1.45;\">{html.escape(str(body))}</div></div>""",
+        unsafe_allow_html=True,
+    )
+
+
+def _resident_email_preflight():
+    settings=db.all_account_settings()
+    missing=[]
+    for pp in DEFAULT_PEOPLE:
+        ini=pp["initials"]
+        if not str((settings.get(ini,{}) or {}).get("email") or "").strip():
+            missing.append(ini)
+    return missing
+
+
+def render_operator_email_smtp_admin(current_operator):
+    """Compact operator email readiness UI; technical detail stays in Advanced mode."""
+    settings=db.all_account_settings()
+    missing=_resident_email_preflight()
+    cfg,smtp_missing=smtp_diagnostics()
+    ready=bool(not missing and not smtp_missing)
+
+    with st.expander(
+        "El. pašto kanalas" if lang=="LT" else "Email channel",
+        expanded=not ready,
+    ):
+        if ready:
+            st.success("El. pašto konfigūracija paruošta, o visi 16 rezidentų turi gavėjo adresą." if lang=="LT" else "Email configuration is present and all 16 residents have recipient addresses.")
+        else:
+            problems=[]
+            if smtp_missing: problems.append("siuntėjo konfigūracija" if lang=="LT" else "sender configuration")
+            if missing: problems.append(("gavėjo adresai: "+", ".join(missing)) if lang=="LT" else ("recipient addresses: "+", ".join(missing)))
+            st.warning(("Dar neparuošta: " if lang=="LT" else "Not ready yet: ")+"; ".join(problems))
+
+        if missing:
+            if st.button(
+                "UŽPILDYTI TRŪKSTAMUS IŠ PRISIJUNGIMO PASKYRŲ" if lang=="LT" else "FILL MISSING FROM LOGIN ACCOUNTS",
+                use_container_width=True,key="autofill_notification_emails_v25100"
+            ):
+                try:
+                    res=db.autofill_notification_emails_v2593()
+                    st.success((f"Užpildyta: {int(res.get('filled',0))}." if lang=="LT" else f"Filled: {int(res.get('filled',0))}."))
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+
+            people_options=[pp["initials"] for pp in DEFAULT_PEOPLE]
+            default_ini=missing[0] if missing else people_options[0]
+            c1,c2=st.columns([1,2])
+            with c1:
+                email_ini=st.selectbox("Rezidentas" if lang=="LT" else "Resident",people_options,index=people_options.index(default_ini),key="operator_email_ini_v25100")
+            with c2:
+                existing_email=str((settings.get(email_ini,{}) or {}).get("email") or "").strip()
+                email_value=st.text_input("Pranešimų el. paštas" if lang=="LT" else "Notification email",value=existing_email,key=f"operator_email_value_v25100_{email_ini}")
+            if st.button("IŠSAUGOTI ADRESĄ" if lang=="LT" else "SAVE ADDRESS",use_container_width=True,key="operator_save_email_v25100"):
+                if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email_value.strip()):
+                    st.error("Neteisingas el. pašto formatas." if lang=="LT" else "Invalid email format.")
+                else:
+                    try:
+                        db.set_resident_notification_email_v2593(email_ini,email_value.strip())
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(str(exc))
+
+        c1,c2=st.columns(2)
+        with c1:
+            if st.button("PATIKRINTI KANALĄ" if lang=="LT" else "CHECK CHANNEL",use_container_width=True,disabled=bool(smtp_missing),key="smtp_probe_v25100"):
+                ok,detail=smtp_probe()
+                st.session_state["_smtp_probe_v25100"]=(ok,detail,datetime.now().isoformat(timespec="seconds"))
+        with c2:
+            operator_email=str((settings.get(current_operator,{}) or {}).get("email") or "").strip()
+            if st.button("SIŲSTI TESTĄ MAN" if lang=="LT" else "SEND TEST TO ME",use_container_width=True,disabled=bool(smtp_missing or not operator_email),key="smtp_test_v25100"):
+                ok,detail=send_email(
+                    operator_email,
+                    "Shift Happens — el. pašto testas" if lang=="LT" else "Shift Happens — email test",
+                    "Testas sėkmingas. Shift Happens gali siųsti realius grafiko pranešimus." if lang=="LT" else "Test successful. Shift Happens can send real schedule notifications."
+                )
+                st.session_state["_smtp_probe_v25100"]=(ok,detail or "test email sent",datetime.now().isoformat(timespec="seconds"))
+
+        probe=st.session_state.get("_smtp_probe_v25100")
+        if probe:
+            ok,detail,when=probe
+            if ok: st.success(("Kanalas veikia ✓ · " if lang=="LT" else "Channel works ✓ · ")+when)
+            else: st.error(("Kanalo patikra nepavyko: " if lang=="LT" else "Channel check failed: ")+str(detail))
+
+        if advanced_mode:
+            st.caption("Techninė konfigūracija" if lang=="LT" else "Technical configuration")
+            smtp_rows=[
+                {"Parametras" if lang=="LT" else "Setting":"Host","Reikšmė" if lang=="LT" else "Value":cfg.get("host") or "—"},
+                {"Parametras" if lang=="LT" else "Setting":"Port","Reikšmė" if lang=="LT" else "Value":cfg.get("port")},
+                {"Parametras" if lang=="LT" else "Setting":"From","Reikšmė" if lang=="LT" else "Value":cfg.get("from_email") or "—"},
+                {"Parametras" if lang=="LT" else "Setting":"Login","Reikšmė" if lang=="LT" else "Value":cfg.get("user") or "—"},
+                {"Parametras" if lang=="LT" else "Setting":"Security","Reikšmė" if lang=="LT" else "Value":"SSL" if cfg.get("use_ssl") else "STARTTLS" if cfg.get("use_tls") else "plain"},
+            ]
+            st.dataframe(pd.DataFrame(smtp_rows),use_container_width=True,hide_index=True)
+            st.caption("Slaptažodis niekada nerodomas. Naudokite Streamlit Secrets [smtp] bloką; Gmail atveju — App Password, ne įprastą paskyros slaptažodį." if lang=="LT" else "The password is never displayed. Use the Streamlit Secrets [smtp] block; for Gmail use an App Password, not the normal account password.")
+
+            try:
+                audit=db.list_resident_email_admin_audit_v2593(30)
+                if audit:
+                    with st.expander("Adresų pakeitimų auditas" if lang=="LT" else "Address change audit",expanded=False):
+                        rows=[]
+                        for r in audit:
+                            rows.append({
+                                "Laikas" if lang=="LT" else "Time":r.get("created_at"),
+                                "Rezidentas" if lang=="LT" else "Resident":r.get("initials"),
+                                "Senas" if lang=="LT" else "Old":r.get("old_email"),
+                                "Naujas" if lang=="LT" else "New":r.get("new_email"),
+                                "Šaltinis" if lang=="LT" else "Source":r.get("source"),
+                                "Operatorius" if lang=="LT" else "Operator":r.get("actor_initials"),
+                            })
+                        st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
+            except Exception:
+                pass
+
+
+def preferences_open_emails(y,m):
+    settings=db.all_account_settings(); results=[]; public=config_value("SCHEDULER_PUBLIC_URL","").strip()
+    cutoff_text=preference_cutoff_for(y,m).strftime("%Y-%m-%d %H:%M")
+    for pp in DEFAULT_PEOPLE:
+        i=pp["initials"]; email=str((settings.get(i,{}) or {}).get("email") or "").strip()
+        subject=(f"{month_label(y,m)} pageidavimai atidaryti" if lang=="LT" else f"{month_label(y,m)} preferences are open")
+        body=(
+            f"Sveiki,\n\nAtidarytas {month_label(y,m)} grafiko pageidavimų etapas. "
+            f"Pageidavimus pateikite iki {cutoff_text} Lietuvos laiku.\n"
+            if lang=="LT" else
+            f"Hello,\n\nThe {month_label(y,m)} preference stage is open. "
+            f"Please submit your preferences by {cutoff_text} Lithuania time.\n"
+        )
+        if public: body += f"\nShift Happens: {public}\n"
+        ok,detail=deliver_lifecycle_notification(
+            f"preferences_open:{y}-{m:02d}","preferences_open",i,y,m,email,subject,body
+        )
+        results.append((i,"sent" if ok else "failed",detail))
+    return results
+
+
+def render_notification_delivery_status(y,m):
+    """Lifecycle delivery dashboard: one compact table + retry only failures."""
+    try:
+        rows=db.notification_summary_v25100(y,m)
+    except Exception as exc:
+        if advanced_mode:
+            st.caption(("Pranešimų outbox dar nepasiekiamas: " if lang=="LT" else "Notification outbox unavailable: ")+str(exc))
+        return
+    labels={
+        "preferences_open":"Pageidavimai atidaryti" if lang=="LT" else "Preferences open",
+        "preferences_reminder":"Pageidavimų priminimai" if lang=="LT" else "Preference reminders",
+        "swap_open":"Apsikeitimų etapas" if lang=="LT" else "Swap stage",
+        "final":"Baigta / FINAL" if lang=="LT" else "Done / FINAL",
+    }
+    st.markdown("#### Pranešimų etapai" if lang=="LT" else "#### Notification stages")
+    if not rows:
+        st.caption("Šiam mėnesiui dar nėra išsiųstų etapų pranešimų." if lang=="LT" else "No lifecycle notifications have been sent for this month yet.")
+    else:
+        view=[]
+        for r in rows:
+            view.append({
+                "Etapas" if lang=="LT" else "Stage":labels.get(r.get("event_type"),r.get("event_type")),
+                "Išsiųsta" if lang=="LT" else "Sent":int(r.get("sent",0)),
+                "Laukia" if lang=="LT" else "Pending":int(r.get("pending",0)),
+                "Nepavyko" if lang=="LT" else "Failed":int(r.get("failed",0))+int(r.get("blocked",0)),
+                "Iš viso" if lang=="LT" else "Total":int(r.get("total",0)),
+            })
+        st.dataframe(pd.DataFrame(view),use_container_width=True,hide_index=True)
+
+    failed=db.failed_notification_outbox_v25100(y,m,100)
+    if failed:
+        st.warning((f"Nepavykusių / užblokuotų pranešimų: {len(failed)}." if lang=="LT" else f"Failed / blocked notifications: {len(failed)}."))
+        failed_types=sorted({str(r.get("event_type") or "other") for r in failed})
+        chosen=st.selectbox(
+            "Kurį etapą kartoti" if lang=="LT" else "Stage to retry",failed_types,
+            format_func=lambda x:labels.get(x,x),key=f"retry_notification_type_{y}_{m}"
+        )
+        if st.button("PAKARTOTI TIK ŠIO ETAPO NEPAVYKUSIEMS" if lang=="LT" else "RETRY FAILED RECIPIENTS FOR THIS STAGE",use_container_width=True,key=f"retry_notifications_{y}_{m}"):
+            res=retry_failed_lifecycle_notifications(y,m,chosen)
+            if res: st.dataframe(localized_delivery_rows(res),use_container_width=True,hide_index=True)
+            else: st.success("Nebėra ką kartoti." if lang=="LT" else "Nothing left to retry.")
+
+def _manual_override_diff_rows(record,y,m):
+    slots={s.idx:s for s in make_slots(y,m)}
+    before=deserialize_result(record.get("before_json")) if record.get("before_json") else None
+    after=deserialize_result(record.get("after_json")) if record.get("after_json") else None
+    rows=[]
+    for sid in (int(record.get("slot_a",0)),int(record.get("slot_b",0))):
+        sl=slots.get(sid)
+        if not sl: continue
+        rows.append({
+            "Data / postas" if lang=="LT" else "Date / post":f"{y}-{m:02d}-{sl.day:02d} · {sl.department} · {block_label(sl.block)}",
+            "Prieš" if lang=="LT" else "Before":(before.assignments.get(sid) if before else "—"),
+            "Po" if lang=="LT" else "After":(after.assignments.get(sid) if after else "—"),
+        })
+    return rows
+
+
+def render_manual_override_review_checkpoint(y,m):
+    """Persistent checkpoint: manual changes must be reviewed before PRELIMINARY or FINAL."""
+    pending=db.list_unreviewed_manual_overrides_v2593(y,m)
+    if not pending:
+        return 0
+    _workflow_card(
+        "REIKIA PERŽIŪRĖTI RANKINIUS PAKEITIMUS" if lang=="LT" else "MANUAL CHANGES REQUIRE REVIEW",
+        (f"Neperžiūrėtų pakeitimų: {len(pending)}. Kitas etapas ir FINAL užblokuoti, kol patvirtinsite pokyčių peržiūrą." if lang=="LT" else f"Unreviewed changes: {len(pending)}. The next phase and FINAL are blocked until the changes are reviewed."),
+        "expired"
+    )
+    current_payload=db.load_schedule(y,m,"current")
+    current_result=refresh_result_payload(current_payload,y,m,use_actual_backups=True) if current_payload else None
+    hard=int(((current_result.stats or {}).get("global",{}) if current_result else {}).get("hard_errors",999))
+    if hard==0:
+        st.success("Dabartinis ACTUAL po korekcijų: HARD klaidų 0." if lang=="LT" else "Current ACTUAL after corrections: 0 HARD errors.")
+    else:
+        st.error((f"Dabartinis ACTUAL po korekcijų turi HARD klaidų: {hard}." if lang=="LT" else f"Current ACTUAL after corrections has HARD errors: {hard}."))
+    for r in pending:
+        with st.container(border=True):
+            st.markdown(f"**#{r.get('id')} · {r.get('person_a')} ↔ {r.get('person_b')}**")
+            st.caption(f"{r.get('created_at')} · {r.get('actor_initials')} · {r.get('reason')}")
+            diff=_manual_override_diff_rows(r,y,m)
+            if diff: st.dataframe(pd.DataFrame(diff),use_container_width=True,hide_index=True)
+            ack=st.checkbox(
+                "Peržiūrėjau pakeitimą ir dabartinį ACTUAL rezultatą." if lang=="LT" else "I reviewed this change and the current ACTUAL result.",
+                key=f"review_override_ack_{r.get('id')}"
+            )
+            if st.button(
+                "PATVIRTINTI POKYČIO PERŽIŪRĄ" if lang=="LT" else "CONFIRM CHANGE REVIEW",
+                use_container_width=True,disabled=not ack,key=f"review_override_btn_{r.get('id')}"
+            ):
+                try:
+                    db.review_manual_override_v2593(int(r["id"]))
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+    return len(pending)
+
+
+def swap_window_open_emails(y,m,result,deadline,window_days):
+    settings=db.all_account_settings(); results=[]; public=config_value("SCHEDULER_PUBLIC_URL","").strip()
+    local_deadline=deadline.astimezone(ZoneInfo("Europe/Vilnius")) if deadline.tzinfo else deadline.replace(tzinfo=ZoneInfo("Europe/Vilnius"))
+    deadline_text=local_deadline.strftime("%Y-%m-%d %H:%M")
+    for pp in DEFAULT_PEOPLE:
+        i=pp["initials"]; email=str((settings.get(i,{}) or {}).get("email") or "").strip(); send_date=date.today().isoformat(); kind=f"preliminary_swap_window_{y}_{m:02d}"
+        if not email:
+            detail=tr("missing_email")
+            try: db.record_email(i,kind,y,m,send_date,"failed",detail)
+            except Exception: pass
+            results.append((i,"failed",detail)); continue
+        subject=(f"Preliminarus {month_label(y,m)} grafikas paskelbtas" if lang=="LT" else f"Preliminary {month_label(y,m)} schedule published")
+        body=(
+            f"Sveiki,\n\nPreliminarus {month_label(y,m)} grafikas paskelbtas. "
+            f"Individualius apsikeitimo prašymus galite pateikti sistemoje iki {deadline_text} Lietuvos laiku.\n\n"
+            f"Po termino naujų apsikeitimo prašymų teikti nebus galima, išskyrus individualų administratoriaus suteiktą leidimą. "
+            f"Galutinė versija bus paskelbta atskiru pranešimu.\n"
+            if lang=="LT" else
+            f"Hello,\n\nThe preliminary {month_label(y,m)} schedule has been published. "
+            f"Individual swap requests may be submitted in the system until {deadline_text} Lithuania time.\n\n"
+            f"After the deadline, new swap requests are closed unless individual late access is granted by an operator. "
+            f"The final version will be announced separately.\n"
+        )
+        if public: body += (f"\nPortalas: {public}\n" if lang=="LT" else f"\nPortal: {public}\n")
+        ok,detail=deliver_lifecycle_notification(
+            f"swap_open:{y}-{m:02d}","swap_open",i,y,m,email,subject,body,
+            build_ics(y,m,result,i),f"PRELIMINARUS_{safe_filename(i)}_{y}_{m:02d}.ics"
+        )
+        try: db.record_email(i,kind,y,m,send_date,"sent" if ok else "failed",detail)
+        except Exception: pass
+        results.append((i,"sent" if ok else "failed",detail))
+    return results
+
+
+def late_swap_access_email(y,m,grant):
+    initials=str(grant.get("initials") or ""); settings=db.get_account_settings(initials); email=str(settings.get("email") or "").strip()
+    if not email: return False,tr("missing_email")
+    exp=_parse_iso_dt(grant.get("expires_at")); exp_local=exp.astimezone(ZoneInfo("Europe/Vilnius")) if exp else None
+    exp_text=exp_local.strftime("%Y-%m-%d %H:%M") if exp_local else str(grant.get("expires_at") or "")
+    remaining=max(0,int(grant.get("max_requests",1) or 1)-int(grant.get("requests_used",0) or 0))
+    subject=(f"Suteikta papildoma apsikeitimo prieiga — iki {exp_text}" if lang=="LT" else f"Additional swap access granted — until {exp_text}")
+    body=(f"Sveiki,\n\nJums suteikta individuali papildoma apsikeitimo prieiga {month_label(y,m)} grafikui.\nGalioja iki: {exp_text}.\nGalite sukurti iki {remaining} naujo(-ų) apsikeitimo prašymo(-ų).\nPrisijunkite į Shift Happens → Apsikeitimai.\n" if lang=="LT" else f"Hello,\n\nYou have been granted individual additional swap access for the {month_label(y,m)} schedule.\nValid until: {exp_text}.\nYou may create up to {remaining} new swap request(s).\nOpen Shift Happens → Swaps.\n")
+    public=config_value("SCHEDULER_PUBLIC_URL","").strip()
+    if public: body += (f"\nPortalas: {public}\n" if lang=="LT" else f"\nPortal: {public}\n")
+    ok,detail=send_email(email,subject,body)
+    try: db.record_email(initials,f"late_swap_access_{grant.get('id','')}",y,m,date.today().isoformat(),"sent" if ok else "failed",detail)
+    except Exception: pass
+    return ok,detail
+
+
+def final_schedule_emails(y,m,result):
+    settings=db.all_account_settings(); results=[]; public=config_value("SCHEDULER_PUBLIC_URL","").strip()
+    for pp in DEFAULT_PEOPLE:
+        i=pp["initials"]; email=str((settings.get(i,{}) or {}).get("email") or "").strip(); kind=f"final_schedule_{y}_{m:02d}"; send_date=date.today().isoformat()
+        if not email:
+            results.append((i,"failed",tr("missing_email"))); continue
+        subject=(f"Galutinis {month_label(y,m)} grafikas paskelbtas" if lang=="LT" else f"Final {month_label(y,m)} schedule published")
+        body=(
+            f"Sveiki,\n\nGalutinis {month_label(y,m)} tvarkaraštis paskelbtas ir pateiktas administracijai. "
+            f"Įprasti ir pavėluoti apsikeitimai uždaryti.\n\nPrisegtas jūsų galutinis .ics grafikas.\n"
+            if lang=="LT" else
+            f"Hello,\n\nThe final {month_label(y,m)} schedule has been published and submitted to administration. "
+            f"Ordinary and late swaps are now closed.\n\nYour final .ics schedule is attached.\n"
+        )
+        if public: body += (f"\nPortalas: {public}\n" if lang=="LT" else f"\nPortal: {public}\n")
+        ok,detail=deliver_lifecycle_notification(
+            f"final:{y}-{m:02d}","final",i,y,m,email,subject,body,
+            build_ics(y,m,result,i),f"FINAL_{safe_filename(i)}_{y}_{m:02d}.ics"
+        )
+        try: db.record_email(i,kind,y,m,send_date,"sent" if ok else "failed",detail)
+        except Exception: pass
+        results.append((i,"sent" if ok else "failed",detail))
+    return results
+
+
+def preliminary_swap_window_for(y,m):
+    """Default operational window for the target month: previous month 14th 08:00 → 17th 00:00."""
+    if int(m)==1:
+        py,pm=int(y)-1,12
+    else:
+        py,pm=int(y),int(m)-1
+    tz=ZoneInfo("Europe/Vilnius")
+    return (
+        datetime(py,pm,14,8,0,tzinfo=tz),
+        datetime(py,pm,17,0,0,tzinfo=tz),
+    )
+
+
+def manual_override_emails(y,m,result,initials_list):
+    settings=db.all_account_settings(); results=[]; public=config_value("SCHEDULER_PUBLIC_URL","").strip()
+    for i in dict.fromkeys(str(x) for x in initials_list if x):
+        email=str((settings.get(i,{}) or {}).get("email") or "").strip(); kind=f"manual_schedule_override_{y}_{m:02d}"; send_date=date.today().isoformat()
+        if not email:
+            results.append((i,"failed",tr("missing_email"))); continue
+        subject=(f"{month_label(y,m)} grafiko korekcija" if lang=="LT" else f"{month_label(y,m)} schedule correction")
+        body=(
+            f"Sveiki,\n\nTvarkaraščio administratorius atliko rankinę {month_label(y,m)} grafiko korekciją, kuri palietė jūsų pamainas. "
+            f"Patikrinkite atnaujintą grafiką sistemoje. Prisegtas atnaujintas .ics failas.\n"
+            if lang=="LT" else
+            f"Hello,\n\nA schedule operator made a manual correction to the {month_label(y,m)} schedule affecting your shifts. "
+            f"Please review the updated schedule in the system. An updated .ics file is attached.\n"
+        )
+        if public: body += (f"\nPortalas: {public}\n" if lang=="LT" else f"\nPortal: {public}\n")
+        ok,detail=send_email(email,subject,body,build_ics(y,m,result,i),f"ATNAUJINTAS_{safe_filename(i)}_{y}_{m:02d}.ics")
+        try: db.record_email(i,kind,y,m,send_date,"sent" if ok else "failed",detail)
+        except Exception: pass
+        results.append((i,"sent" if ok else "failed",detail))
+    return results
+
+
+def publish_system_baseline_for_swap_window(y,m):
+    """Validate the draft, freeze SYSTEM/ACTUAL, backups and fairness history. No email is sent here."""
+    draft_payload=db.load_schedule(y,m,"draft")
+    if not draft_payload:
+        return {"ok":False,"error":tr("no_draft")}
+    credit_err=credit_selection_errors(y,m)
+    if credit_err:
+        return {"ok":False,"error":tr("bonus_insufficient"),"rows":credit_err}
+    draft_result=refresh_result_payload(draft_payload,y,m,use_actual_backups=False)
+    current_people=load_people(y,m); expected_targets=calculate_targets(y,m,current_people)
+    current_snapshot=serialize_people_request_snapshot(current_people)
+    if expected_targets!=draft_result.targets or (draft_result.request_snapshot and current_snapshot!=draft_result.request_snapshot):
+        return {"ok":False,"error":tr("draft_outdated")}
+    frozen_people=people_from_request_snapshot(draft_result.request_snapshot) or current_people
+    revalidated=validate_schedule(y,m,current_people,make_slots(y,m),draft_result.assignments,expected_targets,satisfaction_people=frozen_people,backup_assignments=draft_result.backup_snapshot)
+    if revalidated["global"].get("hard_errors",0):
+        return {"ok":False,"error":tr("draft_outdated"),"rows":revalidated["global"].get("errors",[])}
+    draft_result.targets=expected_targets
+    desired,backup_errors=plan_backups(y,m,draft_result)
+    if backup_errors:
+        return {"ok":False,"error":tr("backup_capacity_block"),"rows":backup_errors}
+    draft_result.backup_snapshot=[dict(x) for x in desired]
+    draft_result=revalidate_loaded_result(y,m,current_people,draft_result,backup_assignments=draft_result.backup_snapshot)
+    if draft_result.stats.get("global",{}).get("hard_errors",0):
+        return {"ok":False,"error":tr("draft_outdated"),"rows":draft_result.stats["global"].get("errors",[])}
+    db.save_draft(y,m,serialize_result(draft_result))
+    if not db.publish_draft(y,m):
+        return {"ok":False,"error":tr("no_draft")}
+    month_prefs=db.all_preferences(y,m)
+    for person in DEFAULT_PEOPLE:
+        i=person["initials"]; pp=month_prefs.get(i,{})
+        db.set_rest_credit_redemptions(i,y,m,int(pp.get("backup_credits_am_to_use",0)),int(pp.get("backup_credits_pm_to_use",0)))
+    db.sync_backups(y,m,desired)
+    payload=db.load_schedule(y,m,"current"); result=refresh_result_payload(payload,y,m,use_actual_backups=True)
+    db.save_current(y,m,serialize_result(result))
+    baseline=deserialize_result(db.load_schedule(y,m,"baseline"))
+    db.sync_fairness_history(y,m,baseline.stats["people"])
+    feeds=refresh_calendar_subscription_feeds()
+    return {"ok":True,"result":result,"feeds":feeds}
+
+
+def render_operator_manual_override(y,m,current_payload,lifecycle_state):
+    """Direct SR/ŠR pre-FINAL ACTUAL correction tool.
+
+    Resident consent is not required, but ACTUAL safety/coverage HARD checks remain
+    mandatory. SYSTEM is never rewritten by this tool.
+    """
+    st.markdown("### Seniūnės / administratoriaus rankinis koregavimas" if lang=="LT" else "### Operator manual correction")
+    st.caption(
+        "Galima naudoti bet kuriuo metu iki FINAL. Keičiama tik ACTUAL versija; užšaldytas SYSTEM lieka nepakeistas tyrimui. "
+        "Rezidentų sutikimas šiam administraciniam veiksmui nereikalingas, tačiau saugos ir operacinės HARD taisyklės neapeinamos."
+        if lang=="LT" else
+        "Available at any time before FINAL. Only ACTUAL changes; the frozen SYSTEM baseline remains unchanged for research. "
+        "Resident consent is not required for this administrative action, but safety and operational HARD rules cannot be bypassed."
+    )
+    if lifecycle_state=="final":
+        st.info("FINAL versija užrakinta — rankinis koregavimas nebegalimas." if lang=="LT" else "The FINAL version is locked — manual correction is no longer available.")
+        return
+    if not current_payload:
+        st.info(
+            "Norint pradėti rankinį koregavimą, pirmiausia reikia užšaldyti sugeneruotą SYSTEM kaip pradinę ACTUAL versiją. El. laiškai šiame žingsnyje nesiunčiami."
+            if lang=="LT" else
+            "To begin manual correction, first freeze the generated SYSTEM as the initial ACTUAL version. No email is sent at this step."
+        )
+        return
+
+    fresh=refresh_result_payload(current_payload,y,m)
+    slots={s.idx:s for s in make_slots(y,m)}
+    assigned=[sid for sid in fresh.assignments if sid in slots]
+    assigned.sort(key=lambda sid:(slots[sid].day,{"AM":0,"FULL":1,"PM":2}.get(slots[sid].block,9),slots[sid].department,sid))
+    if len(assigned)<2:
+        st.warning("Nepakanka dviejų užpildytų pamainų apsikeitimui." if lang=="LT" else "At least two filled shifts are required.")
+        return
+
+    def slot_label(sid):
+        sl=slots[int(sid)]; who=fresh.assignments.get(int(sid),"—")
+        return f"{sl.day:02d} · {sl.department} · {block_label(sl.block)} · {who}"
+
+    c1,c2=st.columns(2)
+    with c1:
+        sid_a=int(st.selectbox("Pirma pamaina" if lang=="LT" else "First shift",assigned,format_func=slot_label,key=f"op_manual_a_{y}_{m}"))
+    with c2:
+        choices_b=[x for x in assigned if int(x)!=sid_a]
+        sid_b=int(st.selectbox("Antra pamaina" if lang=="LT" else "Second shift",choices_b,format_func=slot_label,key=f"op_manual_b_{y}_{m}"))
+    person_a=str(fresh.assignments.get(sid_a) or "")
+    person_b=str(fresh.assignments.get(sid_b) or "")
+    reason=st.text_input("Koregavimo priežastis (privaloma auditui)" if lang=="LT" else "Correction reason (required for audit)",key=f"op_manual_reason_{y}_{m}")
+
+    ok,msg,pstats,needed=preview_swap(
+        y,m,people_for_stored_result(fresh,y,m),fresh,sid_a,sid_b,
+        backup_assignments=db.list_backups(y,m)
+    )
+    if not ok:
+        st.error(("Koregavimas negalimas: " if lang=="LT" else "Correction blocked: ")+str(msg))
+        block_rows=((pstats or {}).get("global",{}) or {}).get("swap_hard_block_rows") or []
+        if block_rows:
+            st.dataframe(pd.DataFrame(block_rows),use_container_width=True,hide_index=True)
+        return
+
+    p1,p2=st.columns(2)
+    with p1:
+        st.markdown(f"**{person_a} → {slot_label(sid_b).rsplit(' · ',1)[0]}**")
+    with p2:
+        st.markdown(f"**{person_b} → {slot_label(sid_a).rsplit(' · ',1)[0]}**")
+    warnings=((pstats or {}).get("global",{}) or {}).get("swap_warning_rows") or {}
+    warning_rows=[]
+    for who,rows in warnings.items():
+        for row in (rows or []):
+            rr=dict(row); rr.setdefault("resident",who); warning_rows.append(rr)
+    if warning_rows:
+        st.warning("Yra pasekmių įspėjimų. Administratorius gali tęsti tik aiškiai juos patvirtinęs." if lang=="LT" else "There are consequence warnings. The operator may continue only after explicit acknowledgement.")
+        st.dataframe(pd.DataFrame(warning_rows),use_container_width=True,hide_index=True)
+
+    ack=st.checkbox(
+        "Patvirtinu šią rankinę korekciją ir jos parodytas pasekmes." if lang=="LT" else "I confirm this manual correction and the displayed consequences.",
+        key=f"op_manual_ack_{y}_{m}_{sid_a}_{sid_b}"
+    )
+    affected_settings=db.all_account_settings()
+    affected_missing=[who for who in (person_a,person_b) if not str((affected_settings.get(who,{}) or {}).get("email") or "").strip()]
+    can_apply=bool(reason.strip() and ack and smtp_ready() and not affected_missing)
+    if not smtp_ready():
+        st.error("SMTP nesukonfigūruotas — paveikti rezidentai negalėtų gauti korekcijos pranešimo." if lang=="LT" else "SMTP is not configured — affected residents could not receive the correction notification.")
+    if affected_missing:
+        st.error(("Trūksta paveiktų rezidentų email: " if lang=="LT" else "Missing email for affected residents: ")+", ".join(affected_missing))
+    if st.button("PRITAIKYTI RANKINĘ KOREKCIJĄ" if lang=="LT" else "APPLY MANUAL CORRECTION",type="primary",use_container_width=True,disabled=not can_apply,key=f"op_manual_apply_{y}_{m}_{sid_a}_{sid_b}"):
+        try:
+            apply_result=refresh_result_payload(db.load_schedule(y,m,"current"),y,m)
+            if apply_result.assignments.get(sid_a)!=person_a or apply_result.assignments.get(sid_b)!=person_b:
+                st.error("Grafikas pasikeitė po peržiūros. Pasirinkite pamainas iš naujo." if lang=="LT" else "The schedule changed after preview. Select the shifts again.")
+                st.stop()
+            ok2,msg2,_=attempt_swap(
+                y,m,people_for_stored_result(apply_result,y,m),apply_result,sid_a,sid_b,
+                backup_assignments=db.list_backups(y,m),acknowledged_fingerprints=needed
+            )
+            if not ok2:
+                st.error(("Koregavimas nebetaikomas: " if lang=="LT" else "Correction no longer applies: ")+str(msg2)); st.stop()
+            db.apply_manual_schedule_override_v2592(
+                y,m,serialize_result(apply_result),sid_a,sid_b,person_a,person_b,reason.strip()
+            )
+            sync_backup_plan(y,m,apply_result)
+            persist_actual_satisfaction(y,m)
+            refresh_calendar_subscription_feeds([person_a,person_b])
+            mails=manual_override_emails(y,m,apply_result,[person_a,person_b])
+            failed=[x for x in mails if x[1]!="sent"]
+            st.session_state["_finalization_flash"]=(
+                "warning" if failed else "success",
+                (f"Rankinė korekcija pritaikyta. Pranešimai: {len(mails)-len(failed)}/{len(mails)} išsiųsta."
+                 if lang=="LT" else
+                 f"Manual correction applied. Notifications: {len(mails)-len(failed)}/{len(mails)} sent.")
+            )
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+
+    history=db.list_manual_schedule_overrides_v2592(y,m)
+    if history:
+        with st.expander("Rankinių korekcijų auditas" if lang=="LT" else "Manual correction audit",expanded=False):
+            rows=[]
+            for r in history[:20]:
+                rows.append({
+                    ("Laikas" if lang=="LT" else "Time"):r.get("created_at"),
+                    ("Operatorius" if lang=="LT" else "Operator"):r.get("actor_initials"),
+                    ("Pakeitimas" if lang=="LT" else "Change"):f"{r.get('person_a')} ↔ {r.get('person_b')}",
+                    ("Slotai" if lang=="LT" else "Slots"):f"#{r.get('slot_a')} ↔ #{r.get('slot_b')}",
+                    ("Priežastis" if lang=="LT" else "Reason"):r.get("reason"),
+                })
+            st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
+
+
 def send_due_reminders(y,m):
+    """Manual fallback for today's preference reminder queue.
+
+    The background worker performs the same check automatically. One consolidated
+    reminder replaces the old duplicate preference + backup-claim reminder pair.
+    """
     dl=deadline_for(y,m); today=date.today(); prefs=db.all_preferences(y,m); settings=db.all_account_settings(); results=[]
     for p in DEFAULT_PEOPLE:
         i=p["initials"]; s=settings.get(i,{})
-        if i in prefs or not s.get("notifications_on",True): continue
-        start_day=int(s.get("reminder_start_day",8)); start=date(dl.year,dl.month,min(start_day,deadline_day()))
-        if not (start<=today<=dl): continue
-        email=s.get("email","").strip(); key=today.isoformat()
-        if db.email_already_recorded(i,"reminder",y,m,key): continue
-        if not email: db.record_email(i,"reminder",y,m,key,"failed",tr("missing_email")); results.append((i,"failed",tr("missing_email"))); continue
-        left=(dl-today).days; subject=(f"Liko {left} d. iki {month_label(y,m)} grafiko pageidavimų termino" if lang=="LT" else f"{left} day(s) left to submit {month_label(y,m)} schedule preferences")
-        body=(f"Sveiki,\n\nJūsų {month_label(y,m)} pageidavimai dar nepateikti. Iki termino ({dl.isoformat()}) liko {left} d.\n" if lang=="LT" else f"Hello,\n\nYour {month_label(y,m)} preferences have not been submitted. {left} day(s) remain until the deadline ({dl.isoformat()}).\n")
-        public=config_value("SCHEDULER_PUBLIC_URL","").strip();
-        if public: body += (f"\nPortalas: {public}\n" if lang=="LT" else f"\nPortal: {public}\n")
-        ok,detail=send_email(email,subject,body); status="sent" if ok else "failed"; db.record_email(i,"reminder",y,m,key,status,detail); results.append((i,status,detail))
-    claims={r["initials"] for r in db.list_weekend_backup_claims(y,m)}
-    for p in DEFAULT_PEOPLE:
-        i=p["initials"]; s=settings.get(i,{})
-        if i in claims or not s.get("notifications_on",True): continue
-        start_day=int(s.get("reminder_start_day",8)); start=date(dl.year,dl.month,min(start_day,deadline_day()))
-        if not (start<=today<=dl): continue
-        email=s.get("email","").strip(); key=today.isoformat()
-        if db.email_already_recorded(i,"backup_claim_reminder",y,m,key): continue
-        if not email:
-            db.record_email(i,"backup_claim_reminder",y,m,key,"failed",tr("missing_email")); results.append((i,"failed",tr("missing_email"))); continue
-        subject=(f"Pasirinkite {month_label(y,m)} dublių slotus iki {dl.isoformat()}" if lang=="LT" else f"Choose your {month_label(y,m)} backup slots by {dl.isoformat()}")
-        body=(f"Sveiki,\n\nDar nepasirinkote savo dublių slotų (savaitgaliai / SPS RO / SPS UG). Slotai rezervuojami first come, first served. Jei iki termino nepasirinksite, prarasite pasirinkimo prioritetą ir sistema jus pirmiausia naudos likusiems nepaimtiems privalomiems dubliams.\n" if lang=="LT" else f"Hello,\n\nYou have not selected your backup slots (weekend / SPS RO / SPS UG). Slots are first come, first served. If you do not choose by the deadline, you lose selection priority and the system will consider you first for remaining unclaimed required backup duties.\n")
+        if i in prefs or not s.get("notifications_on",True):
+            continue
+        start_day=max(1,min(deadline_day(),int(s.get("reminder_start_day",8) or 8)))
+        start=date(dl.year,dl.month,start_day)
+        if not (start<=today<=dl):
+            continue
+        email=str(s.get("email") or "").strip()
+        left=max(0,(dl-today).days)
+        cutoff_text=preference_cutoff_for(y,m).strftime("%Y-%m-%d %H:%M")
+        subject=(
+            f"Šiandien paskutinė diena pateikti {month_label(y,m)} pageidavimus"
+            if lang=="LT" and left==0 else
+            f"Liko {left} d. pateikti {month_label(y,m)} pageidavimus"
+            if lang=="LT" else
+            f"Today is the last day to submit {month_label(y,m)} preferences"
+            if left==0 else
+            f"{left} day(s) left to submit {month_label(y,m)} preferences"
+        )
+        body=(
+            f"Sveiki,\n\nJūsų {month_label(y,m)} pageidavimai dar nepateikti. Tikslus terminas: {cutoff_text} Lietuvos laiku.\n"
+            if lang=="LT" else
+            f"Hello,\n\nYour {month_label(y,m)} preferences have not been submitted. Exact deadline: {cutoff_text} Lithuania time.\n"
+        )
         public=config_value("SCHEDULER_PUBLIC_URL","").strip()
-        if public: body += (f"\nPortalas: {public}\n" if lang=="LT" else f"\nPortal: {public}\n")
-        ok,detail=send_email(email,subject,body); status="sent" if ok else "failed"; db.record_email(i,"backup_claim_reminder",y,m,key,status,detail); results.append((i,status,detail))
+        if public:
+            body += (f"\nShift Happens: {public}\n")
+        ok,detail=deliver_lifecycle_notification(
+            f"preferences_reminder:{y}-{m:02d}:{today.isoformat()}",
+            "preferences_reminder",i,y,m,email,subject,body
+        )
+        try:
+            db.record_email(i,"reminder",y,m,today.isoformat(),"sent" if ok else "failed",detail)
+        except Exception:
+            pass
+        results.append((i,"sent" if ok else "failed",detail))
     return results
+
 
 def balance_ratio(a,b):
     if a is None or b is None: return None
@@ -1969,6 +3468,64 @@ def fairness_trend_df(rows):
     return pd.DataFrame(out)
 
 
+def live_fairness_snapshot(y,m,result,include_completed_covers=True):
+    """Live monthly real-work fairness; never used as future solver input."""
+    if result is None:
+        return {"people":{},"effective_assignments":{},"global":{}}
+    backups=[]
+    if include_completed_covers:
+        try:
+            backups=db.list_backups(y,m)
+        except Exception:
+            backups=[]
+    return calculate_live_fairness_snapshot(
+        y,m,result.assignments,
+        people_initials=[p["initials"] for p in DEFAULT_PEOPLE],
+        backup_assignments=backups,
+    )
+
+
+def system_actual_fairness_trend_df(up_to_year=None,up_to_month=None):
+    """Monthly SYSTEM vs ACTUAL fairness history; descriptive only."""
+    try:
+        rows=db.list_published_schedules()
+    except Exception:
+        return pd.DataFrame()
+    limit=(int(up_to_year)*12+int(up_to_month)) if up_to_year is not None and up_to_month is not None else None
+    out=[]
+    ids=[p["initials"] for p in DEFAULT_PEOPLE]
+    for r in rows:
+        y=int(r.get("year",0)); m=int(r.get("month",0))
+        if limit is not None and y*12+m>limit:
+            continue
+        try:
+            cp=r.get("current_json") or {}
+            bp=r.get("baseline_json") or cp
+            cr=deserialize_result(cp); br=deserialize_result(bp)
+            backups=db.list_backups(y,m)
+            sg=calculate_live_fairness_snapshot(y,m,br.assignments,people_initials=ids,backup_assignments=[])["global"]
+            ag=calculate_live_fairness_snapshot(y,m,cr.assignments,people_initials=ids,backup_assignments=backups)["global"]
+            out.append({
+                "Period":f"{y}-{m:02d}",
+                "SYSTEM monthly fairness":float(sg.get("monthly_fairness_score",0.0)),
+                "ACTUAL monthly fairness":float(ag.get("monthly_fairness_score",0.0)),
+                "Delta (ACTUAL-SYSTEM)":round(float(ag.get("monthly_fairness_score",0.0))-float(sg.get("monthly_fairness_score",0.0)),1),
+                "SYSTEM post imbalance":int(sg.get("rotation_monthly_imbalance",0)),
+                "ACTUAL post imbalance":int(ag.get("rotation_monthly_imbalance",0)),
+                "Completed covers":int(ag.get("completed_cover_transfers",0)),
+            })
+        except Exception:
+            continue
+    return pd.DataFrame(out)
+
+
+def actual_workplace_exposure_df(y,m,result):
+    snap=live_fairness_snapshot(y,m,result,include_completed_covers=True)
+    view=deepcopy(result)
+    view.assignments=dict(snap.get("effective_assignments") or result.assignments)
+    return workplace_exposure_df(y,m,view)
+
+
 def component_status(score):
     if score is None: return tr("not_applicable")
     if score>=80: return tr("matches")
@@ -1989,7 +3546,7 @@ def localized_email_log(rows):
     } for r in rows])
 
 # --- Identity, role and month ---
-st.sidebar.title("Radiology Scheduler"); st.sidebar.caption(f"Web V{APP_VERSION}")
+st.sidebar.title("Shift Happens"); st.sidebar.caption(f"PGY-1 Radiology · v{DISPLAY_VERSION}")
 
 def observer_assignment_changes_df(y,m,baseline,current):
     if baseline is None or current is None:
@@ -2085,8 +3642,8 @@ def render_observer_portal(profile,auth_user):
 
     current_payload=db.load_schedule(y,m,"current")
     baseline_payload=db.load_schedule(y,m,"baseline")
-    current=refresh_result_payload(current_payload,year,month) if current_payload else None
-    baseline=refresh_result_payload(baseline_payload or current_payload,year,month,use_actual_backups=False) if current_payload else None
+    current=refresh_result_payload(current_payload,y,m) if current_payload else None
+    baseline=refresh_result_payload(baseline_payload or current_payload,y,m,use_actual_backups=False) if current_payload else None
     normal_swaps=db.list_swap_requests(y,m,None)
     backup_swaps=db.list_backup_swap_requests(y,m,None)
     changes=observer_assignment_changes_df(y,m,baseline,current) if current else pd.DataFrame()
@@ -2096,12 +3653,14 @@ def render_observer_portal(profile,auth_user):
             st.info(tr("observer_no_schedule"))
         else:
             g=baseline.stats.get("global",{})
+            sl=live_fairness_snapshot(y,m,baseline,include_completed_covers=False)["global"]
+            al=live_fairness_snapshot(y,m,current,include_completed_covers=True)["global"]
             approved=sum(1 for r in normal_swaps+backup_swaps if r.get("status")=="approved")
             pending=sum(1 for r in normal_swaps+backup_swaps if r.get("status")=="pending")
             c1,c2,c3,c4,c5=st.columns(5)
             c1.metric(tr("hard_errors"),g.get("hard_errors",0))
-            c2.metric(tr("cumulative_fairness"),f"{g.get('cumulative_fairness_score',g.get('fairness_score',0))}%")
-            c3.metric(tr("monthly_fairness"),f"{g.get('monthly_fairness_score',g.get('fairness_score',0))}%")
+            c2.metric("SYSTEM fairness",f"{sl.get('monthly_fairness_score',0)}%")
+            c3.metric("ACTUAL fairness",f"{al.get('monthly_fairness_score',0)}%",delta=f"{al.get('monthly_fairness_score',0)-sl.get('monthly_fairness_score',0):+.1f}")
             c4.metric(tr("observer_change_count"),len(changes))
             c5.metric(tr("observer_pending_swaps"),pending)
             st.caption(tr("observer_change_log_help"))
@@ -2115,7 +3674,7 @@ def render_observer_portal(profile,auth_user):
                 {tr("fairness_level"):"2. RESIDENT HARD",tr("fairness_goal"):("Minimalus būtinas praradimų skaičius + kuo lygesnis paskirstymas" if lang=="LT" else "Minimum unavoidable losses + equal burden spread")},
                 {tr("fairness_level"):"3. POSTAI / WORKLOAD",tr("fairness_goal"):tr("fairness_monthly_goal")},
                 {tr("fairness_level"):"4. MAX-MIN SOFT",tr("fairness_goal"):tr("other_preferences_goal")},
-                {tr("fairness_level"):"5. CUMULATIVE",tr("fairness_goal"):tr("fairness_cumulative_goal")},
+                {tr("fairness_level"):"5. ACTUAL AUDIT",tr("fairness_goal"):tr("fairness_cumulative_goal")},
             ]),use_container_width=True,hide_index=True)
 
     with tab_schedule:
@@ -2155,36 +3714,32 @@ def render_observer_portal(profile,auth_user):
             st.info(tr("observer_no_schedule"))
         else:
             g=baseline.stats.get("global",{})
+            sl=live_fairness_snapshot(y,m,baseline,include_completed_covers=False)["global"]
+            al=live_fairness_snapshot(y,m,current,include_completed_covers=True)["global"]
             c1,c2,c3=st.columns(3)
             c1.metric(tr("hard_validity"),tr("hard_validity_pass") if g.get("hard_errors",0)==0 else tr("hard_validity_fail"))
-            c2.metric(tr("cumulative_fairness"),f"{g.get('cumulative_fairness_score',g.get('fairness_score',0))}%")
-            c3.metric(tr("monthly_fairness"),f"{g.get('monthly_fairness_score',g.get('fairness_score',0))}%")
+            c2.metric("SYSTEM fairness",f"{sl.get('monthly_fairness_score',0)}%")
+            c3.metric("ACTUAL fairness",f"{al.get('monthly_fairness_score',0)}%",delta=f"{al.get('monthly_fairness_score',0)-sl.get('monthly_fairness_score',0):+.1f}")
             st.caption(tr("fairness_swap_neutral"))
             breakdown=[
-                (tr("cumulative_fairness"),tr("metric_weekend"),g.get("weekend_cumulative_spread",0),18),
-                (tr("cumulative_fairness"),tr("metric_friday"),g.get("friday_cumulative_spread",g.get("friday_spread",0)),7),
-                (tr("cumulative_fairness"),tr("metric_double"),g.get("double_cumulative_spread",g.get("double_spread",0)),4),
-                (tr("cumulative_fairness"),tr("metric_weekday"),g.get("weekday_day_cumulative_spread",g.get("weekday_day_spread",0)),2),
-                (tr("monthly_fairness"),tr("metric_weekend"),g.get("weekend_monthly_spread",0),18),
-                (tr("monthly_fairness"),tr("metric_friday"),g.get("friday_monthly_spread",0),7),
-                (tr("monthly_fairness"),tr("metric_double"),g.get("double_monthly_spread",0),4),
-                (tr("monthly_fairness"),tr("metric_weekday"),g.get("weekday_day_monthly_spread",0),2),
+                ("SYSTEM",tr("metric_saturday"),sl.get("saturday_monthly_spread",0)),
+                ("ACTUAL",tr("metric_saturday"),al.get("saturday_monthly_spread",0)),
+                ("SYSTEM",tr("metric_sunday"),sl.get("sunday_monthly_spread",0)),
+                ("ACTUAL",tr("metric_sunday"),al.get("sunday_monthly_spread",0)),
+                ("SYSTEM",tr("metric_friday"),sl.get("friday_monthly_spread",0)),
+                ("ACTUAL",tr("metric_friday"),al.get("friday_monthly_spread",0)),
+                ("SYSTEM",tr("metric_double"),sl.get("double_monthly_spread",0)),
+                ("ACTUAL",tr("metric_double"),al.get("double_monthly_spread",0)),
+                ("SYSTEM",tr("metric_weekday"),sl.get("weekday_day_monthly_spread",0)),
+                ("ACTUAL",tr("metric_weekday"),al.get("weekday_day_monthly_spread",0)),
             ]
-            st.dataframe(pd.DataFrame([{
-                tr("fairness_scope"):scope,
-                tr("fairness_metric"):metric,
-                tr("fairness_spread"):spread,
-                tr("fairness_penalty"):spread*weight,
-            } for scope,metric,spread,weight in breakdown]),use_container_width=True,hide_index=True)
-            trend=fairness_trend_df(db.fairness_history_rows(y,m))
+            st.dataframe(pd.DataFrame([{tr("fairness_scope"):scope,tr("fairness_metric"):metric,tr("fairness_spread"):spread} for scope,metric,spread in breakdown]),use_container_width=True,hide_index=True)
+            trend=system_actual_fairness_trend_df(y,m)
             if not trend.empty:
-                shown=trend.rename(columns={
-                    "Cumulative fairness":tr("cumulative_fairness"),
-                    "Monthly fairness":tr("monthly_fairness")
-                })
-                chart=shown.set_index("Period")
-                st.line_chart(chart[[tr("cumulative_fairness"),tr("monthly_fairness")]],height=300)
-                st.dataframe(shown,use_container_width=True,hide_index=True)
+                chart=trend.set_index("Period")
+                st.line_chart(chart[["SYSTEM monthly fairness","ACTUAL monthly fairness"]],height=300)
+                st.dataframe(trend,use_container_width=True,hide_index=True)
+                st.caption("Tik auditas — jokio future catch-up." if lang=="LT" else "Audit only — no future catch-up.")
             else:
                 st.caption(tr("fairness_no_history"))
 
@@ -2234,7 +3789,30 @@ resident_ok=True
 
 # V2.5.34: install the ACTIVE versioned Rule Profile before any month calculations,
 # scheduling, backup planning or rule-dependent UI is rendered.
-_active_rule_row=db.get_active_rule_profile()
+try:
+    _active_rule_row=db.get_active_rule_profile()
+    if _active_rule_row:
+        st.session_state["_last_good_rule_profile"]=dict(_active_rule_row)
+except Exception as exc:
+    _active_rule_row=st.session_state.get("_last_good_rule_profile")
+    if not _active_rule_row:
+        st.error(
+            "Laikinas ryšio su duomenų baze sutrikimas. Aktyvių taisyklių nepavyko saugiai perskaityti. "
+            "Jokio swapo / grafiko pakeitimo neįvykdžiau. Atnaujinkite puslapį po kelių sekundžių."
+            if lang=="LT" else
+            "Temporary database connection problem. The active rule profile could not be read safely. "
+            "No swap/schedule change was performed. Refresh the page in a few seconds."
+        )
+        st.caption(f"{exc.__class__.__name__}: {exc}")
+        st.stop()
+
+if (_active_rule_row or {}).get("_read_fallback")=="memory_cache":
+    st.warning(
+        "Trumpam nutrūko DB ryšys — naudojama paskutinė šiame procese sėkmingai perskaityta aktyvi taisyklių versija."
+        if lang=="LT" else
+        "Database connection briefly dropped — using the last successfully read active rule profile from this process."
+    )
+
 _active_rule_config=(_active_rule_row or {}).get("config") or DEFAULT_RULE_PROFILE
 try:
     ACTIVE_RULES=set_runtime_rules(_active_rule_config)
@@ -2244,26 +3822,42 @@ except Exception:
     ACTIVE_RULES=set_runtime_rules(DEFAULT_RULE_PROFILE)
     ACTIVE_RULE_PROFILE_VERSION=0
 
-directory_map=db.directory()
+try:
+    directory_map=db.directory()
+    if directory_map:
+        st.session_state["_last_good_directory"]=directory_map
+except Exception as exc:
+    directory_map=st.session_state.get("_last_good_directory")
+    if not directory_map:
+        st.error(
+            "Laikinas DB ryšio sutrikimas. Rezidentų sąrašo nepavyko perskaityti; atnaujinkite puslapį."
+            if lang=="LT" else
+            "Temporary database connection problem. The resident directory could not be read; refresh the page."
+        )
+        st.caption(f"{exc.__class__.__name__}: {exc}")
+        st.stop()
 people_map={p["initials"]:p for p in DEFAULT_PEOPLE}
 st.sidebar.markdown(badge(active_user),unsafe_allow_html=True)
-research_role = "researcher" if active_user=="R.Š." else "senior" if active_user=="G.M." else "resident"
+research_role = "researcher" if active_user==RESEARCHER_INITIALS else "senior" if active_user==SENIOR_INITIALS else "resident"
 role_key={"researcher":"research_role_researcher","senior":"research_role_senior","resident":"research_role_resident"}[research_role]
 st.sidebar.caption(tr(role_key))
 st.sidebar.caption(getattr(auth_user,"email",profile.get("email","")))
 if st.sidebar.button(tr("logout"),use_container_width=True):
     try: sb.auth.sign_out()
     except Exception: pass
-    for k in ["supabase_client"]:
-        st.session_state.pop(k,None)
+    clear_cross_account_session_state(keep_client=False)
     st.rerun()
 
-is_senior_account=directory_map.get(active_user,{}).get("role")=="senior"
-admin_ok=is_senior_account
-profile_mode=tr("resident_profile")
-if is_senior_account:
-    profile_mode=st.sidebar.radio(tr("profile"),[tr("resident_profile"),tr("senior_profile")],horizontal=False)
-senior_mode=(profile_mode==tr("senior_profile") and is_senior_account)
+# V2.5.90: one visible interface per account. There is no profile switch.
+# SR = operational Seniūnė.
+# ŠR = resident-facing account with embedded researcher + senior/admin capabilities.
+# MG and all others = resident-only.
+is_seniune_account=(active_user==SENIOR_INITIALS)
+is_researcher_account=(active_user==RESEARCHER_INITIALS)
+has_senior_functions=(is_seniune_account or is_researcher_account)
+admin_ok=has_senior_functions
+# Legacy name retained as a capability flag for existing protected senior-only blocks.
+senior_mode=has_senior_functions
 
 ui_simple=("Paprastas" if lang=="LT" else "Simple")
 ui_advanced=("Išplėstinis" if lang=="LT" else "Advanced")
@@ -2277,6 +3871,8 @@ ui_mode=st.sidebar.radio(
           "Simple: daily actions and only the most important results. Advanced: full fairness, guardrail and solver diagnostics.")
 )
 advanced_mode=(ui_mode==ui_advanced)
+# V2.5.92 lifecycle controls: SR primary; ŠR contingency only in Išplėstinis.
+lifecycle_operator_ui=(is_seniune_account or (is_researcher_account and advanced_mode))
 st.sidebar.caption(
     ("Paprastas režimas yra numatytasis." if not advanced_mode and lang=="LT" else
      "Simple mode is the default." if not advanced_mode else
@@ -2301,7 +3897,7 @@ if advanced_mode:
 st.title(tr("app_title"))
 if advanced_mode:
     st.caption(tr("app_caption"))
-    st.success(f"RUNNING BUILD: V{APP_VERSION}")
+    st.success(f"RUNNING BUILD: V{DISPLAY_VERSION}")
     st.info(
         ("IŠPLĖSTINIS REŽIMAS — rodoma pilna fairness, guardrail, solverio ir tyrimo diagnostika."
          if lang=="LT" else
@@ -2309,8 +3905,21 @@ if advanced_mode:
     )
 else:
     st.caption("Paprastas režimas" if lang=="LT" else "Simple mode")
-dl,dlmsg,dldiff=deadline_message(year,month)
-st.markdown(f'<div class="deadline-card"><b>{tr("deadline")}: {dl.isoformat()}</b><br>{html.escape(dlmsg)}<br><span style="color:#6b7280">{html.escape(tr("deadline_note"))}</span></div>',unsafe_allow_html=True)
+dl,dlmsg,dldiff=deadline_message(year,month); cutoff_exact=preference_cutoff_for(year,month)
+st.markdown(f'<div class="deadline-card"><b>{tr("deadline")}: {cutoff_exact.strftime("%Y-%m-%d %H:%M")}</b><br>{html.escape(dlmsg)}<br><span style="color:#6b7280">{html.escape(tr("deadline_note"))}</span></div>',unsafe_allow_html=True)
+
+# V2.5.94: after the exact cutoff, SR/ŠR views automatically materialize
+# every still-missing active resident as a submitted zero-request form.
+_zero_pref_autosubmit={"ok":True,"due":False,"count":0,"initials":[]}
+if lifecycle_operator_ui:
+    _zero_pref_autosubmit=ensure_zero_preference_submissions_if_due(year,month)
+    if int(_zero_pref_autosubmit.get("count",0) or 0)>0:
+        names=", ".join(_zero_pref_autosubmit.get("initials") or [])
+        st.info(
+            (f"Po pageidavimų termino automatiškai užfiksuotos 0 pageidavimų anketos: {names}."
+             if lang=="LT" else
+             f"After the preference deadline, zero-request submissions were recorded automatically for: {names}.")
+        )
 
 if advanced_mode:
     with st.expander(("IŠPLĖSTINIS LANGAS" if lang=="LT" else "ADVANCED WINDOW"), expanded=True):
@@ -2334,12 +3943,12 @@ if advanced_mode:
             a2.metric("HARD","—"); a3.metric(("Mėnesio fairness" if lang=="LT" else "Monthly fairness"),"—"); a4.metric(("Solverio etapas" if lang=="LT" else "Solver stage"),"—")
 
 names=[]
-if active_user=="R.Š." and advanced_mode:
+if active_user==RESEARCHER_INITIALS and advanced_mode:
     names.append("AVAILABLE GPT + HUMAN vs MY ENGINE")
 if senior_mode:
     names.append(tr("senior_dashboard"))
 names += [tr("preferences"),tr("settings")]
-if senior_mode or active_user=="R.Š.":
+if senior_mode:
     names.append(tr("generation"))
 names.append(tr("schedule"))
 if advanced_mode:
@@ -2350,20 +3959,27 @@ if advanced_mode:
 if senior_mode:
     names.append(tr("senior_guide"))
 names.append(tr("rules"))
+
+# ŠR keeps the isolated research-shadow generator, but it is a tab inside the
+# same single account interface rather than a second profile/window.
+research_shadow_label=("TYRĖJO SUDARYMAS" if lang=="LT" else "RESEARCHER WORKBENCH")
+if active_user==RESEARCHER_INITIALS and advanced_mode:
+    names.append(research_shadow_label)
+
 tabs=st.tabs(names)
 research_shadow_tab_index=(
-    names.index(tr("generation"))
-    if active_user=="R.Š." and not senior_mode and tr("generation") in names
+    names.index(research_shadow_label)
+    if active_user==RESEARCHER_INITIALS and advanced_mode and research_shadow_label in names
     else None
 )
 
-# R.Š. research comparison is an advanced analytical tool, so it does not occupy
+# ŠR research comparison is an advanced analytical tool, so it does not occupy
 # mobile/simple navigation.
-pos=1 if (active_user=="R.Š." and advanced_mode) else 0
-if active_user=="R.Š." and advanced_mode:
+pos=1 if (active_user==RESEARCHER_INITIALS and advanced_mode) else 0
+if active_user==RESEARCHER_INITIALS and advanced_mode:
     st.sidebar.success("Research: FIRST TAB — AVAILABLE GPT + HUMAN vs MY ENGINE")
-elif active_user=="R.Š." and not advanced_mode:
-    st.sidebar.caption("AVAILABLE GPT + HUMAN vs MY ENGINE → Išplėstinis režimas" if lang=="LT" else "AVAILABLE GPT + HUMAN vs MY ENGINE → Advanced mode")
+elif active_user==RESEARCHER_INITIALS and not advanced_mode:
+    st.sidebar.caption("Tyrėjo įrankiai → Išplėstinis režimas" if lang=="LT" else "Researcher tools → Advanced mode")
 if st.session_state.get("_save_flash"):
     st.success("✓ " + str(st.session_state.pop("_save_flash")))
 
@@ -2380,12 +3996,28 @@ if senior_mode:
         c1,c2,c3=st.columns(3); c1.metric(tr("completion"),f"{len(prefs)}/{len(DEFAULT_PEOPLE)}"); c2.metric(tr("missing_preferences"),len(missing)); c3.metric(tr("missing_email"),len(missing_mail))
         if missing: st.warning(f"{tr('missing_preferences')}: {', '.join(missing)}")
         else: st.success(tr("all_complete"))
+        auto_zero=[i for i,x in prefs.items() if x.get("submission_source")=="deadline_zero"]
+        if auto_zero:
+            st.caption(
+                ("TAIP = anketa užfiksuota kaip pateikta. Automatiniai 0 pageidavimų įrašai po termino: "
+                 if lang=="LT" else
+                 "YES = form recorded as submitted. Automatic zero-request submissions after the deadline: ")
+                + ", ".join(sorted(auto_zero))
+            )
         if missing_mail: st.warning(f"{tr('missing_email')}: {', '.join(missing_mail)}")
         st.info(tr("email_ready") if smtp_ready() else tr("email_not_ready"))
-        if st.button(tr("send_reminders"),type="primary"):
-            res=send_due_reminders(year,month)
-            if not res: st.info(tr("no_due_reminders"))
-            else: st.dataframe(localized_delivery_rows(res),use_container_width=True,hide_index=True)
+        if lifecycle_operator_ui:
+            c_mail1,c_mail2=st.columns(2)
+            with c_mail1:
+                if st.button("SIŲSTI PAGEIDAVIMŲ ETAPO PRANEŠIMĄ" if lang=="LT" else "SEND PREFERENCES-OPEN NOTICE",use_container_width=True,disabled=(not smtp_ready() or bool(missing_mail)),key=f"pref_open_notice_{year}_{month}"):
+                    res=preferences_open_emails(year,month)
+                    st.dataframe(localized_delivery_rows(res),use_container_width=True,hide_index=True)
+            with c_mail2:
+                if st.button("PALEISTI ŠIANDIENOS PRIMINIMUS" if lang=="LT" else "RUN TODAY'S REMINDERS",use_container_width=True,disabled=not smtp_ready(),key=f"today_reminders_{year}_{month}"):
+                    res=send_due_reminders(year,month)
+                    if not res: st.info(tr("no_due_reminders"))
+                    else: st.dataframe(localized_delivery_rows(res),use_container_width=True,hide_index=True)
+            render_notification_delivery_status(year,month)
         if advanced_mode:
             logs=db.get_email_log(year,month)
             if logs:
@@ -2394,14 +4026,96 @@ if senior_mode:
 
 # --- Preferences ---
 with tabs[pos]:
-    st.subheader(f"{tr('my_preferences')} — {month_label(year,month)}"); st.markdown(badge(active_user),unsafe_allow_html=True)
-    if not resident_ok: st.error(tr("bad_pin"))
+    st.subheader(f"{tr('my_preferences')} — {month_label(year,month)}")
+    if not resident_ok:
+        st.error(tr("bad_pin"))
     else:
-        cur=db.get_preference(year,month,active_user) or {}; days=list(range(1,calendar.monthrange(year,month)[1]+1))
-        avail_am=db.rest_credit_available_for_month(active_user,year,month,"AM")
-        avail_pm=db.rest_credit_available_for_month(active_user,year,month,"PM")
+        cutoff_pref=preference_cutoff_for(year,month)
+        now_lt=datetime.now(ZoneInfo("Europe/Vilnius"))
+        own_deadline_open=now_lt < cutoff_pref
+        pref_state=db.get_schedule_state(year,month)
+        pref_system_frozen=bool(pref_state.get("has_published"))
+
+        preference_target=active_user
+        operator_manual_mode=False
+        operator_reason_kind=""
+        operator_reason_detail=""
+
+        if lifecycle_operator_ui:
+            st.markdown(
+                """<div style="border:2px solid #7C9BFF;background:rgba(79,112,255,.08);
+                border-radius:16px;padding:14px 16px;margin:4px 0 12px 0;">
+                <b>Operatoriaus pageidavimų įvedimas</b><br>
+                <span style="opacity:.82">Default — jūsų pačių anketa. Jei rezidentas negalėjo pateikti pats,
+                pasirinkite jo inicialus ir suveskite informaciją jo vardu. Paskyros identitetas nekeičiamas,
+                veiksmas audituojamas.</span></div>""",
+                unsafe_allow_html=True,
+            )
+            target_order=[active_user]+[p["initials"] for p in DEFAULT_PEOPLE if p["initials"]!=active_user]
+            name_map={p["initials"]:p["name"] for p in DEFAULT_PEOPLE}
+            preference_target=st.selectbox(
+                "Pildyti už:",
+                target_order,
+                index=0,
+                format_func=lambda i:f"{i} — {name_map.get(i,i)}",
+                key=f"pref_target_{year}_{month}_{active_user}",
+            )
+            st.markdown(
+                f'<div style="border:1px solid rgba(124,155,255,.55);border-radius:12px;padding:10px 12px;">'
+                f'<b>Pasirinktas rezidentas:</b> {badge(preference_target,include_name=True)}</div>',
+                unsafe_allow_html=True,
+            )
+            operator_manual_mode=(preference_target!=active_user) or (not own_deadline_open)
+            if pref_system_frozen:
+                st.error(
+                    "SYSTEM jau užšaldytas. Pageidavimų keisti nebegalima; operacinius pakeitimus darykite per Grafikas → rankinis koregavimas."
+                    if lang=="LT" else
+                    "SYSTEM is already frozen. Preferences can no longer be changed; use Schedule → manual correction for operational changes."
+                )
+        else:
+            st.markdown(badge(active_user),unsafe_allow_html=True)
+            if not own_deadline_open:
+                st.warning(
+                    f"Pageidavimų terminas baigėsi {cutoff_pref.strftime('%Y-%m-%d %H:%M')} Lietuvos laiku. "
+                    "Anketos po termino rezidentas pats keisti nebegali. Jei būtina pataisa, kreipkitės į Seniūnę."
+                    if lang=="LT" else
+                    f"The preference deadline closed at {cutoff_pref.strftime('%Y-%m-%d %H:%M')} Lithuania time. "
+                    "Residents can no longer edit the form themselves; contact the senior scheduler if a correction is required."
+                )
+
+        cur=db.get_preference(year,month,preference_target) or {}
+        source=cur.get("submission_source","")
+        submitter=cur.get("submitted_by_initials","")
+        if cur:
+            if source=="deadline_zero":
+                st.info("Pateikta: TAIP — automatiškai užfiksuota 0 pageidavimų anketa po termino." if lang=="LT" else "Submitted: YES — automatic zero-request form after the deadline.")
+            elif source=="operator_manual":
+                st.info((f"Pateikta: TAIP — manualiai įvedė {submitter or 'operatorius'}." if lang=="LT" else f"Submitted: YES — manually entered by {submitter or 'operator'}."))
+            else:
+                st.success("Pateikta: TAIP — rezidento anketa." if lang=="LT" else "Submitted: YES — resident submission.")
+
+        days=list(range(1,calendar.monthrange(year,month)[1]+1))
+        avail_am=db.rest_credit_available_for_month(preference_target,year,month,"AM")
+        avail_pm=db.rest_credit_available_for_month(preference_target,year,month,"PM")
         st.markdown(f"### {tr('short_term')}")
-        with st.form(f"prefs_{year}_{month}_{active_user}"):
+        with st.form(f"prefs_{year}_{month}_{active_user}_{preference_target}"):
+            if lifecycle_operator_ui and operator_manual_mode:
+                st.markdown("#### Manualaus įvedimo auditas" if lang=="LT" else "#### Manual-entry audit")
+                operator_reason_kind=st.selectbox(
+                    "Priežastis" if lang=="LT" else "Reason",
+                    [
+                        "Pateikta telefonu" if lang=="LT" else "Submitted by phone",
+                        "Techninė / ryšio problema" if lang=="LT" else "Technical / connectivity issue",
+                        "Sveikatos / neatvykimo situacija" if lang=="LT" else "Health / absence situation",
+                        "Pavėluotas operatoriaus įvedimas" if lang=="LT" else "Late operator entry",
+                        "Kita" if lang=="LT" else "Other",
+                    ],
+                    key=f"pref_operator_reason_{year}_{month}_{active_user}_{preference_target}",
+                )
+                operator_reason_detail=st.text_input(
+                    "Trumpa pastaba (nebūtina)" if lang=="LT" else "Short note (optional)",
+                    key=f"pref_operator_reason_detail_{year}_{month}_{active_user}_{preference_target}",
+                )
             st.markdown(f"### {tr('hard_unavailable')}")
             st.caption(tr("hard_help"))
             h1,h2,h3=st.columns(3)
@@ -2425,27 +4139,27 @@ with tabs[pos]:
             st.caption(tr("soft_help"))
             sf1,sf2,sf3=st.columns(3)
             with sf1:
-                soft=st.multiselect(tr("hard_all_day"),days,default=sorted(cur.get("soft_free",set())),format_func=lambda d:pretty_day(year,month,d),key=f"soft_full_{year}_{month}_{active_user}")
+                soft=st.multiselect(tr("hard_all_day"),days,default=sorted(cur.get("soft_free",set())),format_func=lambda d:pretty_day(year,month,d),key=f"soft_full_{year}_{month}_{active_user}_{preference_target}")
             with sf2:
-                soft_am=st.multiselect(tr("hard_morning"),days,default=sorted(cur.get("soft_free_am",set())),format_func=lambda d:pretty_day(year,month,d),key=f"soft_am_{year}_{month}_{active_user}")
+                soft_am=st.multiselect(tr("hard_morning"),days,default=sorted(cur.get("soft_free_am",set())),format_func=lambda d:pretty_day(year,month,d),key=f"soft_am_{year}_{month}_{active_user}_{preference_target}")
             with sf3:
-                soft_pm=st.multiselect(tr("hard_afternoon"),days,default=sorted(cur.get("soft_free_pm",set())),format_func=lambda d:pretty_day(year,month,d),key=f"soft_pm_{year}_{month}_{active_user}")
+                soft_pm=st.multiselect(tr("hard_afternoon"),days,default=sorted(cur.get("soft_free_pm",set())),format_func=lambda d:pretty_day(year,month,d),key=f"soft_pm_{year}_{month}_{active_user}_{preference_target}")
 
             st.markdown(f"### {tr('preferred')}")
             st.caption(tr("preferred_help"))
             pf1,pf2,pf3=st.columns(3)
             with pf1:
-                pref=st.multiselect(tr("hard_all_day"),days,default=sorted(cur.get("preferred",set())),format_func=lambda d:pretty_day(year,month,d),key=f"pref_full_{year}_{month}_{active_user}")
+                pref=st.multiselect(tr("hard_all_day"),days,default=sorted(cur.get("preferred",set())),format_func=lambda d:pretty_day(year,month,d),key=f"pref_full_{year}_{month}_{active_user}_{preference_target}")
             with pf2:
-                pref_am=st.multiselect(tr("hard_morning"),days,default=sorted(cur.get("preferred_am",set())),format_func=lambda d:pretty_day(year,month,d),key=f"pref_am_{year}_{month}_{active_user}")
+                pref_am=st.multiselect(tr("hard_morning"),days,default=sorted(cur.get("preferred_am",set())),format_func=lambda d:pretty_day(year,month,d),key=f"pref_am_{year}_{month}_{active_user}_{preference_target}")
             with pf3:
-                pref_pm=st.multiselect(tr("hard_afternoon"),days,default=sorted(cur.get("preferred_pm",set())),format_func=lambda d:pretty_day(year,month,d),key=f"pref_pm_{year}_{month}_{active_user}")
+                pref_pm=st.multiselect(tr("hard_afternoon"),days,default=sorted(cur.get("preferred_pm",set())),format_func=lambda d:pretty_day(year,month,d),key=f"pref_pm_{year}_{month}_{active_user}_{preference_target}")
 
             st.markdown(f"### {tr('vacation')}")
             st.caption(tr("vacation_help"))
             vacation=st.multiselect(
                 tr("vacation"),days,default=sorted(cur.get("vacation",set())),
-                format_func=lambda d:pretty_day(year,month,d),key=f"vacation_{year}_{month}_{active_user}"
+                format_func=lambda d:pretty_day(year,month,d),key=f"vacation_{year}_{month}_{active_user}_{preference_target}"
             )
 
             note=st.text_area(tr("note"),value=cur.get("note",""),placeholder=tr("note_ph"))
@@ -2469,7 +4183,15 @@ with tabs[pos]:
                     format_func=lambda d:pretty_day(year,month,d),help=tr("long_duty_help")
                 )
             st.caption(tr("labour_scope_note"))
-            submitted=st.form_submit_button(tr("save"),type="primary")
+            resident_edit_blocked=(not lifecycle_operator_ui and not own_deadline_open)
+            operator_edit_blocked=(lifecycle_operator_ui and pref_system_frozen)
+            submitted=st.form_submit_button(
+                ("IŠSAUGOTI UŽ " + preference_target if lifecycle_operator_ui and operator_manual_mode and lang=="LT"
+                 else "SAVE FOR " + preference_target if lifecycle_operator_ui and operator_manual_mode
+                 else tr("save")),
+                type="primary",
+                disabled=resident_edit_blocked or operator_edit_blocked,
+            )
             if submitted:
                 whole=set(unavailable); am=set(unavailable_am); pm=set(unavailable_pm)
                 sf=set(soft); sf_am=set(soft_am); sf_pm=set(soft_pm)
@@ -2501,7 +4223,7 @@ with tabs[pos]:
                 elif int(bonus_am_use)+int(bonus_pm_use)>2:
                     st.error(tr("max_credit_error"))
                 else:
-                    db.save_preference(year,month,active_user,{
+                    pref_payload={
                         "unavailable":unavailable,
                         "unavailable_am":unavailable_am,
                         "unavailable_pm":unavailable_pm,
@@ -2518,8 +4240,36 @@ with tabs[pos]:
                         "backup_credits_am_to_use":int(bonus_am_use),
                         "backup_credits_pm_to_use":int(bonus_pm_use),
                         "backup_credits_night_to_use":0,
-                    })
-                    flash_saved(tr("saved"))
+                    }
+                    try:
+                        if lifecycle_operator_ui and operator_manual_mode:
+                            audit_reason=operator_reason_kind.strip()
+                            if operator_reason_detail.strip():
+                                audit_reason += " — " + operator_reason_detail.strip()
+                            db.save_preference_for_resident_v2595(
+                                year,month,preference_target,pref_payload,audit_reason
+                            )
+                            draft_note=(
+                                " Jei šiam mėnesiui jau buvo sugeneruotas DRAFT, jį reikia regeneruoti."
+                                if db.get_schedule_state(year,month).get("has_draft") else ""
+                            )
+                            flash_saved(
+                                (f"{preference_target} pageidavimai įvesti operatoriaus vardu ir audituoti.{draft_note}"
+                                 if lang=="LT" else
+                                 f"{preference_target} preferences were entered by the operator and audited."
+                                 + (" Regenerate the existing DRAFT." if draft_note else ""))
+                            )
+                        else:
+                            db.save_preference(year,month,active_user,pref_payload)
+                            flash_saved(tr("saved"))
+                    except Exception as e:
+                        msg=str(e)
+                        if "PREFERENCE_DEADLINE_CLOSED" in msg:
+                            st.error("Pageidavimų terminas jau uždarytas. Susisiekite su Seniūne." if lang=="LT" else "The preference deadline is closed. Contact the senior scheduler.")
+                        elif "PREFERENCE_INPUT_FROZEN_AFTER_SYSTEM" in msg:
+                            st.error("SYSTEM jau užšaldytas — pageidavimų keisti nebegalima." if lang=="LT" else "SYSTEM is frozen — preferences can no longer be changed.")
+                        else:
+                            st.error(msg)
     if senior_mode:
         st.divider(); st.markdown(f"### {tr('all_preferences')}"); prefs=db.all_preferences(year,month); sets=db.all_account_settings(); recurring_all=db.all_recurring_preferences(); nd=calendar.monthrange(year,month)[1]; rows=[]
         for p in DEFAULT_PEOPLE:
@@ -2533,6 +4283,15 @@ with tabs[pos]:
             rows.append({
                 tr("person"):p["initials"],tr("name"):p["name"],
                 tr("submitted"):tr("yes") if x else tr("no"),
+                ("Pateikimo būdas" if lang=="LT" else "Submission source"):(
+                    ("Automatiškai — 0 pageidavimų" if lang=="LT" else "Automatic — 0 requests")
+                    if x and x.get("submission_source")=="deadline_zero"
+                    else ((f"Manualiai — {x.get('submitted_by_initials') or 'operatorius'}" if lang=="LT"
+                           else f"Manual — {x.get('submitted_by_initials') or 'operator'}")
+                          if x and x.get("submission_source")=="operator_manual"
+                          else ("Rezidentas" if lang=="LT" else "Resident")
+                          if x else "—")
+                ),
                 tr("preference_load"):f"{vol} — {flag}",
                 tr("hard_dates"):", ".join(map(str,sorted(x.get("unavailable",set())))),
                 tr("hard_am_dates"):", ".join(map(str,sorted(x.get("unavailable_am",set())))),
@@ -2563,6 +4322,18 @@ with tabs[pos]:
     else:
         s=db.get_account_settings(active_user)
         with st.form(f"settings_{active_user}"):
+            shift_len_options=[tr("shift_length_6"),tr("shift_length_12"),tr("shift_length_mixed"),tr("shift_length_any")]
+            shift_len_value_to_label={0:tr("shift_length_any"),1:tr("shift_length_6"),2:tr("shift_length_mixed"),3:tr("shift_length_12")}
+            shift_len_label_to_value={v:k for k,v in shift_len_value_to_label.items()}
+            current_shift_len=max(0,min(3,int(s.get("shift_length_preference",0) or 0)))
+            shift_len_label=st.selectbox(
+                tr("shift_length_pref"),shift_len_options,
+                index=shift_len_options.index(shift_len_value_to_label.get(current_shift_len,tr("shift_length_any"))),
+                help=tr("shift_length_help")
+            )
+            shift_len_pref=shift_len_label_to_value.get(shift_len_label,0)
+            st.caption(tr("shift_length_help"))
+            st.divider()
             email=st.text_input(tr("email"),value=s.get("email","")); st.caption(tr("email_required"))
             st.caption("Pageidavimuose paliekami konkretūs, aiškūs poreikiai. Bendras savaitgalių vengimas nekeičia privalomo lygaus savaitgalių paskirstymo visai grupei. Jei reikia konkrečios laisvos dienos, pažymėkite ją Pageidavimų lange.")
             holiday_options=[tr("holiday_rest"),tr("holiday_neutral"),tr("holiday_work")]
@@ -2574,9 +4345,10 @@ with tabs[pos]:
                 help=tr("holiday_pref_help")
             )
             hp=holiday_label_to_value.get(holiday_pref_label,0)
-            c1,c2=st.columns(2)
-            with c1: sp=st.slider(tr("spread_pref"),-2,2,int(s.get("spread_preference",0)),help=tr("spread_help"))
-            with c2: avoid=st.checkbox(tr("avoid_double_shifts"),value=bool(s.get("avoid_doubles",False)))
+            sp=st.slider(tr("spread_pref"),-2,2,int(s.get("spread_preference",0)),help=tr("spread_help"))
+            # `avoid_doubles` is retained in the database for backward compatibility;
+            # the new four-way workday-length selector is the resident-facing source of truth.
+            avoid=(shift_len_pref==1)
             wp=0; wep=0
             st.markdown(f"### {tr('calendar')}")
             include_bk=st.checkbox(tr("include_backups_calendar"),value=bool(s.get("include_backups_in_calendar",False)))
@@ -2593,10 +4365,29 @@ with tabs[pos]:
                 if not email.strip() or "@" not in email or "." not in email.split("@")[-1]: st.error(tr("email_required"))
                 elif phone.strip() and not re.fullmatch(r"\+[1-9][0-9]{7,14}",phone.strip()): st.error("+3706XXXXXXX")
                 else:
-                    db.save_account_settings(active_user,{"email":email,"weekday_preference":wp,"weekend_preference":wep,"holiday_preference":hp,"spread_preference":sp,"avoid_doubles":avoid,"notifications_on":notif,"reminder_start_day":int(start),"preferred_language":lang,"include_backups_in_calendar":include_bk,"backup_email_alerts":backup_email,"phone_e164":phone,"backup_sms_alerts":False})
-                    refresh_calendar_subscription_feeds([active_user])
-                    flash_saved(tr("settings_saved"))
+                    try:
+                        db.save_account_settings(active_user,{"email":email,"weekday_preference":wp,"weekend_preference":wep,"holiday_preference":hp,"spread_preference":sp,"shift_length_preference":shift_len_pref,"avoid_doubles":avoid,"notifications_on":notif,"reminder_start_day":int(start),"preferred_language":lang,"include_backups_in_calendar":include_bk,"backup_email_alerts":backup_email,"phone_e164":(phone.strip() or None),"backup_sms_alerts":False})
+                        refresh_calendar_subscription_feeds([active_user])
+                    except Exception as exc:
+                        st.error(
+                            "Nustatymų išsaugoti nepavyko. Duomenys nebuvo pakeisti. "
+                            "Jei klaida kartojasi, administratorius turi patikrinti account_settings schemą."
+                        )
+                        if advanced_mode:
+                            st.caption(f"{type(exc).__name__}: {exc}")
+                    else:
+                        flash_saved(tr("settings_saved"))
         st.divider(); st.markdown(f"### {tr('long_term')}"); st.caption(tr("long_term_help"))
+        st.caption(
+            "Savaitgalio „Pageidauju dirbti“ leidžiamas kaip savanoriškas nepopuliarios pamainos pasirinkimas. "
+            "Pirmame mėnesyje be ankstesnio savaitgalių balanso sistema pirmiausia bando išnaudoti tokius savanorius, "
+            "o likusį nesavanorišką savaitgalių krūvį dalija tolygiai. Jei aukštesnės taisyklės neleidžia pageidavimo įvykdyti, "
+            "po grafiko sugeneravimo galima siūlyti asmeninį apsikeitimą."
+            if lang=="LT" else
+            "Weekend 'prefer to work' is allowed as volunteering for an unpopular duty. In the first month with no prior weekend history, "
+            "the engine first tries to use such volunteers and water-fills the remaining non-voluntary weekend burden. "
+            "If a higher rule prevents it, the resident can propose a personal swap after generation."
+        )
         existing_rec={int(r["weekday"]):r for r in db.get_recurring_preferences(active_user)}
         rule_to_label={"hard_unavailable":tr("rec_hard"),"soft_free":tr("rec_soft"),"preferred":tr("rec_preferred"),"none":tr("rec_none")}
         label_to_rule={v:k for k,v in rule_to_label.items()}
@@ -2607,16 +4398,26 @@ with tabs[pos]:
             rr=existing_rec.get(wd_i,{}); typ=rr.get("preference_type","none"); block=rr.get("block","FULL")
             rec_rows.append({tr("weekday_name"):WEEKDAY_FULL[lang][wd_i],tr("recurring_rule"):rule_to_label.get(typ,tr("rec_none")),tr("recurring_time"):block_to_label.get(block,tr("full_day")),"_weekday":wd_i})
         rec_df=pd.DataFrame(rec_rows)
-        edited=st.data_editor(rec_df,column_config={tr("recurring_rule"):st.column_config.SelectboxColumn(options=list(rule_to_label.values())),tr("recurring_time"):st.column_config.SelectboxColumn(options=list(block_to_label.values()))},disabled=[tr("weekday_name"),"_weekday"],hide_index=True,use_container_width=True,key=f"recurring_{active_user}_{lang}")
+        edited=st.data_editor(rec_df,column_config={tr("recurring_rule"):st.column_config.SelectboxColumn(options=list(rule_to_label.values())),tr("recurring_time"):st.column_config.SelectboxColumn(options=list(block_to_label.values())),"_weekday":None},disabled=[tr("weekday_name")],hide_index=True,use_container_width=True,key=f"recurring_{active_user}_{lang}")
         if st.button(tr("save_long_term"),type="primary"):
             payload=[]; invalid_weekend_soft=[]
             for _,r in edited.iterrows():
                 wd=int(r["_weekday"]); typ=label_to_rule.get(r[tr("recurring_rule")],"none"); block=label_to_block.get(r[tr("recurring_time")],"FULL")
-                if wd>=5 and typ in ("soft_free","preferred"):
+                # Weekend "Noriu laisvos" may not become a blanket escape from
+                # weekend burden. Weekend "Pageidauju dirbti" is intentionally
+                # accepted as an unpopular-duty volunteer signal.
+                if wd>=5 and typ=="soft_free":
                     invalid_weekend_soft.append(WEEKDAY_FULL[lang][wd]); continue
                 payload.append({"weekday":wd,"preference_type":typ,"block":block})
             if invalid_weekend_soft:
-                st.error("Pasikartojantis savaitgalio SOFT nepriimamas, nes apeitų kritinį savaitgalių water-filling. Rinkitės konkrečią mėnesio datą; jei iš tikrųjų negalite dirbti kiekvieną tokį savaitgalį, naudokite RESIDENT HARD.")
+                st.error(
+                    "Pasikartojantis savaitgalio „Noriu laisvos“ nepriimamas, nes perkeltų privalomą savaitgalių krūvį kitiems. "
+                    "Jei iš tikrųjų negalite dirbti kiekvieną tokį savaitgalį, naudokite RESIDENT HARD. "
+                    "Tačiau savaitgalio „Pageidauju dirbti“ LEIDŽIAMAS — tai laikoma savanorišku nepopuliarios pamainos pasirinkimu."
+                    if lang=="LT" else
+                    "Recurring weekend 'want off' is not accepted because it would shift unavoidable weekend burden to peers. "
+                    "Use RESIDENT HARD if you truly cannot work those weekends. Weekend 'prefer to work' IS allowed and is treated as volunteering for unpopular duty."
+                )
             else:
                 db.save_recurring_preferences(active_user,payload); flash_saved(tr("long_term_saved"))
 pos+=1
@@ -2629,7 +4430,7 @@ def _hard_error_explanation(raw, lang="LT"):
         ("Gap workplace dispersion violated", "Neužpildytos optional vietos per daug susikoncentravo vienoje postų grupėje."),
         ("Gap-day dispersion pattern outdated", "Skylės nėra išmėtytos per mėnesį pagal dabartinę tolygaus paskirstymo taisyklę."),
         ("workload", "Rezidento mėnesio darbo krūvis neatitinka jo tikslaus targeto."),
-        ("odd Onko", "Aktyvus senasis Onko lyginio skaičiaus režimas neatitinka paskyrimų."),
+        ("odd Onko", "Onko skaičius turi būti lyginis kiekvienam rezidentui: 0, 2, 4... Nelyginis 1/3/5 yra ABSOLUTE HARD klaida."),
         ("overlapping assignments", "Tam pačiam žmogui paskirtos laike persidengiančios pamainos."),
         ("HARD-unavailable", "Pamaina paskirta tuo metu, kai žmogus pažymėtas kaip HARD negalintis dirbti."),
         ("backup resident", "Privalomai dubliuojamai pamainai nėra laisvo ir HARD-prieinamo dublio."),
@@ -2645,7 +4446,7 @@ def _hard_error_explanation(raw, lang="LT"):
         ("Gap workplace dispersion violated", "Optional gaps are too concentrated in one workplace group."),
         ("Gap-day dispersion pattern outdated", "Gap dates do not match the current evenly distributed monthly pattern."),
         ("workload", "A resident's monthly workload does not match the exact target."),
-        ("odd Onko", "The active legacy even-Onko mode does not match the assignments."),
+        ("odd Onko", "Each resident must have an even Onko count: 0, 2, 4... Odd 1/3/5 is an ABSOLUTE HARD error."),
         ("overlapping assignments", "A resident has overlapping assignments."),
         ("HARD-unavailable", "A shift is assigned during HARD unavailability."),
         ("backup resident", "A required covered shift has no free HARD-eligible backup."),
@@ -2718,11 +4519,15 @@ def _draft_quality_tuple(result):
 if senior_mode:
     with tabs[pos]:
         st.subheader(tr("generation_title")); state=db.get_schedule_state(year,month); status=tr("published_state") if state["has_published"] else tr("draft") if state["has_draft"] else tr("not_created"); st.metric(tr("state"),status)
+        lifecycle_generation=db.get_schedule_lifecycle(year,month)
+        generation_locked=bool(state.get("has_published")) or str(lifecycle_generation.get("state") or "") in ("working","swap_open","swap_closed","final")
+        if generation_locked:
+            st.warning("SYSTEM jau užšaldytas šiame lifecycle etape. Operacinio juodraščio regeneruoti / gerinti nebegalima; swapai keičia tik ACTUAL, o FINAL nekeičia SYSTEM." if lang=="LT" else "SYSTEM is frozen at this lifecycle stage. The operational draft can no longer be regenerated/improved; swaps change ACTUAL only and FINAL does not rewrite SYSTEM.")
         prefs=db.all_preferences(year,month); missing=[p["initials"] for p in DEFAULT_PEOPLE if p["initials"] not in prefs]
         if missing: st.warning(f"{tr('missing_preferences')}: {', '.join(missing)}")
         c1,c2=st.columns(2)
         with c1:
-            if st.button(tr("generate_draft"),type="primary",use_container_width=True):
+            if st.button(tr("generate_draft"),type="primary",use_container_width=True,disabled=generation_locked):
                 credit_err=credit_selection_errors(year,month)
                 if credit_err:
                     st.error(tr("bonus_insufficient")); st.dataframe(pd.DataFrame(credit_err),use_container_width=True,hide_index=True)
@@ -2764,7 +4569,7 @@ if senior_mode:
                 "Juodraštis jau egzistuoja. Gali jį pertikrinti ir ieškoti geresnio varianto. "
                 "Esamas grafikas nebus prarastas, jei naujas kandidatas blogesnis."
             )
-            if st.button("PERTIKRINTI / GERINTI GRAFIKĄ",use_container_width=True,key=f"improve_{year}_{month}"):
+            if st.button("PERTIKRINTI / GERINTI GRAFIKĄ",use_container_width=True,key=f"improve_{year}_{month}",disabled=generation_locked):
                 t0=perf_counter()
                 with st.spinner("Ieškau geresnio varianto pagal nustatytą prioritetų tvarką: privalomos taisyklės → kuo lygesnis darbo vietų paskirstymas → pageidavimai..."):
                     candidate=solve_schedule(year,month,load_people(year,month),time_limit=150)
@@ -2788,72 +4593,14 @@ if senior_mode:
                         )
 
         with c2:
-            if st.button(tr("publish"),use_container_width=True):
-                draft_payload=db.load_schedule(year,month,"draft")
-                if not draft_payload:
-                    st.error(tr("no_draft"))
-                else:
-                    credit_err=credit_selection_errors(year,month)
-                    draft_result=refresh_result_payload(draft_payload,year,month,use_actual_backups=False)
-                    current_people=load_people(year,month)
-                    expected_targets=calculate_targets(year,month,current_people)
-                    targets_stale=(expected_targets!=draft_result.targets)
-                    current_request_snapshot=serialize_people_request_snapshot(current_people)
-                    requests_stale=bool(draft_result.request_snapshot and current_request_snapshot!=draft_result.request_snapshot)
-                    frozen_people=people_from_request_snapshot(draft_result.request_snapshot) or current_people
-                    revalidated=validate_schedule(
-                        year,month,current_people,make_slots(year,month),draft_result.assignments,expected_targets,
-                        satisfaction_people=frozen_people,
-                        backup_assignments=draft_result.backup_snapshot,
-                    )
-                    if credit_err:
-                        st.error(tr("bonus_insufficient")); st.dataframe(pd.DataFrame(credit_err),use_container_width=True,hide_index=True)
-                    elif targets_stale or requests_stale or revalidated["global"]["hard_errors"]:
-                        st.error(tr("draft_outdated"))
-                        if revalidated["global"]["errors"]: st.dataframe(pd.DataFrame({tr("details"):revalidated["global"]["errors"]}),use_container_width=True,hide_index=True)
-                    else:
-                        draft_result.targets=expected_targets
-                        desired,backup_errors=plan_backups(year,month,draft_result)
-                        if not backup_errors:
-                            draft_result.backup_snapshot=[dict(x) for x in desired]
-                            draft_result=revalidate_loaded_result(
-                                year,month,current_people,draft_result,
-                                backup_assignments=draft_result.backup_snapshot,
-                            )
-                        else:
-                            draft_result.stats=revalidated
-                        db.save_draft(year,month,serialize_result(draft_result))
-                        if backup_errors:
-                            st.error(tr("backup_capacity_block")); st.dataframe(pd.DataFrame(backup_errors),use_container_width=True,hide_index=True)
-                        elif draft_result.stats.get("global",{}).get("hard_errors",0):
-                            st.error(tr("draft_outdated"))
-                            st.dataframe(pd.DataFrame({tr("details"):draft_result.stats["global"].get("errors",[])}),use_container_width=True,hide_index=True)
-                        elif db.publish_draft(year,month):
-                            month_prefs=db.all_preferences(year,month)
-                            for person in DEFAULT_PEOPLE:
-                                i=person["initials"]; pp=month_prefs.get(i,{})
-                                db.set_rest_credit_redemptions(
-                                    i,year,month,
-                                    int(pp.get("backup_credits_am_to_use",0)),
-                                    int(pp.get("backup_credits_pm_to_use",0)),
-                                )
-                            db.sync_backups(year,month,desired)
-                            payload=db.load_schedule(year,month,"current")
-                            result=refresh_result_payload(payload,year,month,use_actual_backups=True)
-                            # Persist ACTUAL current stats with live backup obligations while
-                            # baseline_json remains the frozen SYSTEM publication snapshot.
-                            db.save_current(year,month,serialize_result(result))
-                            db.sync_fairness_history(year,month,deserialize_result(db.load_schedule(year,month,"baseline")).stats["people"])
-                            calendar_feed_refresh=refresh_calendar_subscription_feeds()
-                            mailres=publication_emails(year,month,result)
-                            st.success(tr("published")); st.markdown(f"### {tr('publication_mail')}"); st.dataframe(localized_delivery_rows(mailres),use_container_width=True,hide_index=True)
-                            feed_failed=[x for x in calendar_feed_refresh if not x.get("ok")]
-                            if feed_failed:
-                                st.warning(("Grafikas paskelbtas, bet dalies kalendoriaus prenumeratų nepavyko atnaujinti; .ics atsisiuntimas veikia." if lang=="LT" else "Schedule published, but some calendar subscription feeds could not be refreshed; .ics download still works."))
-                            else:
-                                st.caption(("Asmeninės kalendoriaus prenumeratos atnaujintos visiems rezidentams." if lang=="LT" else "Personal calendar subscription feeds were refreshed for all residents."))
-                        else:
-                            st.error(tr("no_draft"))
+            st.info(
+                "SYSTEM patvirtinimas ir apsikeitimų lango atidarymas perkeltas į Grafikas → Grafiko tvirtinimas. "
+                "Taip visas mėnesio lifecycle valdomas vienoje Grafiko tvirtinimo vietoje."
+                if lang=="LT" else
+                "SYSTEM confirmation and opening the swap window moved to Schedule → Finalization. "
+                "This keeps the whole monthly lifecycle in one Schedule control center."
+            )
+            st.caption(("Sugeneruok / pagerink juodraštį čia, tada eik į Grafikas." if lang=="LT" else "Generate/improve the draft here, then open Schedule."))
         draftp=db.load_schedule(year,month,"draft")
         if draftp:
             dr=refresh_result_payload(draftp,year,month,use_actual_backups=False)
@@ -2913,7 +4660,9 @@ if senior_mode:
                         st.rerun()
                     except Exception as e:
                         msg=str(e)
-                        if "RESET_BLOCKED_COMPLETED_BACKUP_ACTIVITY" in msg:
+                        if "RESET_BLOCKED_FINAL_SCHEDULE" in msg:
+                            st.error("RESET BLOKUOTAS: šio mėnesio grafikas jau patvirtintas kaip FINAL administracijai. FINAL snapshotas yra nekeičiamas.")
+                        elif "RESET_BLOCKED_COMPLETED_BACKUP_ACTIVITY" in msg:
                             st.error(
                                 "RESET BLOKUOTAS: šiame mėnesyje jau yra realiai užbaigtas dublio/pavadavimo įvykis. "
                                 "Tokio mėnesio automatiškai trinti nesaugu."
@@ -2923,38 +4672,386 @@ if senior_mode:
                         else:
                             st.error(f"Reset nepavyko: {e}")
     pos+=1
-elif active_user=="R.Š.":
-    # R.Š. has the same Sudarymas tab position, but it is rendered later as a
+elif active_user=="ŠR":
+    # ŠR has the same Sudarymas tab position, but it is rendered later as a
     # completely isolated RESEARCH SHADOW generator after the research import
     # helpers are defined.
     pos+=1
 
 # --- Schedule ---
 with tabs[pos]:
-    st.subheader(f"{tr('published_schedule')} — {month_label(year,month)}"); payload=db.load_schedule(year,month,"current")
-    if not payload: st.info(tr("not_published"))
+    st.subheader(f"{tr('published_schedule')} — {month_label(year,month)}")
+    payload=db.load_schedule(year,month,"current")
+    draft_payload=db.load_schedule(year,month,"draft")
+    lifecycle=db.get_schedule_lifecycle(year,month)
+
+    if lifecycle_operator_ui:
+        st.markdown("## GRAFIKO TVIRTINIMAS" if lang=="LT" else "## SCHEDULE CONTROL")
+        if is_researcher_account:
+            st.info(
+                "Kontingencinis valdymas aktyvus Išplėstiniame režime. Veiksmai atliekami ir audituojami kaip ŠR; SR paskyra niekada neperimama."
+                if lang=="LT" else
+                "Contingency control is active in Advanced mode. Actions are performed and audited as ŠR; the SR account is never impersonated."
+            )
+
+        state=str(lifecycle.get("state") or ("working" if payload else "draft"))
+        now_lt=_vilnius_now()
+        deadline=_parse_iso_dt(lifecycle.get("swap_deadline"))
+        deadline_lt=deadline.astimezone(ZoneInfo("Europe/Vilnius")) if deadline else None
+        expired=bool(state=="swap_open" and deadline_lt and now_lt>=deadline_lt)
+        blockers=db.finalization_blockers_v2591(year,month)
+        smtp_ok=smtp_ready(); missing_mail=_resident_email_preflight()
+        prelim_start,prelim_end=preliminary_swap_window_for(year,month)
+        render_operator_email_smtp_admin(active_user)
+        # Refresh readiness after the operator email/SMTP panel (a successful edit reruns).
+        smtp_ok=smtp_ready(); missing_mail=_resident_email_preflight()
+
+        if state=="final":
+            _workflow_card(
+                "FINAL — PATEIKTA ADMINISTRACIJAI" if lang=="LT" else "FINAL — SUBMITTED TO ADMINISTRATION",
+                "Administracijai skirta versija užrakinta. Įprasti, pavėluoti ir rankiniai prieš-FINAL pakeitimai uždaryti."
+                if lang=="LT" else
+                "The administration version is locked. Ordinary, late and pre-FINAL manual changes are closed.",
+                "final"
+            )
+            fp=lifecycle.get("final_json")
+            if fp:
+                fr=refresh_result_payload(fp,year,month,use_actual_backups=True)
+                st.download_button(
+                    "ATSISIŲSTI FINAL EXCEL ADMINISTRACIJAI" if lang=="LT" else "DOWNLOAD FINAL EXCEL FOR ADMINISTRATION",
+                    build_xlsx(year,month,fr,document_status="FINAL — ADMINISTRACIJAI" if lang=="LT" else "FINAL — FOR ADMINISTRATION",backup_rows_override=lifecycle.get("final_backups") or []),
+                    file_name=f"FINAL_grafikas_{year}_{month:02d}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary",use_container_width=True,key=f"final_xlsx_{year}_{month}"
+                )
+                if smtp_ready() and st.button("PAKARTOTI TIK NEPAVYKUSIUS FINAL PRANEŠIMUS" if lang=="LT" else "RETRY FAILED FINAL NOTIFICATIONS",use_container_width=True,key=f"resend_final_mail_{year}_{month}"):
+                    mailres=retry_failed_lifecycle_notifications(year,month,"final")
+                    if mailres: st.dataframe(localized_delivery_rows(mailres),use_container_width=True,hide_index=True)
+                    else: st.success("Visi FINAL pranešimai jau pristatyti." if lang=="LT" else "All FINAL notifications are already delivered.")
+        else:
+            if state=="draft":
+                _workflow_card(
+                    "SYSTEM JUODRAŠTIS — PRIVATUS" if lang=="LT" else "SYSTEM DRAFT — PRIVATE",
+                    "Sugeneruotas grafikas dar nepaskelbtas rezidentams. Generavimas pats el. laiškų nesiunčia."
+                    if lang=="LT" else
+                    "The generated schedule has not been published to residents. Generation itself sends no email.",
+                    "draft"
+                )
+            elif state=="working":
+                _workflow_card(
+                    "SYSTEM UŽŠALDYTAS — ACTUAL REDAGUOJAMAS" if lang=="LT" else "SYSTEM FROZEN — ACTUAL EDITABLE",
+                    "SYSTEM išsaugotas tyrimui. SR arba ŠR gali koreguoti ACTUAL iki FINAL; rezidentams preliminarus grafikas dar nebūtinai paskelbtas."
+                    if lang=="LT" else
+                    "SYSTEM is preserved for research. SR or ŠR may correct ACTUAL until FINAL; the preliminary schedule does not have to be published to residents.",
+                    "draft"
+                )
+            elif state=="swap_open":
+                _workflow_card(
+                    ("PRELIMINARUS PASKELBTAS — APSIKEITIMAI ATIDARYTI" if not expired else "APSIKEITIMŲ TERMINAS BAIGĖSI") if lang=="LT" else ("PRELIMINARY PUBLISHED — SWAPS OPEN" if not expired else "RESIDENT SWAP DEADLINE PASSED"),
+                    ((f"Rezidentai gali kurti naujus apsikeitimo prašymus iki {deadline_lt:%Y-%m-%d %H:%M} Lietuvos laiku." if not expired else f"Nuo {deadline_lt:%Y-%m-%d %H:%M} nauji rezidentų prašymai automatiškai blokuojami. Operatorius vis dar gali koreguoti ACTUAL arba suteikti individualią pavėluotą prieigą.") if lang=="LT" else (f"Residents may create new swap requests until {deadline_lt:%Y-%m-%d %H:%M} Lithuania time." if not expired else f"New resident requests are automatically blocked after {deadline_lt:%Y-%m-%d %H:%M}. The operator may still correct ACTUAL or grant individual late access.")),
+                    "swap_open" if not expired else "expired"
+                )
+            elif state=="swap_closed":
+                _workflow_card(
+                    "REZIDENTŲ APSIKEITIMAI UŽDARYTI" if lang=="LT" else "RESIDENT SWAPS CLOSED",
+                    "Naujų rezidentų prašymų kurti negalima. SR/ŠR rankinis ACTUAL koregavimas lieka aktyvus iki FINAL."
+                    if lang=="LT" else
+                    "Residents cannot create new requests. SR/ŠR manual ACTUAL correction remains available until FINAL.",
+                    "swap_closed"
+                )
+
+            # Freeze SYSTEM for private operator correction without notifying residents.
+            if not payload and draft_payload:
+                if st.button(
+                    "UŽŠALDYTI SYSTEM IR ATIDARYTI ACTUAL KOREGAVIMĄ (BE EMAIL)" if lang=="LT" else "FREEZE SYSTEM AND OPEN ACTUAL CORRECTION (NO EMAIL)",
+                    use_container_width=True,key=f"prepare_working_{year}_{month}"
+                ):
+                    try:
+                        published=publish_system_baseline_for_swap_window(year,month)
+                        if not published.get("ok"):
+                            st.error(str(published.get("error"))); rows=published.get("rows")
+                            if rows: st.dataframe(pd.DataFrame(rows if isinstance(rows,list) else [rows]),use_container_width=True,hide_index=True)
+                            st.stop()
+                        db.ensure_working_schedule_v2592(year,month)
+                        st.session_state["_finalization_flash"]=("success","SYSTEM užšaldytas. ACTUAL paruoštas rankiniam koregavimui; email nesiųsti." if lang=="LT" else "SYSTEM frozen. ACTUAL is ready for manual correction; no email was sent.")
+                        st.rerun()
+                    except Exception as exc: st.error(str(exc))
+
+            # Operator manual correction is permanently available until FINAL.
+            if payload:
+                render_operator_manual_override(year,month,payload,state)
+
+            # V2.5.93 persistent post-override review checkpoint.
+            unreviewed_manual=render_manual_override_review_checkpoint(year,month) if payload else 0
+
+            st.divider()
+            st.markdown("### Preliminarus paskelbimas ir rezidentų apsikeitimai" if lang=="LT" else "### Preliminary publication and resident swaps")
+            st.caption(
+                (f"Standartinis langas: {prelim_start:%Y-%m-%d %H:%M} → {prelim_end:%Y-%m-%d %H:%M} Lietuvos laiku. Pageidavimai renkami iki {prelim_start:%Y-%m-%d} 00:00 (ankstesnė diena imtinai)."
+                 if lang=="LT" else
+                 f"Standard window: {prelim_start:%Y-%m-%d %H:%M} → {prelim_end:%Y-%m-%d %H:%M} Lithuania time. Preferences are collected until 00:00 on {prelim_start:%Y-%m-%d} (the preceding day is the last full day).")
+            )
+            if not smtp_ok:
+                st.error("SMTP nesukonfigūruotas — preliminaraus ar FINAL etapo aktyvuoti negalima, nes nebūtų realių pranešimų." if lang=="LT" else "SMTP is not configured — preliminary or FINAL activation is blocked because real notifications could not be sent.")
+            if missing_mail:
+                st.error(("Trūksta rezidentų el. pašto adresų: " if lang=="LT" else "Missing resident email addresses: ")+", ".join(missing_mail))
+
+            if state in ("draft","working"):
+                within_prelim=bool(prelim_start<=now_lt<prelim_end)
+                if now_lt<prelim_start:
+                    st.info((f"Preliminarų etapą bus galima aktyvuoti nuo {prelim_start:%Y-%m-%d %H:%M}." if lang=="LT" else f"The preliminary phase can be activated from {prelim_start:%Y-%m-%d %H:%M}."))
+                elif now_lt>=prelim_end:
+                    st.warning((f"Standartinis apsikeitimų langas šiam mėnesiui jau pasibaigė ({prelim_end:%Y-%m-%d %H:%M}). Galite pereiti tiesiai į FINAL." if lang=="LT" else f"The standard swap window for this month has already ended ({prelim_end:%Y-%m-%d %H:%M}). You may proceed directly to FINAL."))
+                can_prelim=bool((payload or draft_payload) and smtp_ok and not missing_mail and within_prelim and int(unreviewed_manual)==0)
+                if unreviewed_manual:
+                    st.warning("Preliminarus etapas užblokuotas, kol peržiūrėsite rankinius pakeitimus." if lang=="LT" else "Preliminary publication is blocked until manual changes are reviewed.")
+                if st.button(
+                    "PASKELBTI PRELIMINARŲ GRAFIKĄ IR LEISTI APSIKEITIMUS" if lang=="LT" else "PUBLISH PRELIMINARY SCHEDULE AND OPEN SWAPS",
+                    type="primary",use_container_width=True,disabled=not can_prelim,key=f"open_prelim_{year}_{month}"
+                ):
+                    try:
+                        if not payload:
+                            published=publish_system_baseline_for_swap_window(year,month)
+                            if not published.get("ok"):
+                                st.error(str(published.get("error"))); rows=published.get("rows")
+                                if rows: st.dataframe(pd.DataFrame(rows if isinstance(rows,list) else [rows]),use_container_width=True,hide_index=True)
+                                st.stop()
+                            result_open=published["result"]
+                        else:
+                            result_open=refresh_result_payload(payload,year,month)
+                        db.ensure_working_schedule_v2592(year,month)
+                        db.open_swap_window_v2591(year,month,prelim_end.astimezone(timezone.utc).isoformat())
+                        mailres=swap_window_open_emails(year,month,result_open,prelim_end,max(1,(prelim_end.date()-now_lt.date()).days))
+                        failed=[x for x in mailres if x[1]!="sent"]
+                        st.session_state["_finalization_flash"]=("warning" if failed else "success",(f"Preliminarus grafikas paskelbtas. Pranešimai: {len(mailres)-len(failed)}/{len(mailres)} išsiųsta." if lang=="LT" else f"Preliminary schedule published. Notifications: {len(mailres)-len(failed)}/{len(mailres)} sent."))
+                        st.rerun()
+                    except Exception as exc: st.error(str(exc))
+            elif state=="swap_open":
+                m1,m2,m3,m4=st.columns(4)
+                m1.metric("Pending",blockers.get("pending_normal",0)); m2.metric("Waiting operator",blockers.get("waiting_senior_apply",0)); m3.metric("Pending backup",blockers.get("pending_backup",0)); m4.metric("Late access",blockers.get("active_late_grants",0))
+                if smtp_ready() and deadline_lt and st.button("PAKARTOTI TIK NEPAVYKUSIUS PRELIMINARIUS PRANEŠIMUS" if lang=="LT" else "RETRY FAILED PRELIMINARY NOTIFICATIONS",use_container_width=True,key=f"resend_prelim_{year}_{month}"):
+                    mailres=retry_failed_lifecycle_notifications(year,month,"swap_open")
+                    if mailres: st.dataframe(localized_delivery_rows(mailres),use_container_width=True,hide_index=True)
+                    else: st.success("Visi preliminarūs pranešimai jau pristatyti." if lang=="LT" else "All preliminary notifications are already delivered.")
+                if not expired:
+                    with st.expander("Uždaryti rezidentų apsikeitimus anksčiau" if lang=="LT" else "Close resident swaps early",expanded=False):
+                        if st.button("UŽDARYTI DABAR" if lang=="LT" else "CLOSE NOW",use_container_width=True,key=f"close_swaps_{year}_{month}"):
+                            try: db.close_swap_window_v2591(year,month); st.rerun()
+                            except Exception as exc: st.error(str(exc))
+
+            # Late access is an exception after the ordinary deadline / explicit close.
+            if (state=="swap_open" and expired) or state=="swap_closed":
+                st.markdown("#### Individuali pavėluota prieiga" if lang=="LT" else "#### Individual late access")
+                settings_all=db.all_account_settings(); options=[pp["initials"] for pp in DEFAULT_PEOPLE]
+                l1,l2,l3=st.columns(3)
+                with l1: late_ini=st.selectbox("Rezidentas" if lang=="LT" else "Resident",options,key=f"late_ini_{year}_{month}")
+                with l2: late_hours=int(st.number_input("Galioja valandų" if lang=="LT" else "Valid hours",min_value=1,max_value=168,value=24,step=1,key=f"late_hours_{year}_{month}"))
+                with l3: late_limit=int(st.number_input("Naujų prašymų limitas" if lang=="LT" else "New-request limit",min_value=1,max_value=5,value=1,step=1,key=f"late_limit_{year}_{month}"))
+                late_reason=st.text_input("Priežastis (auditui)" if lang=="LT" else "Reason (audit)",key=f"late_reason_{year}_{month}")
+                late_email=str((settings_all.get(late_ini,{}) or {}).get("email") or "").strip()
+                if not late_email: st.warning((f"{late_ini} neturi email nustatymuose." if lang=="LT" else f"{late_ini} has no email in settings."))
+                if st.button("SUTEIKTI INDIVIDUALIĄ PRIEIGĄ" if lang=="LT" else "GRANT INDIVIDUAL ACCESS",use_container_width=True,disabled=(not smtp_ready() or not late_email or not late_reason.strip()),key=f"grant_late_{year}_{month}"):
+                    try:
+                        exp=_vilnius_now()+timedelta(hours=late_hours); grant=db.grant_late_swap_access_v2591(year,month,late_ini,exp.astimezone(timezone.utc).isoformat(),late_limit,late_reason); ok,detail=late_swap_access_email(year,month,grant); st.session_state["_finalization_flash"]=("success" if ok else "warning",("Prieiga suteikta ir pranešimas išsiųstas." if ok and lang=="LT" else "Access granted and notification sent." if ok else f"Prieiga suteikta, bet email nepavyko: {detail}")); st.rerun()
+                    except Exception as exc: st.error(str(exc))
+                grants=db.list_late_swap_access_v2591(year,month)
+                for gr in grants:
+                    exp=_parse_iso_dt(gr.get("expires_at")); active=bool(not gr.get("revoked_at") and exp and exp>datetime.now(timezone.utc) and int(gr.get("requests_used",0))<int(gr.get("max_requests",0)))
+                    if not active: continue
+                    exp_txt=exp.astimezone(ZoneInfo("Europe/Vilnius")).strftime("%Y-%m-%d %H:%M")
+                    with st.container(border=True):
+                        st.markdown(f"**{gr.get('initials')}** · iki {exp_txt} · {gr.get('requests_used',0)}/{gr.get('max_requests',1)}")
+                        if gr.get("reason"): st.caption(str(gr.get("reason")))
+                        if st.button("ATŠAUKTI PRIEIGĄ" if lang=="LT" else "REVOKE ACCESS",key=f"revoke_late_{gr.get('id')}"):
+                            try: db.revoke_late_swap_access_v2591(int(gr["id"])); st.rerun()
+                            except Exception as exc: st.error(str(exc))
+
+            # FINAL is always an explicit option; the preliminary phase may be skipped.
+            st.divider()
+            st.markdown("### Galutinis patvirtinimas" if lang=="LT" else "### Final confirmation")
+            candidate_payload=payload or draft_payload
+            candidate_result=refresh_result_payload(candidate_payload,year,month,use_actual_backups=bool(payload)) if candidate_payload else None
+            hard=int(((candidate_result.stats or {}).get("global",{}) if candidate_result else {}).get("hard_errors",999))
+            blockers=db.finalization_blockers_v2591(year,month)
+            unresolved=(int(blockers.get("pending_normal",0))+int(blockers.get("waiting_senior_apply",0))+int(blockers.get("pending_backup",0))+int(blockers.get("active_late_grants",0))+int(blockers.get("unreviewed_manual_overrides",0)))
+            if hard!=0 or unresolved:
+                st.error((f"FINAL blokuotas: HARD={hard}; pending={blockers.get('pending_normal',0)}; waiting operator={blockers.get('waiting_senior_apply',0)}; pending backup={blockers.get('pending_backup',0)}; active late={blockers.get('active_late_grants',0)}; neperžiūrėti rankiniai={blockers.get('unreviewed_manual_overrides',0)}." if lang=="LT" else f"FINAL blocked: HARD={hard}; pending={blockers.get('pending_normal',0)}; waiting operator={blockers.get('waiting_senior_apply',0)}; pending backup={blockers.get('pending_backup',0)}; active late={blockers.get('active_late_grants',0)}; unreviewed manual={blockers.get('unreviewed_manual_overrides',0)}."))
+            if state=="swap_open" and not expired:
+                st.warning("FINAL patvirtinimas dabar iš karto uždarys dar aktyvų rezidentų apsikeitimų langą." if lang=="LT" else "Confirming FINAL now will immediately close the still-active resident swap window.")
+            confirm=st.checkbox("Patvirtinu, kad dabartinis ACTUAL grafikas yra galutinė administracijai teikiama versija." if lang=="LT" else "I confirm that the current ACTUAL schedule is the final version for administration.",key=f"final_confirm_{year}_{month}")
+            final_ready=bool(candidate_payload and hard==0 and unresolved==0 and smtp_ok and not missing_mail and confirm)
+            if st.button("PATVIRTINTI FINAL, PATEIKTI IR PARUOŠTI EXCEL" if lang=="LT" else "CONFIRM FINAL, SUBMIT AND PREPARE EXCEL",type="primary",use_container_width=True,disabled=not final_ready,key=f"make_final_{year}_{month}"):
+                try:
+                    if not payload:
+                        published=publish_system_baseline_for_swap_window(year,month)
+                        if not published.get("ok"):
+                            st.error(str(published.get("error"))); rows=published.get("rows")
+                            if rows: st.dataframe(pd.DataFrame(rows if isinstance(rows,list) else [rows]),use_container_width=True,hide_index=True)
+                            st.stop()
+                    db.ensure_working_schedule_v2592(year,month)
+                    payload_now=db.load_schedule(year,month,"current")
+                    rr=refresh_result_payload(payload_now,year,month)
+                    hard_now=int((rr.stats or {}).get("global",{}).get("hard_errors",999))
+                    if hard_now!=0:
+                        st.error(f"FINAL validacija nepraėjo: HARD={hard_now}"); st.stop()
+                    db.finalize_schedule_v2592(year,month,serialize_result(rr))
+                    mails=final_schedule_emails(year,month,rr); failed=[x for x in mails if x[1]!="sent"]
+                    st.session_state["_finalization_flash"]=("warning" if failed else "success",(f"FINAL užrakintas ir paruoštas administracijai. Pranešimai: {len(mails)-len(failed)}/{len(mails)} išsiųsta." if lang=="LT" else f"FINAL locked and prepared for administration. Notifications: {len(mails)-len(failed)}/{len(mails)} sent."))
+                    st.rerun()
+                except Exception as exc: st.error(str(exc))
+
+        flash=st.session_state.pop("_finalization_flash",None)
+        if flash:
+            level,msg=flash
+            if level=="success": st.success(msg)
+            else: st.warning(msg)
+        st.divider()
+
+    if not payload:
+        if draft_payload and not lifecycle_operator_ui: st.info(tr("not_published"))
+        elif not draft_payload: st.info(tr("not_published"))
     else:
-        result=refresh_result_payload(payload,year,month); st.markdown(f"### {tr('colors')}"); st.markdown("".join(badge(p["initials"],False) for p in DEFAULT_PEOPLE),unsafe_allow_html=True); st.dataframe(style_schedule(schedule_grid(year,month,result)),use_container_width=True,height=720)
-        c1,c2=st.columns(2)
-        with c1: st.download_button(tr("download_xlsx"),build_xlsx(year,month,result),file_name=f"grafikas_{year}_{month:02d}.xlsx",mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",type="primary",use_container_width=True)
-        with c2: st.download_button(tr("download_csv"),schedule_list_df(year,month,result).to_csv(index=False).encode("utf-8-sig"),file_name=f"grafikas_{year}_{month:02d}.csv",mime="text/csv",use_container_width=True)
+        state=str(lifecycle.get("state") or "")
+        display_payload=(lifecycle.get("final_json") if state=="final" and lifecycle.get("final_json") else payload)
+        result=refresh_result_payload(display_payload,year,month,use_actual_backups=(state!="final"))
+        _status_rows=[]
+        if lifecycle_operator_ui:
+            try: _status_rows=db.list_schedule_day_statuses_v2597(year,month)
+            except Exception: _status_rows=[]
+        st.markdown(f"### {tr('colors')}")
+        st.markdown("".join(badge(p["initials"],False) for p in DEFAULT_PEOPLE),unsafe_allow_html=True)
+        st.dataframe(style_schedule(schedule_grid(year,month,result,status_rows=_status_rows if lifecycle_operator_ui else None)),use_container_width=True,height=720)
+        if state=="final": st.success("Rodomas administracijai užrakintas FINAL snapshot." if lang=="LT" else "Showing the administration-locked FINAL snapshot.")
+
+        if lifecycle_operator_ui and state!="final":
+            st.markdown("### Operacinė nedarbo dienos žyma" if lang=="LT" else "### Operational non-working day marker")
+            st.caption(
+                "Seniūnė gali pažymėti nedarbingumą, kvalifikacijos kėlimą ar sveikatinimosi dieną. Žyma išima to rezidento ACTUAL pamainas tą dieną, bet nekeičia užšaldyto SYSTEM baseline ar mėnesio target kredito. Jei lieka kritinė skylė, ją reikia uždengti per dublį / rankinį koregavimą. Tiksli priežastis rodoma tik operatoriui."
+                if lang=="LT" else
+                "The scheduler can mark sick leave, qualification/training, or a wellness day. The marker removes that resident's ACTUAL assignments for the day but does not rewrite the frozen SYSTEM baseline or monthly workload credit. Any critical gap must then be covered through backup/manual correction. The exact reason is operator-only."
+            )
+            _kind_labels={
+                "sick_leave":"Nedarbingumas" if lang=="LT" else "Sick leave",
+                "qualification":"Kvalifikacijos kėlimas" if lang=="LT" else "Qualification / training",
+                "wellness":"Sveikatinimosi diena" if lang=="LT" else "Wellness day",
+            }
+            with st.form(f"day_status_{year}_{month}"):
+                _c1,_c2,_c3=st.columns(3)
+                _ini=_c1.selectbox(tr("person"),[p["initials"] for p in DEFAULT_PEOPLE],format_func=lambda i:f"{i} — {people_map[i]['name']}")
+                _day=_c2.selectbox(tr("date"),list(range(1,calendar.monthrange(year,month)[1]+1)),format_func=lambda d:f"{year}-{month:02d}-{d:02d}")
+                _kind=_c3.selectbox("Tipas" if lang=="LT" else "Type",list(_kind_labels),format_func=lambda k:_kind_labels[k])
+                _note=st.text_input("Pastaba (tik operatoriui)" if lang=="LT" else "Note (operator only)")
+                _save_status=st.form_submit_button("PAŽYMĖTI NEDARBO DIENĄ" if lang=="LT" else "MARK NON-WORKING DAY",type="primary")
+            if _save_status:
+                try:
+                    _cur_payload=db.load_schedule(year,month,"current")
+                    if not _cur_payload: raise RuntimeError("ACTUAL grafikas dar nesukurtas")
+                    _cur=deserialize_result(_cur_payload)
+                    _slots={sl.idx:sl for sl in make_slots(year,month)}
+                    _removed=[]
+                    for _sid,_who in list((_cur.assignments or {}).items()):
+                        _sl=_slots.get(int(_sid))
+                        if _who==_ini and _sl is not None and int(_sl.day)==int(_day):
+                            _removed.append(int(_sid)); _cur.assignments.pop(int(_sid),None)
+                    db.set_schedule_day_status_v2597(year,month,int(_day),_ini,_kind,_note)
+                    _fresh=revalidate_loaded_result(year,month,people_for_stored_result(_cur,year,month),_cur,backup_assignments=db.list_backups(year,month),validation_mode="voluntary_swap_actual")
+                    db.save_current(year,month,serialize_result(_fresh))
+                    sync_backup_plan(year,month,_fresh)
+                    persist_actual_satisfaction(year,month)
+                    try: refresh_calendar_subscription_feeds([_ini])
+                    except Exception: pass
+                    st.success((f"Pažymėta. Iš ACTUAL pašalinta pamainų: {len(_removed)}." if lang=="LT" else f"Marked. ACTUAL assignments removed: {len(_removed)}."))
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+            _status_rows=db.list_schedule_day_statuses_v2597(year,month)
+            if _status_rows:
+                _display=[]
+                for _r in _status_rows:
+                    _display.append({
+                        "ID":_r.get("id"),tr("person"):_r.get("initials"),tr("date"):f"{year}-{month:02d}-{int(_r.get('day')):02d}",
+                        ("Tipas" if lang=="LT" else "Type"):_kind_labels.get(_r.get("status_kind"),_r.get("status_kind")),
+                        tr("comment"):_r.get("note") or "",
+                    })
+                st.dataframe(style_rows(pd.DataFrame(_display)),use_container_width=True,hide_index=True)
+                _ids=[int(r.get("id")) for r in _status_rows]
+                _del=st.selectbox("Pašalinti žymą" if lang=="LT" else "Remove marker",[None]+_ids,format_func=lambda x:"—" if x is None else f"#{x}")
+                if st.button("PAŠALINTI ŽYMĄ" if lang=="LT" else "REMOVE MARKER",disabled=_del is None):
+                    db.clear_schedule_day_status_v2597(int(_del))
+                    st.warning("Žyma pašalinta, tačiau anksčiau iš ACTUAL pašalintos pamainos automatiškai negrąžinamos." if lang=="LT" else "Marker removed; previously removed ACTUAL assignments are not restored automatically.")
+                    st.rerun()
+        if state!="final":
+            st.caption("Tai dabartinis ACTUAL grafikas. Administracijai skirtas FINAL Excel atsiras tik po galutinio operatoriaus patvirtinimo." if lang=="LT" else "This is the current ACTUAL schedule. The administration FINAL Excel appears only after final operator confirmation.")
+            c1,c2=st.columns(2)
+            with c1: st.download_button("ACTUAL Excel" if lang=="LT" else "ACTUAL Excel",build_xlsx(year,month,result,document_status="ACTUAL"),file_name=f"ACTUAL_grafikas_{year}_{month:02d}.xlsx",mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
+            with c2: st.download_button(tr("download_csv"),schedule_list_df(year,month,result).to_csv(index=False).encode("utf-8-sig"),file_name=f"ACTUAL_grafikas_{year}_{month:02d}.csv",mime="text/csv",use_container_width=True)
 pos+=1
 
 # --- Summary ---
 if advanced_mode:
     with tabs[pos]:
-        st.subheader(tr("summary_title")); currentp=db.load_schedule(year,month,"current"); basep=db.load_schedule(year,month,"baseline")
-        if not currentp: st.info(tr("not_published"))
+        st.subheader(tr("summary_title"))
+        currentp=db.load_schedule(year,month,"current")
+        basep=db.load_schedule(year,month,"baseline")
+        draftp=db.load_schedule(year,month,"draft")
+        # A published row keeps draft_json. Treat it as a pending candidate only
+        # when it differs from the frozen publication baseline. This lets a senior
+        # generate a new candidate while an older schedule is still published and
+        # inspect the NEW draft before replacing the operational baseline.
+        pending_draft=bool(draftp and (not basep or draftp!=basep))
+        draft_mode=bool(draftp and (not currentp or pending_draft))
+
+        if draft_mode:
+            base=refresh_result_payload(draftp,year,month,use_actual_backups=False)
+            current=base
+            g=base.stats["global"]
+            system_live=live_fairness_snapshot(year,month,base,include_completed_covers=False)
+            actual_live=None
+            st.warning(
+                "JUODRAŠČIO SUVESTINĖ — DAR NEPASKELBTA. Visi žemiau esantys rodikliai priklauso naujausiam sugeneruotam kandidatui; PASKELBTAS GRAFIKAS dar nepakeistas."
+                if lang=="LT" else
+                "DRAFT SUMMARY — NOT PUBLISHED. All metrics below belong to the newest generated candidate; the PUBLISHED schedule has not been replaced yet."
+            )
+        elif currentp:
+            current=refresh_result_payload(currentp,year,month)
+            base=refresh_result_payload(basep or currentp,year,month,use_actual_backups=False)
+            g=base.stats["global"]
+            system_live=live_fairness_snapshot(year,month,base,include_completed_covers=False)
+            actual_live=live_fairness_snapshot(year,month,current,include_completed_covers=True)
+            st.success("SYSTEM + ACTUAL SUVESTINĖ — PASKELBTA" if lang=="LT" else "SYSTEM + ACTUAL SUMMARY — PUBLISHED")
         else:
-            current=refresh_result_payload(currentp,year,month); base=refresh_result_payload(basep or currentp,year,month,use_actual_backups=False); g=base.stats["global"]
+            st.info(
+                "Dar nėra nei sugeneruoto juodraščio, nei paskelbto grafiko. Pirmiausia Sudarymas lange paspausk GENERUOTI."
+                if lang=="LT" else
+                "There is no generated draft or published schedule yet. First press GENERATE in the Generation tab."
+            )
+            base=None; current=None; g=None; system_live=None; actual_live=None
+
+        if base is not None:
             if advanced_mode:
-                c1,c2,c3,c4,c5=st.columns(5)
-                c1.metric(tr("hard_errors")+" *",g["hard_errors"])
-                c2.metric(tr("monthly_fairness"),f"{g.get('monthly_fairness_score',g['fairness_score'])}%")
-                c3.metric(("Mėnesio postų disbalansas" if lang=="LT" else "Monthly post imbalance"),g.get("rotation_monthly_imbalance",0))
-                c4.metric(("Kaupiamasis postų disbalansas" if lang=="LT" else "Cumulative post imbalance"),g.get("rotation_cumulative_imbalance",0))
-                c5.metric(tr("preference_avg"),tr("not_applicable") if g["mean_preference_score"] is None else f"{g['mean_preference_score']}%")
-                st.caption(tr("fairness_frozen_note"))
+                if draft_mode:
+                    c1,c2,c3,c4=st.columns(4)
+                    c1.metric(tr("hard_errors")+" *",g["hard_errors"])
+                    c2.metric(("JUODRAŠČIO fairness" if lang=="LT" else "DRAFT fairness"),f"{system_live['global'].get('monthly_fairness_score',0)}%")
+                    c3.metric(("Postų disbalansas" if lang=="LT" else "Post imbalance"),system_live["global"].get("rotation_monthly_imbalance",0))
+                    c4.metric(tr("preference_avg"),tr("not_applicable") if g["mean_preference_score"] is None else f"{g['mean_preference_score']}%")
+                else:
+                    sg=system_live["global"]; ag=actual_live["global"]
+                    c1,c2,c3,c4,c5,c6=st.columns(6)
+                    c1.metric(tr("hard_errors")+" *",g["hard_errors"])
+                    c2.metric("SYSTEM fairness",f"{sg.get('monthly_fairness_score',0)}%")
+                    c3.metric("ACTUAL fairness",f"{ag.get('monthly_fairness_score',0)}%",delta=f"{ag.get('monthly_fairness_score',0)-sg.get('monthly_fairness_score',0):+.1f}")
+                    c4.metric(("SYSTEM postų disbalansas" if lang=="LT" else "SYSTEM post imbalance"),sg.get("rotation_monthly_imbalance",0))
+                    c5.metric(("ACTUAL postų disbalansas" if lang=="LT" else "ACTUAL post imbalance"),ag.get("rotation_monthly_imbalance",0))
+                    c6.metric(("Realiai pavadavo" if lang=="LT" else "Completed covers"),ag.get("completed_cover_transfers",0))
+                if draft_mode:
+                    st.caption(
+                        "JUODRAŠTIS: fairness, postų spread ir pageidavimų score yra pre-publication auditui. Jie taps SYSTEM baseline tik paspaudus PASKELBTI / PATVIRTINTI."
+                        if lang=="LT" else
+                        "DRAFT: fairness, workplace spread and request scores are pre-publication audit metrics. They become the SYSTEM baseline only after PUBLISH / CONFIRM."
+                    )
+                else:
+                    st.caption(tr("fairness_frozen_note"))
             else:
                 s1,s2,s3=st.columns(3)
                 s1.metric(("Grafikas" if lang=="LT" else "Schedule"),("VALIDUS" if g["hard_errors"]==0 else "REIKIA PATIKROS"))
@@ -2966,15 +5063,31 @@ if advanced_mode:
                      "Technical spread, cumulative and guardrail metrics are available in Advanced mode.")
                 )
 
-            st.markdown("### SYSTEM postų pasiskirstymas per mėnesį" if lang=="LT" else "### SYSTEM monthly workplace distribution")
-            st.caption(
-                "FAIRNESS / SPREAD matrica skaičiuojama tik iš publikavimo momento SYSTEM grafiko. "
-                "Savanoriški swapai ir liga / atostogos / force majeure repair, įskaitant SPS pull-down, čia NEPRIDEDAMI ir nesukuria post debt. "
-                "Tai reiškia: jei jau suplanuotas rezidentas dėl neatvykimo tą pačią pamainą perkeliamas iš Centro RO į SPS UG, jo fairness ekspozicija lieka tokia, kokią paskyrė algoritmas publikavimo metu."
+            render_resident_wishes_audit(
+                base,
+                draft_mode=draft_mode,
+                key_suffix=f"{year}_{month}_{'draft' if draft_mode else 'system'}",
+                senior_view=bool(senior_mode),
+            )
+            st.divider()
+
+            st.markdown(
+                ("### JUODRAŠČIO postų pasiskirstymas per mėnesį" if draft_mode else "### SYSTEM postų pasiskirstymas per mėnesį")
                 if lang=="LT" else
-                "The FAIRNESS / SPREAD matrix is calculated only from the publication-time SYSTEM schedule. "
-                "Voluntary swaps and sickness/leave/force-majeure repairs, including SPS pull-downs, are EXCLUDED and create no post debt. "
-                "If an already scheduled resident is moved from Centro RO to SPS UG in the same block for emergency cover, fairness exposure remains the publication-time algorithmic assignment."
+                ("### DRAFT monthly workplace distribution" if draft_mode else "### SYSTEM monthly workplace distribution")
+            )
+            st.caption(
+                (
+                    "Tai naujausio JUODRAŠČIO postų matrica. Ji leidžia prieš publikavimą patikrinti structural water-fill, SPS/Onko ir diversity. Regeneravus ji gali pasikeisti; fairness_history dar neįrašoma."
+                    if draft_mode else
+                    "SYSTEM matrica yra publikavimo momento algoritmo water-fill baseline. Ji lieka užšaldyta auditui; realus pasiskirstymas rodomas ACTUAL matricoje žemiau."
+                )
+                if lang=="LT" else
+                (
+                    "This is the newest DRAFT workplace matrix. It can be audited for structural water-fill, SPS/Onko and diversity before publication. Regeneration may change it; fairness_history is not written yet."
+                    if draft_mode else
+                    "The SYSTEM matrix is the publication-time algorithmic water-fill baseline. It stays frozen for audit; the real distribution is shown in the ACTUAL matrix below."
+                )
             )
             st.dataframe(
                 style_rows(workplace_exposure_df(year,month,base)),
@@ -2983,40 +5096,31 @@ if advanced_mode:
                 height=650,
             )
 
-            # ACTUAL exposure is still useful operationally, but it must never be
-            # confused with the SYSTEM fairness/post-debt ledger.
-            if current.assignments != base.assignments:
-                with st.expander(
-                    "FAKTINĖ operacinė postų ekspozicija — tik informacinė (NE fairness)"
+            if not draft_mode:
+                st.markdown("### ACTUAL realus postų pasiskirstymas" if lang=="LT" else "### ACTUAL real-work workplace distribution")
+                st.caption(
+                    "Tai gyva fairness statistika: manual override'ai, swapai ir repair keičia ACTUAL iškart; backup cover perskiriamas dubliui tik pažymėjus COMPLETED. Šie skirtumai niekada nekuria kito mėnesio catch-up."
                     if lang=="LT" else
-                    "ACTUAL operational workplace exposure — informational only (NOT fairness)",
-                    expanded=False,
-                ):
-                    st.caption(
-                        "Čia matoma, kur žmonės realiai dirbo po swapų / repair. Ši lentelė nekeičia spread, fairness_history ar post debt."
-                        if lang=="LT" else
-                        "This shows where residents actually worked after swaps/repairs. It does not change spread, fairness_history, or post debt."
-                    )
-                    st.dataframe(
-                        style_rows(workplace_exposure_df(year,month,current)),
-                        use_container_width=True,hide_index=True,height=650,
-                    )
+                    "This is the live fairness ledger: manual overrides, swaps and repairs change ACTUAL immediately; backup exposure transfers only when cover is marked COMPLETED. These differences never create next-month catch-up."
+                )
+                st.dataframe(style_rows(actual_workplace_exposure_df(year,month,current)),use_container_width=True,hide_index=True,height=650)
 
             if advanced_mode:
                 spread_rows=[]
-                month_spreads=(g.get("rotation_monthly_spreads") or {})
-                cumulative_spreads=(g.get("rotation_cumulative_spreads") or {})
+                sys_spreads=(system_live.get("global",{}).get("rotation_monthly_spreads") or {})
+                act_spreads=((actual_live or system_live).get("global",{}).get("rotation_monthly_spreads") or {})
                 for cat in ROTATION_CATEGORIES:
                     spread_rows.append({
                         ("Postas" if lang=="LT" else "Workplace"):cat,
-                        ("Šio mėnesio spread" if lang=="LT" else "Monthly spread"):month_spreads.get(cat,0),
-                        ("Kaupiamasis spread" if lang=="LT" else "Cumulative spread"):cumulative_spreads.get(cat,0),
+                        "SYSTEM spread":sys_spreads.get(cat,0),
+                        "ACTUAL spread":act_spreads.get(cat,0),
+                        ("Pokytis" if lang=="LT" else "Delta"):int(act_spreads.get(cat,0))-int(sys_spreads.get(cat,0)),
                     })
-                st.markdown("#### Postų spread kontrolė" if lang=="LT" else "#### Workplace spread control")
+                st.markdown("#### SYSTEM → ACTUAL postų spread" if lang=="LT" else "#### SYSTEM → ACTUAL workplace spread")
                 st.caption(
-                    "Pagrindinis tikslas: kiekvieno posto šio mėnesio spread mažinamas iki mažiausio įmanomo. Tik likęs neišvengiamas skirtumas taisomas kitais mėnesiais."
+                    "SYSTEM yra mėnesio water-fill baseline. ACTUAL gali nukrypti po leidžiamų pakeitimų; nukrypimas rodomas, bet kitą mėnesį nekompensuojamas."
                     if lang=="LT" else
-                    "Primary goal: minimize each workplace's current-month spread to the lowest feasible value. Only unavoidable residual imbalance is corrected in later months."
+                    "SYSTEM is the monthly water-fill baseline. ACTUAL may diverge after allowed changes; the divergence is shown but never compensated next month."
                 )
                 st.dataframe(pd.DataFrame(spread_rows),use_container_width=True,hide_index=True)
 
@@ -3038,14 +5142,26 @@ if advanced_mode:
                          "These limits are real solver constraints added before TRUE SOFT optimization.")
                     )
 
-                with st.expander("SYSTEM fairness krūvio rodikliai" if lang=="LT" else "SYSTEM fairness workload metrics", expanded=False):
+                with st.expander(
+                    ("JUODRAŠČIO krūvio rodikliai" if draft_mode else "SYSTEM fairness krūvio rodikliai")
+                    if lang=="LT" else
+                    ("DRAFT workload metrics" if draft_mode else "SYSTEM fairness workload metrics"),
+                    expanded=False,
+                ):
                     st.caption(
-                        "Šie skaičiai priklauso publikavimo SYSTEM bazei; post-publication swapai ir fairness-neutral repair jų nekeičia."
+                        ("Šie skaičiai priklauso dabartiniam juodraščiui ir skirti auditui prieš publikavimą." if draft_mode else "Šie skaičiai priklauso publikavimo SYSTEM bazei; post-publication ACTUAL pakeitimai jų nekeičia, nes tai yra būtent SYSTEM publikavimo baseline.")
                         if lang=="LT" else
-                        "These figures belong to the publication SYSTEM baseline; post-publication swaps and fairness-neutral repairs do not change them."
+                        ("These figures belong to the current draft and are for pre-publication audit." if draft_mode else "These figures belong to the publication SYSTEM baseline; post-publication ACTUAL changes do not change them because these figures are the publication-time SYSTEM baseline.")
                     )
-                    st.dataframe(style_rows(summary_df(base,year,month)),use_container_width=True,hide_index=True)
-                if current.assignments != base.assignments:
+                    _summary_stats=summary_df(base,year,month)
+                    if draft_mode:
+                        # Backup obligations are finalized at publish time; hide DB-backed
+                        # backup columns here so an older published month's backup rows
+                        # cannot be mistaken for draft data.
+                        _drop=[tr("planned_backups"),tr("effective_backups")]
+                        _summary_stats=_summary_stats.drop(columns=[c for c in _drop if c in _summary_stats.columns],errors="ignore")
+                    st.dataframe(style_rows(_summary_stats),use_container_width=True,hide_index=True)
+                if (not draft_mode) and current.assignments != base.assignments:
                     with st.expander("FAKTINIAI operaciniai krūvio rodikliai (NE fairness)" if lang=="LT" else "ACTUAL operational workload metrics (NOT fairness)", expanded=False):
                         st.dataframe(style_rows(summary_df(current,year,month)),use_container_width=True,hide_index=True)
             else:
@@ -3053,6 +5169,12 @@ if advanced_mode:
                     simple_df=summary_df(base,year,month)
                     keep=[c for c in simple_df.columns if c in ["Žmogus","Vardas","Pamainos","Tikslas","Person","Name","Assignments","Target"]]
                     st.dataframe(simple_df[keep] if keep else simple_df,use_container_width=True,hide_index=True)
+            if draft_mode:
+                st.info(
+                    "Jei šita Suvestinė netenkina: grįžk į Sudarymas → PERTIKRINTI / GERINTI arba GENERUOTI iš naujo. PASKELBTAS GRAFIKAS nepasikeis, kol aiškiai nepaspausi PASKELBTI / PATVIRTINTI."
+                    if lang=="LT" else
+                    "If this Summary is not satisfactory: return to Generation → IMPROVE / RECHECK or GENERATE again. The PUBLISHED schedule does not change until you explicitly press PUBLISH / CONFIRM."
+                )
     pos+=1
 
 # --- Transparency ---
@@ -3062,17 +5184,18 @@ if advanced_mode:
         if not currentp: st.info(tr("not_published"))
         else:
             current=refresh_result_payload(currentp,year,month); base=refresh_result_payload(basep or currentp,year,month,use_actual_backups=False)
-            # SYSTEM FAIRNESS is frozen from the publication baseline.
-            # Current stats describe ACTUAL work after voluntary swaps and must not
-            # rewrite or visually replace the fairness ledger.
             g=base.stats["global"]; gb=base.stats["global"]
+            system_live=live_fairness_snapshot(year,month,base,include_completed_covers=False)
+            actual_live=live_fairness_snapshot(year,month,current,include_completed_covers=True)
+            sg=system_live["global"]; ag=actual_live["global"]
 
             st.markdown(f"### {tr('fairness_hierarchy')}")
             st.caption(tr("fairness_hierarchy_intro"))
-            h1,h2,h3=st.columns(3)
+            h1,h2,h3,h4=st.columns(4)
             h1.metric(tr("hard_validity"),tr("hard_validity_pass") if g["hard_errors"]==0 else tr("hard_validity_fail"))
-            h2.metric(tr("cumulative_fairness"),f"{g.get('cumulative_fairness_score',g['fairness_score'])}%")
-            h3.metric(tr("monthly_fairness"),f"{g.get('monthly_fairness_score',g['fairness_score'])}%")
+            h2.metric("SYSTEM fairness",f"{sg.get('monthly_fairness_score',0)}%")
+            h3.metric("ACTUAL fairness",f"{ag.get('monthly_fairness_score',0)}%",delta=f"{ag.get('monthly_fairness_score',0)-sg.get('monthly_fairness_score',0):+.1f}")
+            h4.metric(("ACTUAL postų disbalansas" if lang=="LT" else "ACTUAL post imbalance"),ag.get("rotation_monthly_imbalance",0))
 
             if advanced_mode:
                 hierarchy_df=pd.DataFrame([
@@ -3080,7 +5203,7 @@ if advanced_mode:
                     {tr("fairness_level"):"2. RESIDENT HARD",tr("fairness_goal"):("Minimumas bendrų „Negaliu dirbti“ praradimų; tada minimumas didžiausio vieno žmogaus praradimo" if lang=="LT" else "Minimize total Unavailable losses; then minimize the worst resident loss"),tr("fairness_interpretation"):(f"Šį mėnesį praradimų: {g.get('resident_hard_total_losses',0)}; paveikta rezidentų: {g.get('resident_hard_residents_affected',0)}; max vienam: {g.get('resident_hard_max_loss_per_resident',0)}; cumulative spread: {g.get('resident_hard_cumulative_spread',0)}" if lang=="LT" else f"Losses this month: {g.get('resident_hard_total_losses',0)}; residents affected: {g.get('resident_hard_residents_affected',0)}; max per resident: {g.get('resident_hard_max_loss_per_resident',0)}; cumulative spread: {g.get('resident_hard_cumulative_spread',0)}")},
                     {tr("fairness_level"):"3. POSTAI / WORKLOAD / FATIGUE",tr("fairness_goal"):tr("fairness_monthly_goal"),tr("fairness_interpretation"):tr("fairness_monthly_explain")},
                     {tr("fairness_level"):"4. MAX-MIN SOFT",tr("fairness_goal"):tr("other_preferences_goal"),tr("fairness_interpretation"):tr("other_preferences_explain")},
-                    {tr("fairness_level"):"5. KAUPIAMASIS REFINEMENT",tr("fairness_goal"):tr("fairness_cumulative_goal"),tr("fairness_interpretation"):tr("fairness_cumulative_explain")},
+                    {tr("fairness_level"):"5. ACTUAL PO PUBLIKAVIMO",tr("fairness_goal"):("Swapai / override'ai gali pralaužti water-fill; realus spread tiksliai rodomas" if lang=="LT" else "Swaps/overrides may break water-fill; the real spread is reported exactly"),tr("fairness_interpretation"):tr("fairness_cumulative_explain")},
                 ])
                 st.dataframe(hierarchy_df,use_container_width=True,hide_index=True)
                 st.caption(tr("fairness_100_note"))
@@ -3092,38 +5215,35 @@ if advanced_mode:
 
                 st.divider(); st.markdown(f"### {tr('fairness_breakdown')}")
                 breakdown=[
-                    (tr("cumulative_fairness"),tr("metric_weekend"),g.get("weekend_cumulative_spread",0),18),
-                    (tr("cumulative_fairness"),tr("metric_friday"),g.get("friday_cumulative_spread",g.get("friday_spread",0)),7),
-                    (tr("cumulative_fairness"),tr("metric_double"),g.get("double_cumulative_spread",g.get("double_spread",0)),4),
-                    (tr("cumulative_fairness"),tr("metric_weekday"),g.get("weekday_day_cumulative_spread",g.get("weekday_day_spread",0)),2),
-                    (tr("monthly_fairness"),tr("metric_weekend"),g.get("weekend_monthly_spread",0),18),
-                    (tr("monthly_fairness"),tr("metric_friday"),g.get("friday_monthly_spread",0),7),
-                    (tr("monthly_fairness"),tr("metric_double"),g.get("double_monthly_spread",0),4),
-                    (tr("monthly_fairness"),tr("metric_weekday"),g.get("weekday_day_monthly_spread",0),2),
+                    ("SYSTEM",tr("metric_saturday"),sg.get("saturday_monthly_spread",0)),
+                    ("ACTUAL",tr("metric_saturday"),ag.get("saturday_monthly_spread",0)),
+                    ("SYSTEM",tr("metric_sunday"),sg.get("sunday_monthly_spread",0)),
+                    ("ACTUAL",tr("metric_sunday"),ag.get("sunday_monthly_spread",0)),
+                    ("SYSTEM",tr("metric_friday"),sg.get("friday_monthly_spread",0)),
+                    ("ACTUAL",tr("metric_friday"),ag.get("friday_monthly_spread",0)),
+                    ("SYSTEM",tr("metric_double"),sg.get("double_monthly_spread",0)),
+                    ("ACTUAL",tr("metric_double"),ag.get("double_monthly_spread",0)),
+                    ("SYSTEM",tr("metric_weekday"),sg.get("weekday_day_monthly_spread",0)),
+                    ("ACTUAL",tr("metric_weekday"),ag.get("weekday_day_monthly_spread",0)),
                 ]
-                st.dataframe(pd.DataFrame([{
-                    tr("fairness_scope"):scope,
-                    tr("fairness_metric"):metric,
-                    tr("fairness_spread"):spread,
-                    tr("fairness_penalty"):spread*weight,
-                } for scope,metric,spread,weight in breakdown]),use_container_width=True,hide_index=True)
-                st.caption(tr("fairness_formula_month"))
-                st.caption(tr("fairness_formula_cumulative"))
+                st.dataframe(pd.DataFrame([{tr("fairness_scope"):scope,tr("fairness_metric"):metric,tr("fairness_spread"):spread} for scope,metric,spread in breakdown]),use_container_width=True,hide_index=True)
+                st.caption(tr("fairness_monthly_explain"))
+                st.caption(tr("fairness_cumulative_explain"))
 
                 st.divider(); st.markdown(f"### {tr('fairness_history')}")
                 st.caption(tr("fairness_history_help"))
-                trend=fairness_trend_df(db.fairness_history_rows(year,month))
+                trend=system_actual_fairness_trend_df(year,month)
                 if trend.empty:
                     st.caption(tr("fairness_no_history"))
                 else:
-                    chart=trend.rename(columns={"Cumulative fairness":tr("cumulative_fairness"),"Monthly fairness":tr("monthly_fairness")}).set_index("Period")
-                    st.line_chart(chart[[tr("cumulative_fairness"),tr("monthly_fairness")]],height=280)
-                    shown=trend.rename(columns={"Cumulative fairness":tr("cumulative_fairness"),"Monthly fairness":tr("monthly_fairness")})
-                    st.dataframe(shown,use_container_width=True,hide_index=True)
+                    chart=trend.set_index("Period")
+                    st.line_chart(chart[["SYSTEM monthly fairness","ACTUAL monthly fairness"]],height=280)
+                    st.dataframe(trend,use_container_width=True,hide_index=True)
+                    st.caption("Istorija tik stebėjimui — solveris jos nenaudoja kitam mėnesiui." if lang=="LT" else "History is monitoring-only — the solver never uses it for the next month.")
 
                 st.divider(); st.markdown(f"### {tr('personal_vs_group')}")
                 bp=base.stats["people"].get(active_user,{}).get("preference_score"); cp=current.stats["people"].get(active_user,{}).get("preference_score")
-                ratio=balance_ratio(cp,g.get("cumulative_fairness_score",g["fairness_score"]))
+                ratio=balance_ratio(cp,ag.get("monthly_fairness_score"))
                 a,b,c=st.columns(3); a.metric(tr("baseline_personal"),tr("not_applicable") if bp is None else f"{bp}%"); b.metric(tr("current_personal"),tr("not_applicable") if cp is None else f"{cp}%"); c.metric(tr("balance_ratio"),tr("not_applicable") if ratio is None else f"{ratio:.2f}")
                 st.caption(tr("ratio_help")); st.markdown(f"### {tr('all_resident_scores')}"); st.dataframe(style_rows(preference_scores_df(current)),use_container_width=True,hide_index=True)
 
@@ -3188,52 +5308,28 @@ if advanced_mode:
                 p2.metric(("Mėnesio fairness" if lang=="LT" else "Monthly fairness"),f"{g.get('monthly_fairness_score',g['fairness_score'])}%")
     pos+=1
 
-# --- Credits and debts ---
+# --- Credits ---
 if advanced_mode:
     with tabs[pos]:
         st.subheader(tr("credit_balances"))
         st.caption(tr("netting_explain"))
-        rest_bank=db.rest_credit_balances(active_user); debt_bank=db.work_debt_balances(active_user)
-        st.markdown(f"### {tr('rest_credit_bank')}")
+        rest_bank=db.rest_credit_balances(active_user)
         rb1,rb2,rb3=st.columns(3)
         rb1.metric(tr("credit_am"),rest_bank.get("AM",0))
         rb2.metric(tr("credit_pm"),rest_bank.get("PM",0))
         rb3.metric(tr("credit_night"),rest_bank.get("NIGHT",0))
         st.caption(tr("credit_month_cap")); st.caption(tr("night_bank_only"))
-        st.markdown(f"### {tr('work_debt_bank')}")
-        wd1,wd2,wd3=st.columns(3)
-        wd1.metric(tr("credit_am"),debt_bank.get("AM",0))
-        wd2.metric(tr("credit_pm"),debt_bank.get("PM",0))
-        wd3.metric(tr("credit_night"),debt_bank.get("NIGHT",0))
-        st.markdown(f"### {tr('debt_policy')}"); st.caption(tr("debt_policy_text"))
-        my_debts=db.list_open_work_debts(active_user)
-        if my_debts:
-            debt_rows=[]
-            for dr in my_debts:
-                status,age=_debt_status_label(dr)
-                debt_rows.append({
-                    tr("credit_type"):dr.get("debt_type"),
-                    tr("debt_age"):age,
-                    tr("debt_due"):str(dr.get("due_at") or "")[:10],
-                    tr("debt_status"):status,
-                })
-            st.dataframe(pd.DataFrame(debt_rows),use_container_width=True,hide_index=True)
-        else:
-            st.caption("Aktyvių darbo skolų nėra." if lang=="LT" else "No active work debts.")
         if senior_mode:
             st.divider(); st.markdown(f"### {tr('credit_balances')} — {tr('summary')}")
-            rest_all=db.all_rest_credit_balances(); debt_all=db.all_work_debt_balances()
+            rest_all=db.all_rest_credit_balances()
             rows=[]
-            for p in DEFAULT_PEOPLE:
-                i=p["initials"]
+            for person in DEFAULT_PEOPLE:
+                i=person["initials"]
                 rows.append({
                     tr("person"):i,
                     f"{tr('rest_credit_bank')} AM":rest_all.get(i,{}).get("AM",0),
                     f"{tr('rest_credit_bank')} PM":rest_all.get(i,{}).get("PM",0),
                     f"{tr('rest_credit_bank')} NIGHT":rest_all.get(i,{}).get("NIGHT",0),
-                    f"{tr('work_debt_bank')} AM":debt_all.get(i,{}).get("AM",0),
-                    f"{tr('work_debt_bank')} PM":debt_all.get(i,{}).get("PM",0),
-                    f"{tr('work_debt_bank')} NIGHT":debt_all.get(i,{}).get("NIGHT",0),
                 })
             st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
         pos+=1
@@ -3243,6 +5339,8 @@ with tabs[pos]:
     st.subheader(tr("backup_title")); st.write(tr("backup_definition")); currentp=db.load_schedule(year,month,"current")
     all_backup_slots=[s for s in make_slots(year,month) if backup_required_slot(s)]
     weekend_slots=[s for s in all_backup_slots if s.weekday >= 5]
+    centro120_slots=[s for s in all_backup_slots if s.weekday < 5 and s.department.startswith("Centro UG 120") and s.block=="AM"]
+    onko_slots=[s for s in all_backup_slots if s.weekday < 5 and s.department=="Onko RO centre"]
     sps_ro_slots=[s for s in all_backup_slots if s.weekday < 5 and s.department.startswith("SPS RO")]
     sps_ug_slots=[s for s in all_backup_slots if s.weekday < 5 and s.department.startswith("SPS UG")]
 
@@ -3255,11 +5353,11 @@ with tabs[pos]:
 
     st.markdown("### Mano dublių rezervacijos" if lang=="LT" else "### My backup reservations")
     st.caption(
-        ("Rezervuojami trijų grupių dubliai: savaitgalio SPS RO budėjimai, darbo dienų SPS RO d.d. ir SPS UG 1035 (AM/PM). "
-         "Gali pasirinkti kelis slotus. Pasirinktas slotas tampa tavo rezervuotu backup'u ir generatorius tuo pačiu metu tau nebeskirs persidengiančios normalios pamainos."
+        ("Rezervuojami privalomo dengimo dubliai pagal poziciją: SPS RO bet kurią dieną / bloką, SPS UG bet kurią dieną / bloką, Centro UG 120 rytas ir Onko RO pilna diena. "
+         "CENTRO RO dengiama automatiškai best-effort ir jos rezervuoti nereikia. Gali pasirinkti kelis slotus; rezervacija blokuoja persidengiančią normalią pamainą."
          if lang=="LT" else
-         "Three backup groups are reservable: weekend SPS RO duty, weekday SPS RO d.d., and SPS UG 1035 (AM/PM). "
-         "You may choose multiple slots. A selected slot becomes your reserved backup duty and the generator will not assign overlapping normal work.")
+         "Reservable mandatory backup groups are position-based: SPS RO on any day/block, SPS UG on any day/block, Centro UG 120 morning, and full-day Onko RO. "
+         "CENTRO RO is planned automatically as best-effort and does not need self-reservation. You may choose multiple slots; a reservation blocks overlapping normal work.")
     )
     st.metric(tr("backup_claim_deadline"),claim_deadline.isoformat())
 
@@ -3297,6 +5395,8 @@ with tabs[pos]:
         selected=[]
         group_specs=[
             ("Savaitgaliai · SPS RO budėjimai" if lang=="LT" else "Weekends · SPS RO duty",weekend_slots,"weekend"),
+            ("Centro UG 120 · rytas" if lang=="LT" else "Centro UG 120 · morning",centro120_slots,"centro120"),
+            ("Onko RO · pilna 9 val. pamaina" if lang=="LT" else "Onko RO · full 9h shift",onko_slots,"onko"),
             ("Darbo dienos · SPS RO" if lang=="LT" else "Weekdays · SPS RO",sps_ro_slots,"spsro"),
             ("Darbo dienos · SPS UG" if lang=="LT" else "Weekdays · SPS UG",sps_ug_slots,"spsug"),
         ]
@@ -3335,7 +5435,7 @@ with tabs[pos]:
         board=[]
         for s in all_backup_slots:
             r=claim_by_slot.get(s.idx)
-            group=("Savaitgalis" if s.weekday>=5 else "SPS RO" if s.department.startswith("SPS RO") else "SPS UG")
+            group=("Centro 120" if s.department.startswith("Centro UG 120") else "Onko RO" if s.department=="Onko RO centre" else "SPS RO" if s.department.startswith("SPS RO") else "SPS UG")
             board.append({
                 ("Grupė" if lang=="LT" else "Group"):group,
                 tr("date"):f"{year}-{month:02d}-{s.day:02d}",
@@ -3350,20 +5450,6 @@ with tabs[pos]:
     if senior_mode:
         nonclaimers=[p["initials"] for p in DEFAULT_PEOPLE if p["initials"] not in {r["initials"] for r in claims}]
         st.markdown(f"### {tr('backup_claim_auto_queue')}"); st.caption(tr("backup_claim_auto_queue_help")); st.write(", ".join(nonclaimers) if nonclaimers else "—")
-        all_open_debts=db.list_open_work_debts()
-        if all_open_debts:
-            st.markdown(f"### {tr('work_debt_bank')}")
-            senior_debt_rows=[]
-            for dr in all_open_debts:
-                status,age=_debt_status_label(dr)
-                senior_debt_rows.append({
-                    tr("person"):dr.get("initials"),
-                    tr("credit_type"):dr.get("debt_type"),
-                    tr("debt_age"):age,
-                    tr("debt_due"):str(dr.get("due_at") or "")[:10],
-                    tr("debt_status"):status,
-                })
-            st.dataframe(pd.DataFrame(senior_debt_rows),use_container_width=True,hide_index=True)
     if not currentp:
         st.info(tr("not_published"))
     else:
@@ -3373,13 +5459,19 @@ with tabs[pos]:
         else:
             desired=[]; backup_errors=[]
         current_rows=db.list_backups(year,month)
-        expected=sum(1 for s in make_slots(year,month) if backup_required_slot(s) and result.assignments.get(s.idx))
-        actual=len(current_rows)
+        _slot_map_all={s.idx:s for s in make_slots(year,month)}
+        expected=sum(1 for s in _slot_map_all.values() if backup_required_slot(s) and result.assignments.get(s.idx))
+        required_actual=sum(1 for r in current_rows if (int(r.get("covered_slot")) in _slot_map_all and backup_required_slot(_slot_map_all[int(r.get("covered_slot"))])))
+        centro_total=sum(1 for s in _slot_map_all.values() if backup_best_effort_slot(s) and result.assignments.get(s.idx))
+        centro_covered=sum(1 for r in current_rows if (int(r.get("covered_slot")) in _slot_map_all and backup_best_effort_slot(_slot_map_all[int(r.get("covered_slot"))])))
         st.markdown(f"### {tr('backup_coverage')}")
-        c1,c2=st.columns(2); c1.metric(tr("working_person_days"),expected); c2.metric(tr("covered_person_days"),actual)
+        c1,c2,c3=st.columns(3)
+        c1.metric(tr("working_person_days"),expected)
+        c2.metric(tr("covered_person_days"),required_actual)
+        c3.metric("CENTRO RO best-effort",f"{centro_covered}/{centro_total}")
         if backup_errors:
             st.error(tr("backup_incomplete")); st.dataframe(pd.DataFrame(backup_errors),use_container_width=True,hide_index=True)
-        elif actual==expected:
+        elif required_actual==expected:
             st.success(tr("backup_complete"))
         else:
             st.warning(tr("backup_incomplete"))
@@ -3404,7 +5496,7 @@ with tabs[pos]:
                     if s is None: return f"#{rid}"
                     return f"#{rid} · {s.day:02d} {WEEKDAYS[lang][s.weekday]} · {covered} · {s.department} · {block_label(s.block)} · {r['planned_backup']}"
                 rid=st.selectbox(tr("backup_record"),ids,format_func=ridlabel); rr=lookup[rid]; sid=int(rr["covered_slot"]); covered_slot=slot_map.get(sid)
-                people=load_people(year,month); byinit={p.initials:p for p in people}
+                people=people_for_stored_result(result,year,month); byinit={p.initials:p for p in people}
                 # V2.5.61: manual/actual backup selection is broader than the automatic plan.
                 # A resident may voluntarily take the backup even when this creates a fatigue / >48 h
                 # warning or self-overrides RESIDENT HARD. ABSOLUTE unavailability and overlap remain
@@ -3509,22 +5601,16 @@ with tabs[pos]:
                             ev=db.complete_backup_cover(rid)
                             st.success(tr("backup_completed"))
                             if ev.get("coverer_effect")=="REST_EARNED": st.info(tr("cover_effect_rest"))
-                            elif ev.get("coverer_effect")=="DEBT_SETTLED": st.info(tr("cover_effect_debt_settled"))
-                            if ev.get("covered_effect")=="DEBT_INCURRED": st.info(tr("covered_effect_debt"))
-                            elif ev.get("covered_effect")=="REST_CONSUMED": st.info(tr("covered_effect_rest_used"))
                         except Exception as exc:
                             st.error(str(exc))
-                rest_all=db.all_rest_credit_balances(); debt_all=db.all_work_debt_balances()
+                rest_all=db.all_rest_credit_balances()
                 st.markdown(f"### {tr('credit_balances')}")
-                all_ids=sorted(set(rest_all)|set(debt_all))
+                all_ids=sorted(rest_all)
                 st.dataframe(pd.DataFrame([{
                     tr("person"):i,
                     f"{tr('rest_credit_bank')} AM":rest_all.get(i,{}).get("AM",0),
                     f"{tr('rest_credit_bank')} PM":rest_all.get(i,{}).get("PM",0),
                     f"{tr('rest_credit_bank')} NIGHT":rest_all.get(i,{}).get("NIGHT",0),
-                    f"{tr('work_debt_bank')} AM":debt_all.get(i,{}).get("AM",0),
-                    f"{tr('work_debt_bank')} PM":debt_all.get(i,{}).get("PM",0),
-                    f"{tr('work_debt_bank')} NIGHT":debt_all.get(i,{}).get("NIGHT",0),
                 } for i in all_ids]),use_container_width=True,hide_index=True)
                 st.dataframe(backup_table(year,month,result),use_container_width=True,hide_index=True)
 pos+=1
@@ -3575,10 +5661,49 @@ with tabs[pos]:
         } for r in rows])
         st.dataframe(df,use_container_width=True,hide_index=True)
 
-    st.subheader(tr("swap_title")); st.write(tr("swap_note")); st.caption(tr("multiple_swap_help")); currentp=db.load_schedule(year,month,"current")
+    st.subheader(tr("swap_title")); st.write(tr("swap_note")); st.caption(tr("multiple_swap_help"))
+    swap_flash=st.session_state.pop("_swap_response_flash",None)
+    if swap_flash:
+        level,msg=swap_flash
+        if level=="success": st.success(msg)
+        elif level=="warning": st.warning(msg)
+        else: st.info(msg)
+    refresh_col,_=st.columns([1,4])
+    with refresh_col:
+        if st.button("↻ ATNAUJINTI SWAP STATUSĄ" if lang=="LT" else "↻ REFRESH SWAP STATUS",key=f"swap_refresh_{year}_{month}",use_container_width=True):
+            st.rerun()
+    st.caption(
+        "Swap statusas visada perskaitomas iš DB. Kito rezidento jau atidarytas langas gali rodyti seną būseną iki refresh/rerun."
+        if lang=="LT" else
+        "Swap status is always read from the database. Another resident's already-open page may show stale state until refresh/rerun."
+    )
+    currentp=db.load_schedule(year,month,"current")
+    swap_perm=db.get_swap_permission_v2591(year,month) if currentp else {"allowed":False,"source":"not_open"}
+    swap_create_allowed=bool(swap_perm.get("allowed",False))
+    if currentp:
+        src=str(swap_perm.get("source") or "")
+        if swap_create_allowed and src=="window":
+            dl=_parse_iso_dt(swap_perm.get("deadline")); txt=(dl.astimezone(ZoneInfo("Europe/Vilnius")).strftime("%Y-%m-%d %H:%M") if dl else "—")
+            _workflow_card("APSIKEITIMŲ LANGAS ATIDARYTAS" if lang=="LT" else "SWAP WINDOW OPEN", (f"Naujus apsikeitimus galite kurti iki {txt}." if lang=="LT" else f"New swap requests may be created until {txt}."),"swap_open")
+        elif swap_create_allowed and src=="late":
+            exp=_parse_iso_dt(swap_perm.get("expires_at")); txt=(exp.astimezone(ZoneInfo("Europe/Vilnius")).strftime("%Y-%m-%d %H:%M") if exp else "—")
+            _workflow_card("INDIVIDUALUS PAVĖLUOTAS LEIDIMAS" if lang=="LT" else "INDIVIDUAL LATE ACCESS", (f"Suteikta individuali prieiga iki {txt}; liko {swap_perm.get('remaining','—')} naujų prašymų." if lang=="LT" else f"Individual access is active until {txt}; {swap_perm.get('remaining','—')} new request(s) remain."),"swap_closed")
+        else:
+            state_name="FINAL" if src=="final" else ("TERMINAS PASIBAIGĖ" if src=="expired" else "NAUJI APSIKEITIMAI UŽDARYTI")
+            _workflow_card(state_name if lang=="LT" else ("FINAL" if src=="final" else "NEW SWAPS CLOSED"), ("Naujų apsikeitimo prašymų kurti negalite. Jau egzistuojančius prašymus dar galima priimti / atmesti, kol operatorius užbaigs priežiūrą." if src!="final" and lang=="LT" else "Nauji apsikeitimai uždaryti." if lang=="LT" else "No new swap requests can be created. Existing requests may still be responded to until an operator completes oversight." if src!="final" else "The schedule is FINAL; new swaps are closed."),"final" if src=="final" else "expired")
     if not currentp: st.info(tr("not_published"))
     elif not resident_ok: st.error(tr("bad_pin"))
     else:
+        st.markdown(
+            "### ↔ NORMALŪS APSIKEITIMAI"
+            if lang=="LT" else
+            "### ↔ NORMAL SWAPS"
+        )
+        st.caption(
+            "Tai dvišalis request → accept/reject → seniūnės apply srautas. ONE-WAY emergency rescue yra atskiras uždarytas blokas žemiau ir niekada nėra automatiškai atidaromas po REQUEST SWAP."
+            if lang=="LT" else
+            "This is the bilateral request → accept/reject → senior apply flow. ONE-WAY emergency rescue is a separate collapsed section below and is never opened automatically after REQUEST SWAP."
+        )
         result=refresh_result_payload(currentp,year,month)
         slots={s.idx:s for s in make_slots(year,month)}
         mine=[sid for sid,w in result.assignments.items() if w==active_user]
@@ -3588,21 +5713,53 @@ with tabs[pos]:
             return f"#{sid} · {s.day:02d} {WEEKDAYS[lang][s.weekday]} · {s.department} · {block_label(s.block)} · {result.assignments[sid]}"
         if mine and theirs:
             a,b=st.columns(2)
-            with a: sa=st.selectbox(tr("my_assignment"),mine,format_func=sl,key="swap_a")
-            with b: sb=st.selectbox(tr("their_assignment"),theirs,format_func=sl,key="swap_b")
-            swap_people=load_people(year,month)
+            with a:
+                sa=st.selectbox(
+                    tr("my_assignment"),mine,format_func=sl,key="swap_a"
+                )
+            with b:
+                sb=st.selectbox(
+                    tr("their_assignment"),theirs,format_func=sl,key="swap_b"
+                )
+
+            target_person=result.assignments[sb]
+
+            # V2.5.80: same structured colored selection UI as Emergency Rescue.
+            st.markdown(
+                "#### Apsikeitimas"
+                if lang=="LT" else
+                "#### Swap"
+            )
+            _render_swap_people_line(active_user,target_person,"↔")
+            sv1,sv2=st.columns(2)
+            with sv1:
+                _render_shift_tile(
+                    "MANO PAMAINA"
+                    if lang=="LT" else
+                    "MY CURRENT SHIFT",
+                    active_user,slots.get(sa),PERSON_COLORS.get(active_user)
+                )
+            with sv2:
+                _render_shift_tile(
+                    "KITO REZIDENTO PAMAINA"
+                    if lang=="LT" else
+                    "OTHER RESIDENT'S SHIFT",
+                    target_person,slots.get(sb),PERSON_COLORS.get(target_person)
+                )
+
+            swap_people=people_for_stored_result(result,year,month)
             preview_ok,preview_reason,preview_stats,preview_needed=preview_swap(
                 year,month,swap_people,result,sa,sb,backup_assignments=db.list_backups(year,month)
             )
-            target_person=result.assignments[sb]
             my_fp=preview_needed.get(active_user) if preview_ok else None
             their_fp=preview_needed.get(target_person) if preview_ok else None
             my_ack=True
             if not preview_ok:
-                st.error(tr("swap_preview_invalid").format(reason=preview_reason))
                 block_rows=((preview_stats or {}).get("global",{}) or {}).get("swap_hard_block_rows") or []
                 if block_rows:
-                    st.dataframe(pd.DataFrame(block_rows),use_container_width=True,hide_index=True)
+                    _render_swap_hard_block(preview_stats,preview_reason)
+                else:
+                    st.error(tr("swap_preview_invalid").format(reason=preview_reason))
             else:
                 _render_impact_table(preview_stats,active_user,("Tavo swapo pasekmės" if lang=="LT" else "Your swap consequences"))
                 if my_fp:
@@ -3612,73 +5769,152 @@ with tabs[pos]:
                 if their_fp:
                     st.info(tr("swap_48_other"))
                     _render_impact_table(preview_stats,target_person,("Kito rezidento pasekmės" if lang=="LT" else "Other resident consequences"))
-            if st.button(tr("request_swap"),type="primary",disabled=(not preview_ok or not my_ack)):
+            if st.button(tr("request_swap"),type="primary",disabled=(not preview_ok or not my_ack or not swap_create_allowed)):
                 meta={"phase":"pending","impact_ack":{}}
                 if my_fp and my_ack:
                     meta["impact_ack"][active_user]=str(my_fp)
                 try:
-                    db.create_swap_request(year,month,sa,sb,active_user,target_person,reason=_swap_meta_encode(meta))
-                    st.success(tr("request_sent")); st.rerun()
+                    inserted=db.create_swap_request(
+                        year,month,sa,sb,active_user,target_person,
+                        reason=_swap_meta_encode(meta)
+                    )
+                    saved=(inserted[0] if inserted else {})
+                    email_ok,email_detail=send_swap_request_email(year,month,saved) if saved else (False,"request row missing")
+                    request_msg=(
+                        f"SWAP REQUEST #{saved.get('id','—')} išsaugotas. "
+                        + ("El. laiškas gavėjui išsiųstas." if email_ok else f"DB išsaugota, bet email nepavyko: {email_detail}")
+                        if lang=="LT" else
+                        f"SWAP REQUEST #{saved.get('id','—')} saved. "
+                        + ("Email notification sent." if email_ok else f"DB saved, but email failed: {email_detail}")
+                    )
+                    if email_ok:
+                        st.success(request_msg)
+                    else:
+                        st.warning(request_msg)
+                    # Deliberately NO st.rerun(): the request list below re-reads DB
+                    # in the same Streamlit pass. This prevents scroll restoration
+                    # from landing the user in the separate Emergency Rescue block.
                 except Exception as exc:
-                    if _is_swap_slot_conflict(exc):
+                    if "SWAP_WINDOW_CLOSED" in str(exc):
+                        st.warning("Naujų apsikeitimų langas uždarytas. Jei pavėlavote, kreipkitės į tvarkaraščio operatorių dėl individualaus leidimo." if lang=="LT" else "New swaps are closed. If you are late, ask a schedule operator for individual late access.")
+                    elif _is_swap_slot_conflict(exc):
                         st.warning(tr("swap_shift_busy"))
                     else:
                         st.error(tr("swap_preview_invalid").format(reason=("Nepavyko išsaugoti pasiūlymo." if lang=="LT" else "Could not save the offer.")))
 
         reqs=db.list_swap_requests(year,month,active_user)
-        outgoing=[r for r in reqs if r["person_a"]==active_user and r["status"]=="pending" and _swap_meta_decode(r.get("reason")).get("kind")!="emergency_actual"]
+        outgoing=[
+            r for r in reqs
+            if r["person_a"]==active_user
+            and r["status"]=="pending"
+            and _swap_meta_decode(r.get("reason")).get("kind") not in {"emergency_actual","emergency_rescue"}
+        ]
         if outgoing:
-            st.markdown(f"### {tr('my_outgoing_swaps')}")
-            for r in outgoing:
-                oc1,oc2=st.columns([4,1])
-                with oc1:
-                    st.write(f"{r['person_a']} → {r['person_b']} · #{r['slot_a']} ↔ #{r['slot_b']}")
-                with oc2:
-                    if st.button(tr("cancel_my_swap"),key=f"cancel_swap_{r['id']}",use_container_width=True):
-                        try:
-                            db.cancel_swap_request(r["id"]); st.success(tr("swap_cancelled")); st.rerun()
-                        except Exception:
-                            st.error(tr("swap_cancel_failed"))
-        incoming=[r for r in reqs if r["person_b"]==active_user and r["status"]=="pending"]
-        st.markdown(f"### {tr('incoming')}")
-        for r in incoming:
-            st.write(f"{r['person_a']} → {r['person_b']} · #{r['slot_a']} ↔ #{r['slot_b']}")
-            fresh=refresh_result_payload(db.load_schedule(year,month,"current"),year,month)
-            stale=(fresh.assignments.get(r["slot_a"])!=r["person_a"] or fresh.assignments.get(r["slot_b"])!=r["person_b"])
-            meta=_swap_meta_decode(r.get("reason")); acks=_impact_acks(meta)
-            pv_ok,pv_reason,pv_stats,pv_needed=(False,"stale",None,{}) if stale else preview_swap(
-                year,month,load_people(year,month),fresh,r["slot_a"],r["slot_b"],backup_assignments=db.list_backups(year,month)
+            st.markdown(
+                f"### {tr('my_outgoing_swaps')} · {len(outgoing)}"
             )
-            proposer_fp=pv_needed.get(r["person_a"]) if pv_ok else None
-            proposer_missing=bool(proposer_fp and acks.get(r["person_a"])!=proposer_fp)
-            target_fp=pv_needed.get(active_user) if pv_ok else None
-            target_ack=True
-            if stale or not pv_ok:
-                st.error(tr("swap_preview_invalid").format(reason=("stale" if stale else pv_reason)))
-            elif proposer_missing:
-                st.warning(tr("swap_48_reaccept"))
-            else:
-                _render_impact_table(pv_stats,active_user,("Tavo swapo pasekmės" if lang=="LT" else "Your swap consequences"))
-                if target_fp:
-                    st.warning(tr("swap_48_warning"))
-                    st.caption(tr("swap_48_only_exception"))
-                    target_ack=st.checkbox(tr("swap_48_ack"),key=f"swapimpact_target_{r['id']}")
-            c1,c2=st.columns(2)
-            with c1:
-                if st.button(tr("accept"),key=f"ac{r['id']}",use_container_width=True,disabled=(stale or not pv_ok or proposer_missing or not target_ack)):
-                    if target_fp and target_ack:
-                        meta.setdefault("impact_ack",{})[active_user]=str(target_fp)
-                    meta["phase"]="accepted_pending_senior_apply"
-                    try:
-                        db.update_swap_request(r["id"],"approved",_swap_meta_encode(meta))
-                        st.success(tr("accepted_pending")); st.rerun()
-                    except Exception as exc:
-                        if _is_swap_slot_conflict(exc): st.warning(tr("swap_shift_busy"))
-                        else: st.error(tr("swap_finalize_failed"))
-            with c2:
-                if st.button(tr("reject"),key=f"rj{r['id']}",use_container_width=True):
-                    db.update_swap_request(r["id"],"rejected","declined")
-                    st.info(tr("rejected")); st.rerun()
+            for idx,r in enumerate(outgoing,start=1):
+                with st.container(border=True):
+                    _render_swap_request_card(r,idx,len(outgoing),slots,incoming=False)
+                    if st.button(
+                        tr("cancel_my_swap"),
+                        key=f"cancel_swap_{r['id']}",
+                        use_container_width=True
+                    ):
+                        try:
+                            saved=db.cancel_swap_request(r["id"])
+                            if saved.get("status")!="rejected":
+                                raise RuntimeError(f"Unexpected saved status: {saved.get('status')}")
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                ("Pasiūlymas atšauktas ir DB būsena patvirtinta: REJECTED."
+                                 if lang=="LT" else
+                                 "Offer cancelled; authoritative DB status confirmed: REJECTED.")
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error((f"Nepavyko atšaukti swapo: {exc}" if lang=="LT" else f"Could not cancel swap: {exc}"))
+        incoming=[
+            r for r in reqs
+            if r["person_b"]==active_user
+            and r["status"]=="pending"
+            and _swap_meta_decode(r.get("reason")).get("kind") not in {"emergency_actual","emergency_rescue"}
+        ]
+        st.markdown(f"### {tr('incoming')} · {len(incoming)}")
+        if not incoming:
+            st.caption("Naujų apsikeitimo prašymų nėra." if lang=="LT" else "No new swap requests.")
+        for idx,r in enumerate(incoming,start=1):
+            with st.container(border=True):
+                _render_swap_request_card(r,idx,len(incoming),slots,incoming=True)
+                fresh=refresh_result_payload(db.load_schedule(year,month,"current"),year,month)
+                stale=(fresh.assignments.get(r["slot_a"])!=r["person_a"] or fresh.assignments.get(r["slot_b"])!=r["person_b"])
+                meta=_swap_meta_decode(r.get("reason")); acks=_impact_acks(meta)
+                pv_ok,pv_reason,pv_stats,pv_needed=(False,"stale",None,{}) if stale else preview_swap(
+                    year,month,people_for_stored_result(fresh,year,month),fresh,r["slot_a"],r["slot_b"],backup_assignments=db.list_backups(year,month)
+                )
+                proposer_fp=pv_needed.get(r["person_a"]) if pv_ok else None
+                proposer_missing=bool(proposer_fp and acks.get(r["person_a"])!=proposer_fp)
+                target_fp=pv_needed.get(active_user) if pv_ok else None
+                target_ack=True
+                if stale:
+                    st.error(
+                        "Šis requestas paseno, nes ACTUAL grafikas nuo jo sukūrimo jau pasikeitė."
+                        if lang=="LT" else
+                        "This request is stale because ACTUAL changed after it was created."
+                    )
+                elif not pv_ok:
+                    block_rows=((pv_stats or {}).get("global",{}) or {}).get("swap_hard_block_rows") or []
+                    if block_rows:
+                        _render_swap_hard_block(pv_stats,pv_reason)
+                    else:
+                        st.error(tr("swap_preview_invalid").format(reason=pv_reason))
+                elif proposer_missing:
+                    st.warning(tr("swap_48_reaccept"))
+                else:
+                    _render_impact_table(pv_stats,active_user,("Tavo swapo pasekmės" if lang=="LT" else "Your swap consequences"))
+                    if target_fp:
+                        st.warning(tr("swap_48_warning"))
+                        st.caption(tr("swap_48_only_exception"))
+                        target_ack=st.checkbox(tr("swap_48_ack"),key=f"swapimpact_target_{r['id']}")
+                c1,c2=st.columns(2)
+                with c1:
+                    if st.button(tr("accept"),key=f"ac{r['id']}",use_container_width=True,disabled=(stale or not pv_ok or proposer_missing or not target_ack)):
+                        if target_fp and target_ack:
+                            meta.setdefault("impact_ack",{})[active_user]=str(target_fp)
+                        meta["phase"]="accepted_pending_senior_apply"
+                        try:
+                            saved=db.respond_swap_request_v2578(
+                                r["id"],"accept",_swap_meta_encode(meta)
+                            )
+                            if saved.get("status")!="approved":
+                                raise RuntimeError(f"Unexpected saved status: {saved.get('status')}")
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                ("SWAP PRIIMTAS — DB būsena APPROVED. Dabar laukia seniūnės galutinio pritaikymo."
+                                 if lang=="LT" else
+                                 "SWAP ACCEPTED — authoritative DB status APPROVED. It now awaits senior application.")
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            if _is_swap_slot_conflict(exc):
+                                st.warning(tr("swap_shift_busy"))
+                            else:
+                                st.error((f"Nepavyko išsaugoti ACCEPT: {exc}" if lang=="LT" else f"Could not save ACCEPT: {exc}"))
+                with c2:
+                    if st.button(tr("reject"),key=f"rj{r['id']}",use_container_width=True):
+                        try:
+                            saved=db.respond_swap_request_v2578(r["id"],"reject","declined")
+                            if saved.get("status")!="rejected":
+                                raise RuntimeError(f"Unexpected saved status: {saved.get('status')}")
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                ("SWAP ATMESTAS — DB būsena patvirtinta: REJECTED."
+                                 if lang=="LT" else
+                                 "SWAP REJECTED — authoritative DB status confirmed: REJECTED.")
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error((f"Nepavyko išsaugoti REJECT: {exc}" if lang=="LT" else f"Could not save REJECT: {exc}"))
         st.divider(); st.markdown(f"### {tr('backup_swap_title')}"); st.caption(tr("backup_swap_help"))
         all_backups=[r for r in db.list_backups(year,month) if not r.get("activated_at") and not r.get("completed_at")]
         slot_map_b={s.idx:s for s in make_slots(year,month)}
@@ -3689,52 +5925,176 @@ with tabs[pos]:
             return f"{s.day:02d} {WEEKDAYS[lang][s.weekday]} · {block_label(s.block)} · {who}" if s else str(r["covered_slot"])
         if my_b and other_b:
             ba,bb=st.columns(2)
-            with ba: my_br=st.selectbox(tr("my_backup_duty"),my_b,format_func=blabel,key="backup_swap_my")
-            with bb: other_br=st.selectbox(tr("their_backup_duty"),other_b,format_func=blabel,key="backup_swap_other")
-            if st.button(tr("request_backup_swap"),key="request_backup_swap_btn"):
-                target=other_br.get("actual_backup") or other_br.get("planned_backup")
+            with ba:
+                my_br=st.selectbox(
+                    tr("my_backup_duty"),my_b,format_func=blabel,key="backup_swap_my"
+                )
+            with bb:
+                other_br=st.selectbox(
+                    tr("their_backup_duty"),other_b,format_func=blabel,key="backup_swap_other"
+                )
+
+            target=other_br.get("actual_backup") or other_br.get("planned_backup")
+            my_backup_person=my_br.get("actual_backup") or my_br.get("planned_backup") or active_user
+            my_backup_slot=slot_map_b.get(int(my_br["covered_slot"]))
+            other_backup_slot=slot_map_b.get(int(other_br["covered_slot"]))
+
+            # V2.5.80: same colored structured visual language as normal swaps/rescue.
+            st.markdown(
+                "#### Dublių apsikeitimas"
+                if lang=="LT" else
+                "#### Backup swap"
+            )
+            _render_swap_people_line(my_backup_person,target,"↔")
+            bv1,bv2=st.columns(2)
+            with bv1:
+                _render_shift_tile(
+                    "MANO DUBLIO VIETA"
+                    if lang=="LT" else
+                    "MY BACKUP DUTY",
+                    my_backup_person,my_backup_slot,PERSON_COLORS.get(my_backup_person)
+                )
+                covered_a=str(my_br.get("covered_person") or "")
+                if covered_a:
+                    st.markdown(
+                        ("**DENGIAMAS REZIDENTAS:** " if lang=="LT" else "**RESIDENT COVERED:** ")
+                        + badge(covered_a,include_name=True),
+                        unsafe_allow_html=True,
+                    )
+            with bv2:
+                _render_shift_tile(
+                    "KITO REZIDENTO DUBLIO VIETA"
+                    if lang=="LT" else
+                    "OTHER RESIDENT'S BACKUP DUTY",
+                    target,other_backup_slot,PERSON_COLORS.get(target)
+                )
+                covered_b=str(other_br.get("covered_person") or "")
+                if covered_b:
+                    st.markdown(
+                        ("**DENGIAMAS REZIDENTAS:** " if lang=="LT" else "**RESIDENT COVERED:** ")
+                        + badge(covered_b,include_name=True),
+                        unsafe_allow_html=True,
+                    )
+
+            if st.button(tr("request_backup_swap"),key="request_backup_swap_btn",use_container_width=True,disabled=(not swap_create_allowed)):
                 try:
-                    db.create_backup_swap_request(year,month,active_user,int(my_br["covered_slot"]),target,int(other_br["covered_slot"]))
-                    st.success(tr("backup_swap_sent")); st.rerun()
+                    inserted=db.create_backup_swap_request(
+                        year,month,active_user,int(my_br["covered_slot"]),
+                        target,int(other_br["covered_slot"])
+                    )
+                    saved=(inserted[0] if inserted else {})
+                    email_ok,email_detail=send_backup_swap_request_email(year,month,saved) if saved else (False,"request row missing")
+                    backup_msg=(
+                        f"Dublio swap request #{saved.get('id','—')} išsaugotas. "
+                        + ("Email gavėjui išsiųstas." if email_ok else f"DB išsaugota, bet email nepavyko: {email_detail}")
+                        if lang=="LT" else
+                        f"Backup swap request #{saved.get('id','—')} saved. "
+                        + ("Email sent." if email_ok else f"DB saved, but email failed: {email_detail}")
+                    )
+                    if email_ok:
+                        st.success(backup_msg)
+                    else:
+                        st.warning(backup_msg)
+                    # Same no-rerun rule as normal swaps: keep the user in the swap UI.
                 except Exception as exc:
                     if _is_swap_slot_conflict(exc): st.warning(tr("backup_swap_shift_busy"))
                     else: st.error(tr("backup_swap_invalid"))
         breqs=db.list_backup_swap_requests(year,month,None if senior_mode else active_user)
         backup_outgoing=[r for r in breqs if r.get("requester")==active_user and r.get("status")=="pending"]
         if backup_outgoing:
-            st.markdown(f"#### {tr('my_outgoing_swaps')} · {tr('backup_swap_title')}")
-            for r in backup_outgoing:
-                boc1,boc2=st.columns([4,1])
-                with boc1:
-                    st.write(f"{r['requester']} → {r['target']} · #{r['requester_slot']} ↔ #{r['target_slot']}")
-                with boc2:
+            st.markdown(f"#### {tr('my_outgoing_swaps')} · {tr('backup_swap_title')} · {len(backup_outgoing)}")
+            for idx,r in enumerate(backup_outgoing,start=1):
+                with st.container(border=True):
+                    st.markdown(
+                        f"**{'DUBLIO PASIŪLYMAS' if lang=='LT' else 'BACKUP OFFER'} {idx}/{len(backup_outgoing)} · DB #{r['id']}**"
+                    )
+                    _render_swap_people_line(r["requester"],r["target"],"→")
+                    st.caption(
+                        f"{blabel({'covered_slot':r['requester_slot'],'actual_backup':r['requester']})} "
+                        f"↔ {blabel({'covered_slot':r['target_slot'],'actual_backup':r['target']})}"
+                    )
                     if st.button(tr("cancel_my_swap"),key=f"cancel_backup_swap_{r['id']}",use_container_width=True):
                         try:
-                            db.cancel_backup_swap_request(r["id"]); st.success(tr("swap_cancelled")); st.rerun()
-                        except Exception:
-                            st.error(tr("swap_cancel_failed"))
-        for r in [x for x in breqs if x["target"]==active_user and x["status"]=="pending"]:
-            st.write(f"{r['requester']} ↔ {r['target']} · #{r['requester_slot']} ↔ #{r['target_slot']}"); bc1,bc2=st.columns(2)
-            with bc1:
-                if st.button(tr("accept"),key=f"bac{r['id']}",use_container_width=True):
-                    fresh=refresh_result_payload(db.load_schedule(year,month,"current"),year,month); smap_b={s.idx:s for s in make_slots(year,month)}
-                    s_a=smap_b.get(int(r["requester_slot"])); s_b=smap_b.get(int(r["target_slot"])); people_now=load_people(year,month)
-                    elig_a=_eligible_backup_candidates(year,month,fresh,s_a,people_now) if s_a else []; elig_b=_eligible_backup_candidates(year,month,fresh,s_b,people_now) if s_b else []
-                    if r["target"] not in elig_a or r["requester"] not in elig_b: st.error(tr("backup_swap_invalid"))
-                    else:
+                            db.cancel_backup_swap_request(r["id"])
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                ("Backup swapo pasiūlymas atšauktas."
+                                 if lang=="LT" else
+                                 "Backup swap offer cancelled.")
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error((f"Nepavyko atšaukti backup swapo: {exc}" if lang=="LT" else f"Could not cancel backup swap: {exc}"))
+        backup_incoming=[x for x in breqs if x["target"]==active_user and x["status"]=="pending"]
+        if backup_incoming:
+            st.markdown(
+                f"#### {'GAUTI DUBLIŲ REQUESTAI' if lang=='LT' else 'INCOMING BACKUP REQUESTS'} · {len(backup_incoming)}"
+            )
+        for idx,r in enumerate(backup_incoming,start=1):
+            with st.container(border=True):
+                st.markdown(
+                    f"**{'GAUTAS DUBLIO REQUESTAS' if lang=='LT' else 'INCOMING BACKUP REQUEST'} {idx}/{len(backup_incoming)} · DB #{r['id']}**"
+                )
+                _render_swap_people_line(r["requester"],r["target"],"→")
+                st.caption(
+                    f"{blabel({'covered_slot':r['requester_slot'],'actual_backup':r['requester']})} "
+                    f"↔ {blabel({'covered_slot':r['target_slot'],'actual_backup':r['target']})}"
+                )
+                bc1,bc2=st.columns(2)
+                with bc1:
+                    if st.button(tr("accept"),key=f"bac{r['id']}",use_container_width=True):
+                        fresh=refresh_result_payload(db.load_schedule(year,month,"current"),year,month); smap_b={s.idx:s for s in make_slots(year,month)}
+                        s_a=smap_b.get(int(r["requester_slot"])); s_b=smap_b.get(int(r["target_slot"])); people_now=people_for_stored_result(fresh,year,month)
+                        elig_a=_eligible_backup_candidates(year,month,fresh,s_a,people_now) if s_a else []; elig_b=_eligible_backup_candidates(year,month,fresh,s_b,people_now) if s_b else []
+                        if r["target"] not in elig_a or r["requester"] not in elig_b:
+                            st.error(tr("backup_swap_invalid"))
+                        else:
+                            try:
+                                db.accept_backup_swap_request(r["id"])
+                                persist_actual_satisfaction(year,month)
+                                refresh_calendar_subscription_feeds([r["requester"],r["target"]])
+                                st.success(tr("backup_swap_accepted")); st.rerun()
+                            except Exception:
+                                st.error(tr("backup_swap_invalid"))
+                with bc2:
+                    if st.button(tr("reject"),key=f"bar{r['id']}",use_container_width=True):
                         try:
-                            db.accept_backup_swap_request(r["id"])
-                            persist_actual_satisfaction(year,month)
-                            refresh_calendar_subscription_feeds([r["requester"],r["target"]])
-                            st.success(tr("backup_swap_accepted")); st.rerun()
-                        except Exception: st.error(tr("backup_swap_invalid"))
-            with bc2:
-                if st.button(tr("reject"),key=f"bar{r['id']}",use_container_width=True):
-                    db.reject_backup_swap_request(r["id"]); st.info(tr("backup_swap_rejected")); st.rerun()
+                            db.reject_backup_swap_request(r["id"])
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                ("Backup swapas atmestas." if lang=="LT" else "Backup swap rejected.")
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error((f"Nepavyko atmesti backup swapo: {exc}" if lang=="LT" else f"Could not reject backup swap: {exc}"))
         if breqs:
-            st.dataframe(pd.DataFrame([{"ID":r["id"],tr("person"):f"{r['requester']} ↔ {r['target']}",tr("status"):r["status"],tr("updated"):r["responded_at"] or r["created_at"]} for r in breqs]),use_container_width=True,hide_index=True)
+            st.markdown("#### Dublių apsikeitimų istorija" if lang=="LT" else "#### Backup swap history")
+            for idx,r in enumerate(breqs,start=1):
+                with st.container(border=True):
+                    applied=bool(r.get("status")=="accepted")
+                    st.markdown(f"**DUBLIO SWAP #{idx} · DB #{r.get('id')} · {str(r.get('status','')).upper()}**")
+                    _render_swap_people_line(str(r.get("requester") or ""),str(r.get("target") or ""),"↔")
+                    st.caption(
+                        ("Jei statusas ACCEPTED, DELETE kartu bandys saugiai grąžinti ankstesnius dublio turėtojus." if lang=="LT" else
+                         "If status is ACCEPTED, DELETE will also safely restore the previous backup holders.")
+                        if applied else
+                        ("DELETE pašalins šį request/history įrašą; ACTUAL backup planas nuo jo dar nepakeistas." if lang=="LT" else
+                         "DELETE removes this request/history row; it has not changed the ACTUAL backup plan.")
+                    )
+                    if _delete_confirm(f"backup_swap_{r['id']}",applied=applied):
+                        try:
+                            saved=db.delete_backup_swap_v2586(int(r["id"]))
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                ("Dublio swapas ištrintas"+(" ir ankstesnis backup planas atkurtas." if saved.get("undone_actual") else ".")
+                                 if lang=="LT" else
+                                 "Backup swap deleted"+(" and previous backup holders restored." if saved.get("undone_actual") else "."))
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(("DELETE nepavyko: " if lang=="LT" else "DELETE failed: ")+str(exc))
         hist=db.list_swap_requests(year,month,None if senior_mode else active_user)
-        if senior_mode:
+        if lifecycle_operator_ui:
             pending_apply=[]
             for r in hist:
                 if r.get("status")!="approved": continue
@@ -3751,17 +6111,26 @@ with tabs[pos]:
                     if fresh.assignments.get(r["slot_a"])!=r["person_a"] or fresh.assignments.get(r["slot_b"])!=r["person_b"]:
                         db.update_swap_request(r["id"],"rejected","stale"); st.error(tr("hard_reject")); st.rerun()
                     pv_ok,pv_reason,pv_stats,pv_needed=preview_swap(
-                        year,month,load_people(year,month),fresh,r["slot_a"],r["slot_b"],backup_assignments=db.list_backups(year,month)
+                        year,month,people_for_stored_result(fresh,year,month),fresh,r["slot_a"],r["slot_b"],backup_assignments=db.list_backups(year,month)
                     )
                     if not pv_ok:
-                        db.update_swap_request(r["id"],"rejected",pv_reason); st.error(tr("swap_finalize_failed")); st.rerun()
+                        db.update_swap_request(r["id"],"rejected",pv_reason)
+                        block_rows=((pv_stats or {}).get("global",{}) or {}).get("swap_hard_block_rows") or []
+                        if block_rows:
+                            _render_swap_hard_block(pv_stats,pv_reason)
+                        else:
+                            st.error(
+                                ("Swapo pritaikyti nepavyko: " if lang=="LT" else "Could not apply swap: ")
+                                + str(pv_reason)
+                            )
+                        st.stop()
                     missing=[who for who,fp in pv_needed.items() if acks.get(who)!=fp]
                     if missing:
                         who=missing[0]
                         db.update_swap_request(r["id"],"rejected",f"impact_ack_missing:{who}")
                         st.error(tr("swap_48_reaccept")); st.rerun()
                     ok,reason,_=attempt_swap(
-                        year,month,load_people(year,month),fresh,r["slot_a"],r["slot_b"],
+                        year,month,people_for_stored_result(fresh,year,month),fresh,r["slot_a"],r["slot_b"],
                         backup_assignments=db.list_backups(year,month),acknowledged_fingerprints=acks
                     )
                     if ok:
@@ -3778,148 +6147,424 @@ with tabs[pos]:
                         meta["phase"]="applied"
                         db.update_swap_request(r["id"],"approved",_swap_meta_encode(meta)); st.success(tr("swap_applied")); st.rerun()
                     else:
-                        db.update_swap_request(r["id"],"rejected",reason); st.error(tr("swap_finalize_failed")); st.rerun()
-        regular_hist=[r for r in hist if _swap_meta_decode(r.get("reason")).get("kind")!="emergency_actual"]
+                        db.update_swap_request(r["id"],"rejected",reason)
+                        st.error(
+                            ("Swapo pritaikyti nepavyko: " if lang=="LT" else "Could not apply swap: ")
+                            + str(reason)
+                        )
+                        st.stop()
+        regular_hist=[r for r in hist if _swap_meta_decode(r.get("reason")).get("kind") not in {"emergency_actual","emergency_rescue"}]
         if regular_hist:
-            smap={"pending":tr("pending"),"approved":tr("approved"),"rejected":tr("rejected_status")}; st.markdown(f"### {tr('history')}"); st.dataframe(pd.DataFrame([{"ID":r["id"],tr("person"):f"{r['person_a']} ↔ {r['person_b']}",tr("status"):smap.get(r["status"],r["status"]),tr("updated"):r["responded_at"] or r["created_at"]} for r in regular_hist]),use_container_width=True,hide_index=True)
+            smap={"pending":tr("pending"),"approved":tr("approved"),"rejected":tr("rejected_status")}
+            st.markdown(f"### {tr('history')}")
+            for idx,r in enumerate(regular_hist,start=1):
+                meta=_swap_meta_decode(r.get("reason"))
+                applied=bool(meta.get("phase")=="applied")
+                with st.container(border=True):
+                    st.markdown(f"**SWAP #{idx} · DB #{r.get('id')} · {smap.get(r.get('status'),r.get('status'))}**")
+                    _render_swap_people_line(str(r.get("person_a") or ""),str(r.get("person_b") or ""),"↔")
+                    sa=slots.get(int(r.get("slot_a") or -1)); sb=slots.get(int(r.get("slot_b") or -1))
+                    hc1,hc2=st.columns(2)
+                    with hc1: _render_shift_tile("A",str(r.get("person_a") or ""),sa,PERSON_COLORS.get(str(r.get("person_a") or "")))
+                    with hc2: _render_shift_tile("B",str(r.get("person_b") or ""),sb,PERSON_COLORS.get(str(r.get("person_b") or "")))
+                    st.caption(
+                        ("Šis swapas jau pritaikytas ACTUAL. DELETE bandys atlikti UNDO tik jei abu slotai po to nebuvo pakeisti dar kartą." if lang=="LT" else
+                         "This swap is already applied to ACTUAL. DELETE will UNDO it only if neither slot changed again afterwards.")
+                        if applied else
+                        ("Šis įrašas ACTUAL dar nepakeitė; DELETE pašalins request/history įrašą." if lang=="LT" else
+                         "This row has not changed ACTUAL; DELETE removes the request/history row.")
+                    )
+                    if _delete_confirm(f"normal_swap_{r['id']}",applied=applied):
+                        try:
+                            saved=_delete_swap_row(r,year,month)
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                ("Swapas ištrintas"+(" ir ACTUAL grąžintas į būseną prieš šį swapą." if saved.get("undone_actual") else ".")
+                                 if lang=="LT" else
+                                 "Swap deleted"+(" and ACTUAL restored to its pre-swap state." if saved.get("undone_actual") else "."))
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(("DELETE / UNDO nepavyko: " if lang=="LT" else "DELETE / UNDO failed: ")+str(exc))
 
-        # V2.5.62 — EMERGENCY / already-occurred operational swap log.
-        # This is deliberately NOT a second optimizer. It records a real urgent
-        # change into ACTUAL and preserves the immutable SYSTEM fairness baseline.
+        # V2.5.81 — always-visible EMERGENCY RESCUE operational panel.
+        # The logged-in resident is pulled from their own lower-priority optional
+        # post into an overlapping critical SPS post. The source becomes vacant;
+        # SYSTEM fairness remains frozen.
         st.divider()
-        st.markdown("### 🚨 Emergency — jau įvykęs apsikeitimas" if lang=="LT" else "### 🚨 Emergency — already occurred reassignment")
-        st.caption(
-            "Naudokite tik tada, kai skubus pakeitimas jau realiai įvyko arba buvo aiškiai sutartas tą pačią dieną. Čia nėra naujo prašymo patvirtinimo srautas: įrašas atnaujina FAKTINĮ (ACTUAL) grafiką ir pakeitimų istoriją, bet nekeičia paskelbto SYSTEM teisingumo, postų paskirstymo istorijos ar ateities kompensacijų."
-            if lang=="LT" else
-            "Use this only when an urgent change already happened or was explicitly agreed the same day. This is not a new optimization/request flow: it updates the ACTUAL schedule and audit trail while leaving the published SYSTEM fairness baseline and future balancing history unchanged."
-        )
-        emergency_current=refresh_result_payload(db.load_schedule(year,month,"current"),year,month)
-        emergency_slots={s.idx:s for s in make_slots(year,month)}
-        emergency_assigned=[sid for sid,w in emergency_current.assignments.items() if w and sid in emergency_slots]
-        emergency_assigned=sorted(emergency_assigned,key=lambda sid:(emergency_slots[sid].day,emergency_slots[sid].block,emergency_slots[sid].department,sid))
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div style="display:flex;align-items:center;gap:16px;margin:2px 0 10px 0;">
+                    <span style="font-size:3.1rem;line-height:1;">🚨</span>
+                    <div>
+                        <div style="font-size:1.55rem;font-weight:900;letter-spacing:.025em;">EMERGENCY RESCUE</div>
+                        <div style="font-size:.88rem;opacity:.72;font-weight:650;">CURRENT LOCATION → MOVING TO → RESCUED PERSON</div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.info(
+                "Naudok, kai realiai dirbdamas savo poste esi skubiai perkeltas į svarbesnį SPS RO / SPS UG postą. "
+                "CURRENT LOCATION lieka tuščias; RESCUED PERSON atleidžiamas nuo kritinio posto. "
+                "Keičiamas ACTUAL grafikas ir iškart perskaičiuojama ACTUAL fairness statistika; SYSTEM publikavimo baseline lieka užšaldytas auditui. Jokio future catch-up / future catch-up nėra."
+                if lang=="LT" else
+                "Use this when, while working your assigned post, you are urgently moved into a more important SPS RO / SPS UG post. "
+                "CURRENT LOCATION becomes vacant; the RESCUED PERSON is released from the critical post. "
+                "ACTUAL changes and ACTUAL fairness statistics are recalculated immediately; the publication-time SYSTEM baseline stays frozen for audit. There is no future catch-up or future catch-up."
+            )
 
-        def _emergency_label(sid):
-            slt=emergency_slots[sid]; who=emergency_current.assignments.get(sid,"—")
-            return f"#{sid} · {slt.day:02d} {WEEKDAYS[lang][slt.weekday]} · {slt.department} · {block_label(slt.block)} · {who}"
+            rescue_current=refresh_result_payload(
+                db.load_schedule(year,month,"current"),year,month
+            )
+            rescue_slots={s.idx:s for s in make_slots(year,month)}
 
-        if senior_mode:
-            emergency_a_options=emergency_assigned
-        else:
-            emergency_a_options=[sid for sid in emergency_assigned if emergency_current.assignments.get(sid)==active_user]
-        emergency_a=None; emergency_b=None
-        if emergency_a_options:
-            ec1,ec2=st.columns(2)
-            with ec1:
-                emergency_a=st.selectbox(
-                    "1 žmogaus buvusi pamaina" if lang=="LT" else "First person's original assignment",
-                    emergency_a_options,format_func=_emergency_label,key="emergency_actual_a"
+            # The constitutional workflow is self-recording: the resident who was
+            # actually moved records the rescue from their own account.
+            mover=active_user
+            source_options=[]
+            for sid,who in (rescue_current.assignments or {}).items():
+                sl=rescue_slots.get(int(sid))
+                if who!=mover or sl is None:
+                    continue
+                if not is_emergency_lower_priority_donor_slot(sl):
+                    continue
+                target_exists=any(
+                    t.idx!=sl.idx
+                    and is_emergency_critical_slot(t)
+                    and t.day==sl.day
+                    and t.block==sl.block
+                    and rescue_current.assignments.get(t.idx)
+                    and rescue_current.assignments.get(t.idx)!=mover
+                    for t in rescue_slots.values()
                 )
-            emergency_person_a=emergency_current.assignments.get(emergency_a) if emergency_a is not None else None
-            emergency_b_options=[sid for sid in emergency_assigned if sid!=emergency_a and emergency_current.assignments.get(sid)!=emergency_person_a]
-            with ec2:
-                if emergency_b_options:
-                    emergency_b=st.selectbox(
-                        "2 žmogaus buvusi pamaina" if lang=="LT" else "Second person's original assignment",
-                        emergency_b_options,format_func=_emergency_label,key="emergency_actual_b"
+                if target_exists:
+                    source_options.append(sl.idx)
+
+            source_options=sorted(
+                source_options,
+                key=lambda sid:(
+                    rescue_slots[sid].day,
+                    {"AM":0,"PM":1,"FULL":2}.get(rescue_slots[sid].block,9),
+                    rescue_slots[sid].department,
+                    sid,
+                )
+            )
+
+            if not source_options:
+                st.info(
+                    "Šiuo metu tavo ACTUAL grafike nėra tinkamos žemesnio prioriteto pamainos, kurią tuo pačiu laiku būtų galima perkelti į kritinį SPS RO / SPS UG postą."
+                    if lang=="LT" else
+                    "Your ACTUAL schedule currently has no eligible lower-priority assignment that can be moved at the same time into a critical SPS RO / SPS UG post."
+                )
+            else:
+                source_sid=st.selectbox(
+                    "CURRENT LOCATION — iš kur mane perkelia"
+                    if lang=="LT" else
+                    "CURRENT LOCATION — where I am being moved from",
+                    source_options,
+                    format_func=lambda sid:_swap_shift_text(rescue_slots[sid]),
+                    key="emergency_rescue_source",
+                )
+                source_slot=rescue_slots[source_sid]
+
+                target_options=[
+                    t.idx for t in rescue_slots.values()
+                    if t.idx!=source_sid
+                    and is_emergency_critical_slot(t)
+                    and t.day==source_slot.day
+                    and t.block==source_slot.block
+                    and rescue_current.assignments.get(t.idx)
+                    and rescue_current.assignments.get(t.idx)!=mover
+                ]
+                target_options=sorted(
+                    target_options,
+                    key=lambda sid:(
+                        rescue_slots[sid].department,
+                        rescue_current.assignments.get(sid,""),
+                        sid,
+                    )
+                )
+
+                if not target_options:
+                    st.info(
+                        "Šiai CURRENT LOCATION pamainai nėra to paties laiko kritinio SPS targeto."
+                        if lang=="LT" else
+                        "There is no same-time critical SPS target for this CURRENT LOCATION."
                     )
                 else:
-                    st.info("Nėra antros tinkamos paskirtos pamainos." if lang=="LT" else "No second assigned shift is available.")
-            if emergency_b is not None:
-                emergency_person_b=emergency_current.assignments.get(emergency_b)
-                sl_a=emergency_slots[emergency_a]; sl_b=emergency_slots[emergency_b]
-                st.dataframe(pd.DataFrame([
-                    {
-                        ("Žmogus" if lang=="LT" else "Person"):emergency_person_a,
-                        ("Buvo" if lang=="LT" else "Was"):_emergency_label(emergency_a),
-                        ("Po emergency" if lang=="LT" else "After emergency"):f"{sl_b.day:02d} · {sl_b.department} · {block_label(sl_b.block)}",
-                    },
-                    {
-                        ("Žmogus" if lang=="LT" else "Person"):emergency_person_b,
-                        ("Buvo" if lang=="LT" else "Was"):_emergency_label(emergency_b),
-                        ("Po emergency" if lang=="LT" else "After emergency"):f"{sl_a.day:02d} · {sl_a.department} · {block_label(sl_a.block)}",
-                    },
-                ]),use_container_width=True,hide_index=True)
-                emergency_note=st.text_input(
-                    "Trumpa pastaba (kodėl skubiai sukeista)" if lang=="LT" else "Short note (why the urgent change happened)",
-                    key="emergency_actual_note"
-                )
-                emergency_confirm=st.checkbox(
-                    "Patvirtinu, kad tai jau realiai įvykęs / aiškiai sutartas emergency pakeitimas. Suprantu, kad SYSTEM fairness dėl jo nebus perskaičiuojamas."
-                    if lang=="LT" else
-                    "I confirm this is an already occurred / explicitly agreed emergency change. I understand SYSTEM fairness will not be recalculated.",
-                    key=f"emergency_actual_confirm_{emergency_a}_{emergency_b}"
-                )
-                if st.button(
-                    "ĮRAŠYTI Į FAKTINĮ GRAFIKĄ" if lang=="LT" else "RECORD IN ACTUAL SCHEDULE",
-                    type="primary",use_container_width=True,disabled=not emergency_confirm,key="emergency_actual_apply"
-                ):
-                    fresh_em=refresh_result_payload(db.load_schedule(year,month,"current"),year,month)
-                    if fresh_em.assignments.get(emergency_a)!=emergency_person_a or fresh_em.assignments.get(emergency_b)!=emergency_person_b:
-                        st.error("Grafikas jau pasikeitė. Atnaujinkite puslapį ir pasirinkite pamainas iš naujo." if lang=="LT" else "The schedule changed. Refresh and select the assignments again.")
-                    else:
-                        fresh_em.assignments[emergency_a]=emergency_person_b
-                        fresh_em.assignments[emergency_b]=emergency_person_a
-                        db.save_current(year,month,serialize_result(fresh_em))
-                        sync_backup_plan(year,month,fresh_em)
-                        persist_actual_satisfaction(year,month)
-                        refresh_calendar_subscription_feeds([emergency_person_a,emergency_person_b])
-                        recorder=(f"SENIOR:{active_user}" if senior_mode else active_user)
-                        seen=[] if senior_mode else [active_user]
-                        meta={
-                            "kind":"emergency_actual",
-                            "phase":"emergency_applied",
-                            "recorded_by":recorder,
-                            "recorded_at":datetime.now(timezone.utc).isoformat(),
-                            "seen_by":seen,
-                            "note":str(emergency_note or ""),
-                            "fairness_neutral":True,
-                        }
-                        inserted=db.create_swap_request(year,month,emergency_a,emergency_b,emergency_person_a,emergency_person_b,reason=_swap_meta_encode(meta))
-                        if inserted:
-                            db.update_swap_request(int(inserted[0]["id"]),"approved",_swap_meta_encode(meta))
-                        st.success(
-                            "Emergency pakeitimas įrašytas. ACTUAL grafikas atnaujintas; SYSTEM fairness liko nepakeistas."
-                            if lang=="LT" else
-                            "Emergency change recorded. ACTUAL was updated; SYSTEM fairness remains unchanged."
-                        )
-                        st.rerun()
-        else:
-            st.caption("Neturite savo paskirtos pamainos, kurią būtų galima registruoti kaip emergency apsikeitimo pradžią." if lang=="LT" else "You do not have an assigned shift available as the first side of an emergency swap.")
+                    target_sid=st.selectbox(
+                        "MOVING TO — į kurį svarbesnį postą mane perkelia"
+                        if lang=="LT" else
+                        "MOVING TO — critical post I am moving to",
+                        target_options,
+                        format_func=lambda sid:(
+                            f"{_swap_shift_text(rescue_slots[sid])} · "
+                            f"RESCUED: {rescue_current.assignments.get(sid,'—')}"
+                        ),
+                        key="emergency_rescue_target",
+                    )
+                    target_slot=rescue_slots[target_sid]
+                    rescued_person=str(rescue_current.assignments.get(target_sid) or "")
 
-        emergency_all=[r for r in db.list_swap_requests(year,month,None if senior_mode else active_user) if _swap_meta_decode(r.get("reason")).get("kind")=="emergency_actual"]
-        if emergency_all:
-            st.markdown("#### Emergency pakeitimų žurnalas" if lang=="LT" else "#### Emergency change log")
-            emergency_rows=[]
-            for r in emergency_all:
-                meta=_swap_meta_decode(r.get("reason")); seen=set(str(x) for x in (meta.get("seen_by") or []))
-                involved=[str(r.get("person_a") or ""),str(r.get("person_b") or "")]
-                missing=[x for x in involved if x and x not in seen]
-                s_a=emergency_slots.get(int(r["slot_a"])); s_b=emergency_slots.get(int(r["slot_b"]))
-                emergency_rows.append({
-                    ("Būsena" if lang=="LT" else "Status"):("✓ Abu peržiūrėjo" if not missing else "🔔 Laukia: "+", ".join(missing)) if lang=="LT" else ("✓ Seen by both" if not missing else "🔔 Waiting: "+", ".join(missing)),
-                    ("Žmonės" if lang=="LT" else "People"):f"{r['person_a']} ↔ {r['person_b']}",
-                    ("Pakeitimas" if lang=="LT" else "Change"):(f"{s_a.day:02d} {s_a.department} {block_label(s_a.block)} ↔ {s_b.day:02d} {s_b.department} {block_label(s_b.block)}" if s_a and s_b else f"#{r['slot_a']} ↔ #{r['slot_b']}"),
-                    ("Registravo" if lang=="LT" else "Recorded by"):meta.get("recorded_by","—"),
-                    ("Pastaba" if lang=="LT" else "Note"):meta.get("note") or "—",
-                })
-            st.dataframe(pd.DataFrame(emergency_rows),use_container_width=True,hide_index=True)
-            if not senior_mode:
-                for r in emergency_all:
-                    meta=_swap_meta_decode(r.get("reason")); seen=set(str(x) for x in (meta.get("seen_by") or []))
-                    if active_user in (r.get("person_a"),r.get("person_b")) and active_user not in seen:
-                        st.warning(
-                            f"🔔 {r['person_a']} ↔ {r['person_b']} — emergency pakeitimas jau įrašytas į faktinį grafiką. Patikrinkite ir pažymėkite, kad matėte."
+                    st.markdown("#### Emergency Rescue" if lang=="LT" else "#### Emergency Rescue")
+                    _render_swap_people_line(mover,rescued_person,"→")
+                    rc1,rc2=st.columns(2)
+                    with rc1:
+                        _render_shift_tile(
+                            "CURRENT LOCATION — BUS PALIKTA TUŠČIA"
                             if lang=="LT" else
-                            f"🔔 {r['person_a']} ↔ {r['person_b']} — an emergency change is already recorded in ACTUAL. Review it and mark it as seen."
+                            "CURRENT LOCATION — WILL BECOME VACANT",
+                            mover,source_slot,PERSON_COLORS.get(mover)
                         )
-                        if st.button(
-                            "✓ MAČIAU / ĮRAŠAS TEISINGAS" if lang=="LT" else "✓ SEEN / RECORD IS CORRECT",
-                            key=f"emergency_seen_{r['id']}",use_container_width=True
+                    with rc2:
+                        _render_shift_tile(
+                            "MOVING TO — KRITINIS POSTAS"
+                            if lang=="LT" else
+                            "MOVING TO — CRITICAL POST",
+                            mover,target_slot,PERSON_COLORS.get(mover)
+                        )
+                    st.markdown(
+                        (
+                            '<div style="margin:12px 0;padding:12px 14px;border-radius:14px;'
+                            'border:2px dashed #777;background:rgba(127,127,127,.08);">'
+                            '<b>RESCUED PERSON:</b> '
+                            + badge(rescued_person,include_name=True)
+                            + '<br><span style="opacity:.82;">'
+                            + html.escape(
+                                "Šis žmogus atleidžiamas nuo pasirinkto kritinio posto ir NĖRA perkeliamas į tavo CURRENT LOCATION."
+                                if lang=="LT" else
+                                "This person is released from the selected critical post and is NOT moved to your CURRENT LOCATION."
+                            )
+                            + '</span></div>'
+                        ),
+                        unsafe_allow_html=True,
+                    )
+
+                    rescue_note=st.text_input(
+                        "Trumpa operational pastaba"
+                        if lang=="LT" else
+                        "Short operational note",
+                        key="emergency_rescue_note",
+                    )
+                    rescue_confirm=st.checkbox(
+                        (
+                            "PATVIRTINU: tai realiai įvykęs ONE-WAY emergency rescue. "
+                            "Aš pereinu iš CURRENT LOCATION į MOVING TO; mano senas optional postas lieka tuščias; "
+                            f"{rescued_person} yra rescued ir neina į mano seną vietą."
+                        )
+                        if lang=="LT" else
+                        (
+                            "I CONFIRM: this is an already-occurred ONE-WAY emergency rescue. "
+                            "I move from CURRENT LOCATION to MOVING TO; my old optional post becomes vacant; "
+                            f"{rescued_person} is rescued and does not move to my old post."
+                        ),
+                        key=f"emergency_rescue_confirm_{source_sid}_{target_sid}",
+                    )
+
+                    if st.button(
+                        "🚨 ĮRAŠYTI ONE-WAY RESCUE Į ACTUAL"
+                        if lang=="LT" else
+                        "🚨 RECORD ONE-WAY RESCUE IN ACTUAL",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=not rescue_confirm,
+                        key="emergency_rescue_apply",
+                    ):
+                        fresh_rescue=refresh_result_payload(
+                            db.load_schedule(year,month,"current"),year,month
+                        )
+                        if (
+                            fresh_rescue.assignments.get(source_sid)!=mover
+                            or fresh_rescue.assignments.get(target_sid)!=rescued_person
                         ):
-                            meta.setdefault("seen_by",[]); meta["seen_by"]=sorted(set(str(x) for x in meta["seen_by"]+[active_user]))
-                            db.update_swap_request(int(r["id"]),"approved",_swap_meta_encode(meta))
-                            st.success("Pažymėta kaip peržiūrėta." if lang=="LT" else "Marked as seen.")
+                            st.error(
+                                "ACTUAL grafikas jau pasikeitė. Atnaujink puslapį ir pasirink CURRENT LOCATION / MOVING TO iš naujo."
+                                if lang=="LT" else
+                                "ACTUAL changed. Refresh and select CURRENT LOCATION / MOVING TO again."
+                            )
+                        elif (
+                            source_slot.day!=target_slot.day
+                            or source_slot.block!=target_slot.block
+                            or not is_emergency_lower_priority_donor_slot(source_slot)
+                            or not is_emergency_critical_slot(target_slot)
+                        ):
+                            st.error(
+                                "Rescue neatitinka vienpusio same-time lower-priority → critical SPS modelio."
+                                if lang=="LT" else
+                                "Rescue no longer matches the same-time lower-priority → critical SPS model."
+                            )
+                        else:
+                            repaired=apply_emergency_critical_transfer(
+                                fresh_rescue.assignments,
+                                target_slot,
+                                mover,
+                                source_slot=source_slot,
+                            )
+                            fresh_rescue.assignments=repaired
+                            # Revalidate in-memory under ACTUAL operational rules so the
+                            # stored payload carries refreshed stats + frozen workload credit.
+                            fresh_rescue=revalidate_loaded_result(
+                                year,month,people_for_stored_result(fresh_rescue,year,month),fresh_rescue,
+                                backup_assignments=None,
+                                validation_mode="emergency_rescue",
+                            )
+                            desired_backups,backup_errors=plan_backups(year,month,fresh_rescue)
+                            if backup_errors:
+                                st.error(
+                                    ("Emergency Rescue negalimas, nes po perkėlimo nepavyksta sudaryti privalomo backup plano: " if lang=="LT" else
+                                     "Emergency Rescue cannot be applied because required backup coverage cannot be rebuilt: ")
+                                    + "; ".join(map(str,backup_errors[:3]))
+                                )
+                                st.stop()
+                            # Final payload is validated against the NEW backup plan that
+                            # will be committed in the same DB transaction.
+                            fresh_rescue=revalidate_loaded_result(
+                                year,month,people_for_stored_result(fresh_rescue,year,month),fresh_rescue,
+                                backup_assignments=desired_backups,
+                                validation_mode="emergency_rescue",
+                            )
+                            final_rescue_errors=list((fresh_rescue.stats or {}).get("global",{}).get("errors",[]) or [])
+                            if final_rescue_errors:
+                                st.error(
+                                    ("Emergency Rescue negalimas dėl operational HARD taisyklės: " if lang=="LT" else
+                                     "Emergency Rescue is blocked by an operational HARD rule: ")
+                                    + str(final_rescue_errors[0])
+                                )
+                                st.stop()
+
+                            meta={
+                                "kind":"emergency_rescue",
+                                "phase":"applied",
+                                "mover":mover,
+                                "rescued_person":rescued_person,
+                                "source_slot":int(source_sid),
+                                "target_slot":int(target_sid),
+                                "source_department":source_slot.department,
+                                "target_department":target_slot.department,
+                                "day":int(source_slot.day),
+                                "block":source_slot.block,
+                                "source_vacated":True,
+                                "bilateral_swap":False,
+                                "fairness_neutral":True,
+                                "workload_credit_neutral":True,
+                                "workload_credit_source":"PUBLISHED_SYSTEM",
+                                
+                                "rescued_person_absence_outcome":"OUTSIDE_SCHEDULER_HR",
+                                "recorded_by":active_user,
+                                "recorded_at":datetime.now(timezone.utc).isoformat(),
+                                "note":str(rescue_note or ""),
+                            }
+                            try:
+                                saved=db.apply_emergency_rescue_atomic_v2585(
+                                    year,month,source_sid,target_sid,mover,rescued_person,
+                                    serialize_result(fresh_rescue),desired_backups,
+                                    reason=_swap_meta_encode(meta),
+                                )
+                            except Exception as exc:
+                                st.error(
+                                    ("Emergency Rescue NEĮRAŠYTAS — transakcija atšaukta, ACTUAL grafikas ir backup planas nepakeisti. " if lang=="LT" else
+                                     "Emergency Rescue NOT recorded — transaction rolled back; ACTUAL and backup plan were left unchanged. ")
+                                    + str(exc)
+                                )
+                                st.stop()
+                            refresh_calendar_subscription_feeds([mover,rescued_person])
+
+                            st.session_state["_swap_response_flash"]=(
+                                "success",
+                                (
+                                    f"ONE-WAY RESCUE įrašytas: {mover} "
+                                    f"{source_slot.department} → {target_slot.department}; "
+                                    f"RESCUED {rescued_person}. CURRENT source paliktas tuščias. Workload credit visiems nepakitęs."
+                                )
+                                if lang=="LT" else
+                                (
+                                    f"ONE-WAY RESCUE recorded: {mover} "
+                                    f"{source_slot.department} → {target_slot.department}; "
+                                    f"RESCUED {rescued_person}. Source post left vacant. Workload credit unchanged for everyone."
+                                )
+                            )
                             st.rerun()
+
+            rescue_all=[
+                r for r in db.list_swap_requests(
+                    year,month,None if senior_mode else active_user
+                )
+                if _swap_meta_decode(r.get("reason")).get("kind") in {"emergency_rescue","emergency_actual"}
+            ]
+            if rescue_all:
+                st.markdown(
+                    "#### ONE-WAY rescue žurnalas"
+                    if lang=="LT" else
+                    "#### ONE-WAY rescue log"
+                )
+                for idx,r in enumerate(rescue_all,start=1):
+                    meta=_swap_meta_decode(r.get("reason"))
+                    with st.container(border=True):
+                        if meta.get("kind")=="emergency_rescue":
+                            mover_i=str(r.get("person_a") or "")
+                            rescued_i=str(meta.get("rescued_person") or r.get("person_b") or "")
+                            st.markdown(
+                                f"**RESCUE #{idx} · DB #{r.get('id')}**"
+                            )
+                            _render_swap_people_line(mover_i,rescued_i,"→")
+                            lc1,lc2=st.columns(2)
+                            with lc1:
+                                st.markdown(
+                                    f"**CURRENT LOCATION**  \n{meta.get('source_department','—')} · "
+                                    f"{meta.get('day','—')} · {meta.get('block','—')}"
+                                )
+                            with lc2:
+                                st.markdown(
+                                    f"**MOVING TO**  \n{meta.get('target_department','—')} · "
+                                    f"{meta.get('day','—')} · {meta.get('block','—')}"
+                                )
+                            st.markdown(
+                                "**RESCUED PERSON:** "+badge(rescued_i,include_name=True),
+                                unsafe_allow_html=True,
+                            )
+                            st.caption(
+                                (
+                                    "Source postas paliktas tuščias; rescued person neperkeltas atgal. "
+                                    + (f"Pastaba: {meta.get('note')}" if meta.get("note") else "")
+                                )
+                                if lang=="LT" else
+                                (
+                                    "Source post left vacant; rescued person was not moved back. "
+                                    + (f"Note: {meta.get('note')}" if meta.get("note") else "")
+                                )
+                            )
+                            st.caption(
+                                "DELETE / UNDO atkurs mover į CURRENT LOCATION ir RESCUED PERSON į ankstesnį kritinį postą tik jei šie slotai po Rescue nebuvo pakeisti dar kartą."
+                                if lang=="LT" else
+                                "DELETE / UNDO restores the mover to CURRENT LOCATION and the RESCUED PERSON to the prior critical post only if those slots have not changed again."
+                            )
+                            if _delete_confirm(f"emergency_rescue_{r['id']}",applied=True):
+                                try:
+                                    saved=_delete_swap_row(r,year,month)
+                                    st.session_state["_swap_response_flash"]=(
+                                        "success",
+                                        ("Emergency Rescue ištrintas ir ACTUAL saugiai atkurtas." if lang=="LT" else
+                                         "Emergency Rescue deleted and ACTUAL safely restored.")
+                                    )
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(("Emergency Rescue DELETE / UNDO nepavyko: " if lang=="LT" else "Emergency Rescue DELETE / UNDO failed: ")+str(exc))
+                        else:
+                            st.warning(
+                                (
+                                    f"LEGACY emergency_actual #{r.get('id')}: "
+                                    f"{r.get('person_a')} ↔ {r.get('person_b')}. "
+                                    "Tai senas bilateralinis įrašas iš ankstesnės, klaidingai pavadintos Emergency logikos."
+                                )
+                                if lang=="LT" else
+                                (
+                                    f"LEGACY emergency_actual #{r.get('id')}: "
+                                    f"{r.get('person_a')} ↔ {r.get('person_b')}. "
+                                    "This is a historical bilateral record from the old misnamed Emergency flow."
+                                )
+                            )
 
         # V2.5.13 — senior-only fairness-neutral post-publication repair workflow.
         if senior_mode:
@@ -4088,7 +6733,7 @@ pos+=1
 _RESEARCH_PREF_COLUMNS = [
     "initials","name","unavailable","unavailable_am","unavailable_pm","vacation","justified_absence","long_duty",
     "soft_free","soft_free_am","soft_free_pm","preferred","preferred_am","preferred_pm",
-    "spread_preference","holiday_preference","avoid_doubles","target_adjustment",
+    "spread_preference","holiday_preference","shift_length_preference","avoid_doubles","target_adjustment",
     "prior_weekend_count","prior_friday_count","prior_double_count","prior_weekday_day_count",
 ] + [f"prior_rotation__{cat}" for cat in ROTATION_CATEGORIES]
 
@@ -4119,6 +6764,7 @@ def _research_colmap(df):
         "weekend_preference":["weekendpreference","savaitgaliupreference"],
         "spread_preference":["spreadpreference","issklaidymas","koncentracija"],
         "holiday_preference":["holidaypreference","svenciupreference","sventes","publicholidays"],
+        "shift_length_preference":["shiftlengthpreference","darbotrukme","pamainustrukme","workdaylength"],
         "avoid_doubles":["avoiddoubles","vengtidubliu","vengtidvigubu"],
         "target_adjustment":["targetadjustment","targetokorekcija"],
         "prior_weekend_count":["priorweekendcount","ankstesnisavaitgaliai"],
@@ -4234,7 +6880,7 @@ def research_schedule_template(y,m):
             "person":"",
         })
     guide=pd.DataFrame([
-        ["person","Enter initials exactly as roster uses them, e.g. R.Š. / G.M."],
+        ["person","Enter initials exactly as roster uses them, e.g. ŠR / MG"],
         ["Rows","Leave unfilled/unused optional slots blank. Do not delete slot_id if using this template."],
         ["Existing Excel","Long-format schedules are also accepted if columns equivalent to date/day, department, shift, person exist."],
         ["Month",f"{y}-{m:02d}"],
@@ -4743,6 +7389,7 @@ def research_people_from_excel(uploaded,y,m,return_audit=False):
             weekend_preference=max(-2,min(2,_research_int(scalar("weekend_preference",0),0))),
             holiday_preference=max(-1,min(1,_research_int(scalar("holiday_preference",0),0))),
             spread_preference=max(-2,min(2,_research_int(scalar("spread_preference",0),0))),
+            shift_length_preference=max(0,min(3,_research_int(scalar("shift_length_preference",0),0))),
             avoid_doubles=_research_bool(scalar("avoid_doubles",False)),
             target_adjustment=_research_int(
                 scalar("target_adjustment",base.get("target_adjustment",0)),
@@ -5215,6 +7862,7 @@ def _research_people_snapshot(people):
             "weekend_preference":p.weekend_preference,
             "holiday_preference":p.holiday_preference,
             "spread_preference":p.spread_preference,
+            "shift_length_preference":int(getattr(p,"shift_length_preference",0) or 0),
             "avoid_doubles":bool(p.avoid_doubles),
             "target_adjustment":p.target_adjustment,
             "prior_weekend_count":p.prior_weekend_count,
@@ -5222,6 +7870,7 @@ def _research_people_snapshot(people):
             "prior_double_count":p.prior_double_count,
             "prior_weekday_day_count":p.prior_weekday_day_count,
             "prior_rotation_counts":dict(p.prior_rotation_counts or {}),
+            "prior_last_day_onko":bool(getattr(p,"prior_last_day_onko",False)),
         })
     return _research_json_safe(rows)
 
@@ -5249,6 +7898,7 @@ def _research_people_from_snapshot(rows):
             weekend_preference=int(r.get("weekend_preference") or 0),
             holiday_preference=max(-1,min(1,int(r.get("holiday_preference") or 0))),
             spread_preference=int(r.get("spread_preference") or 0),
+            shift_length_preference=max(0,min(3,int(r.get("shift_length_preference") or 0))),
             avoid_doubles=bool(r.get("avoid_doubles",False)),
             target_adjustment=int(r.get("target_adjustment") or 0),
             prior_weekend_count=int(r.get("prior_weekend_count") or 0),
@@ -5256,6 +7906,7 @@ def _research_people_from_snapshot(rows):
             prior_double_count=int(r.get("prior_double_count") or 0),
             prior_weekday_day_count=int(r.get("prior_weekday_day_count") or 0),
             prior_rotation_counts={str(k):int(v) for k,v in (r.get("prior_rotation_counts") or {}).items()},
+            prior_last_day_onko=bool(r.get("prior_last_day_onko",False)),
         ))
     return people
 
@@ -5519,10 +8170,11 @@ def _research_run_log_df(runs):
             "SYSTEM-HARD worst-post lock":rg.get("post_system_hard_worst_spread_lock"),
             "SYSTEM-HARD 9-post total spread lock":rg.get("post_system_hard_total_spread_lock"),
             "Distinct workplace spread":rg.get("distinct_rotation_spread"),
-            "Post spread gate <=2":rg.get("post_spread_quality_gate_passed"),
+            "Post structural water-fill gate":rg.get("post_spread_quality_gate_passed"),
             "Monthly workplace imbalance":r.get("monthly_workplace_imbalance"),
             "Weekend spread":r.get("weekend_spread"),
             "Friday spread":r.get("friday_spread"),
+            "Friday 0-1 gate":("PASS" if (r.get("friday_spread") is not None and int(r.get("friday_spread") or 0)<=1) else "LEGACY / INVALID"),
             "Double spread":r.get("double_spread"),
             "Weekday-day spread":r.get("weekday_day_spread"),
             "Distinct workplaces":r.get("mean_distinct_workplaces"),
@@ -5981,9 +8633,17 @@ def _research_shadow_result_from_run(run,people,y,m):
         frozen_stats=validate_schedule(
             y,m,people,make_slots(y,m),assignments,_research_targets(y,m,people)
         )
+    proof=_friday_waterfill_proof(frozen_stats)
+    frozen_ok=bool(run.get("success")) and bool(proof.get("passed"))
+    msg=f"Frozen research shadow run {run.get('run_no')}"
+    if bool(run.get("success")) and not proof.get("passed"):
+        msg+=(
+            f" — LEGACY FRIDAY WATER-FILL INVALID: total {proof['total']} requires "
+            f"{proof['floor']}-{proof['ceil']} each, observed spread {proof['spread']}"
+        )
     return SolveResult(
-        ok=bool(run.get("success")),
-        message=f"Frozen research shadow run {run.get('run_no')}",
+        ok=frozen_ok,
+        message=msg,
         assignments=assignments,
         targets=_research_targets(y,m,people),
         stats=frozen_stats,
@@ -6035,7 +8695,7 @@ def _research_people_stats_df(result):
             "Weekend assignments":d.get("weekend_assignments"),
             "Prior weekends":d.get("prior_weekend_count"),
             "Cumulative weekends":d.get("cumulative_weekend_count"),
-            "Friday assignments":d.get("friday_assignments"),
+            "Friday assignments (frozen SYSTEM run)":d.get("friday_assignments"),
             "Doubles":d.get("doubles"),
             "Max consecutive days":d.get("max_consecutive_days"),
             "Max rolling-7 hours":d.get("max_rolling7_hours"),
@@ -6233,8 +8893,8 @@ def research_shadow_xlsx(y,m,case,people,runs):
         pd.DataFrame([
             ["Research object","MY ENGINE SHADOW / FAKE GENERATOR"],
             ["Cycle",f"{y}-{m:02d}"],
-            ["Operational status","RESEARCH ONLY — unconfirmed; never published; never changes G.M. operational schedule"],
-            ["Profile","R.Š. resident profile / researcher access"],
+            ["Operational status","RESEARCH ONLY — unconfirmed; never published; never changes the operational Seniūnė schedule"],
+            ["Profile","ŠR resident profile / researcher access"],
             ["Input source","Uploaded wishes / HARD workbook"],
             ["Input SHA-256",case.get("input_hash")],
             ["Engine version at lock",case.get("app_version_at_lock")],
@@ -6327,7 +8987,7 @@ def _render_research_shadow_result(rr,run_no,y,m,people,primary=False):
     m1.metric("HARD errors *",g.get("hard_errors","—"))
     m2.metric("Monthly fairness",("—" if g.get("monthly_fairness_score") is None else f"{g.get('monthly_fairness_score')}%"))
     m3.metric("Worst post spread",g.get("worst_monthly_post_spread","—"))
-    m4.metric("Post spread gate ≤2","PASS" if g.get("post_spread_quality_gate_passed") else "FAIL")
+    m4.metric("Post structural water-fill","PASS" if g.get("post_spread_quality_gate_passed") else "FAIL")
     q1,q2,q3,q4=st.columns(4)
     q1.metric("Active SOFT residents",g.get("active_preference_residents",0))
     q2.metric("Worst preference %",g.get("min_preference_score") if g.get("min_preference_score") is not None else "N/A")
@@ -6348,6 +9008,22 @@ def _render_research_shadow_result(rr,run_no,y,m,people,primary=False):
         height=620,
     )
 
+    friday_proof=_friday_waterfill_proof(rr.stats)
+    if not friday_proof.get("passed"):
+        counts=friday_proof.get("counts") or {}
+        st.error(
+            "FRIDAY WATER-FILL INVALID šiame frozen run: "
+            f"{friday_proof['total']} Friday assignments / {friday_proof['n']} rezidentų → "
+            f"teisingas entitlement {friday_proof['floor']}-{friday_proof['ceil']} kiekvienam; "
+            f"šiame run observed {min(counts.values()) if counts else 0}-{max(counts.values()) if counts else 0} "
+            f"(spread {friday_proof['spread']}). Tai legacy frozen rezultatas; naujas V2.5.86 run su tokiu spread negali būti pažymėtas validžiu."
+        )
+    else:
+        st.success(
+            f"Friday SYSTEM water-fill PASS: {friday_proof['total']} assignments / {friday_proof['n']} residents → "
+            f"{friday_proof['floor']}-{friday_proof['ceil']} each, raw spread {friday_proof['spread']}."
+        )
+
     t1,t2,t3,t4=st.tabs(["Resident stats","Post matrix","Global metrics","HARD / diagnostics"])
     with t1:
         st.dataframe(_research_people_stats_df(rr),use_container_width=True,hide_index=True,height=520)
@@ -6364,10 +9040,10 @@ def _render_research_shadow_result(rr,run_no,y,m,people,primary=False):
 
 def render_research_shadow_generator():
     st.subheader("FAKE GENERATOR — RESEARCH SHADOW")
-    st.success("R.Š. RESEARCHER ACCESS — available from the REZIDENTAS profile. Senior/Seniūnė profile is not required.")
+    st.success("ŠR RESEARCHER ACCESS — embedded in the same single ŠR account window. No profile switching is required.")
     st.error(
         "RESEARCH ONLY. Šis generatorius NIEKADA nepublikuoja grafiko, "
-        "nekeičia G.M. realaus grafiko, backupų, fairness_history ar operacinių duomenų."
+        "nekeičia realaus operacinio Seniūnės grafiko, backupų, fairness_history ar operacinių duomenų."
     )
     st.caption(
         "GENERATE MOCK SCHEDULE naudoja tą patį solve_schedule engine kaip normalus Seniūnės Sudarymas. "
@@ -6519,12 +9195,12 @@ def render_research_shadow_generator():
         f"created {str(case.get('created_at') or '')[:19]}"
     )
 
-    # Researcher-only reset: intentionally available in R.Š. resident profile so
-    # handing the Seniūnė account to G.M. never removes research control.
+    # Researcher-only reset: intentionally available in ŠR resident profile so
+    # operational Seniūnė role changes never remove ŠR research control.
     with st.expander("DELETE / RESET FROZEN MOCK EXPERIMENT",expanded=False):
         st.warning(
             "This deletes the active research-shadow case and all its frozen runs for this month, then lets you upload wishes and generate a new FIRST SHOT. "
-            "It does NOT delete or change G.M.'s draft/published schedule, operational backups, swaps or fairness_history. A reset audit tombstone is kept."
+            "It does NOT delete or change the operational Seniūnė draft/published schedule, backups, swaps or fairness_history. A reset audit tombstone is kept."
         )
         reset_token=f"DELETE SHADOW {year}-{month:02d}"
         typed=st.text_input(
@@ -6683,7 +9359,7 @@ def render_research_shadow_generator():
 
 def render_available_gpt_vs_engine_research():
     st.subheader("AVAILABLE GPT + HUMAN vs MY ENGINE TOOL")
-    st.success("R.Š. RESEARCHER-ONLY · OFFICIAL RUN LOCK")
+    st.success("ŠR RESEARCHER-ONLY · OFFICIAL RUN LOCK")
     st.caption(
         "Comparatorius = bendrinis / nespecializuotas GPT + seniūnė, kuri iteravo rankiniu būdu, "
         "rašė papildymus ir vizualiai sprendė, kada atsakymas jau pakankamai geras. "
@@ -6825,24 +9501,24 @@ def render_available_gpt_vs_engine_research():
 
         st.markdown("### GPT+human proceso klausimynai")
         st.caption(
-            "Gali įkelti G.M. ir L.V. to mėnesio retrospektyvius klausimynus. "
+            "Gali įkelti MG ir VL to mėnesio retrospektyvius klausimynus. "
             "Sistema perskaitys tekstą ir pasiūlys iterations / time reikšmes, bet jos nėra aklai užrakinamos — žemiau visada matai ir patvirtini galutinį skaičių."
         )
         q1,q2=st.columns(2)
         gm_q=q1.file_uploader(
-            "G.M. klausimynas",
+            "MG klausimynas",
             type=["pdf","docx","xlsx","xls","csv","txt","md"],
             key=f"gm_questionnaire_{ry}_{rm}"
         )
         lv_q=q2.file_uploader(
-            "L.V. klausimynas",
+            "VL klausimynas",
             type=["pdf","docx","xlsx","xls","csv","txt","md"],
             key=f"lv_questionnaire_{ry}_{rm}"
         )
 
         questionnaire_payloads={}
         parsed_by_respondent={}
-        for initials,uploaded in [("G.M.",gm_q),("L.V.",lv_q)]:
+        for initials,uploaded in [("MG",gm_q),("VL",lv_q)]:
             if uploaded is None:
                 continue
             extract=_questionnaire_extract_text(uploaded)
@@ -7003,7 +9679,7 @@ def render_available_gpt_vs_engine_research():
     questionnaires=db.list_research_scheduler_questionnaires_v2542(case["id"])
     q_by={q.get("respondent_initials"):q for q in questionnaires}
 
-    st.markdown("### G.M. / L.V. retrospective questionnaires")
+    st.markdown("### MG / VL retrospective questionnaires")
     if questionnaires:
         st.dataframe(pd.DataFrame([{
             "Respondent":q.get("respondent_initials"),
@@ -7014,7 +9690,7 @@ def render_available_gpt_vs_engine_research():
             "Locked at":str(q.get("created_at") or "")[:19],
         } for q in questionnaires]),use_container_width=True,hide_index=True)
 
-    for initials in ("G.M.","L.V."):
+    for initials in ("MG","VL"):
         if initials in q_by:
             q=q_by[initials]
             payload=q.get("parser_payload") or {}
@@ -7315,13 +9991,13 @@ def render_available_gpt_vs_engine_research():
     )
 
 
-# --- R.Š.-only Sudarymas: isolated research shadow / fake generator ---
-if active_user=="R.Š." and research_shadow_tab_index is not None:
+# --- ŠR-only Sudarymas: isolated research shadow / fake generator ---
+if active_user==RESEARCHER_INITIALS and research_shadow_tab_index is not None:
     with tabs[research_shadow_tab_index]:
         render_research_shadow_generator()
 
-# --- R.Š.-only locked research comparison: general GPT+human vs specialized engine ---
-if active_user=="R.Š." and advanced_mode:
+# --- ŠR-only locked research comparison: general GPT+human vs specialized engine ---
+if active_user==RESEARCHER_INITIALS and advanced_mode:
     with tabs[0]:
         render_available_gpt_vs_engine_research()
 
@@ -7383,22 +10059,22 @@ with tabs[pos]:
             db.submit_research_survey(phase,sy,sm,answers,{"problem":problem,"improve":improve,"checkpoint":cp})
             st.success(tr("research_saved"))
 
-    # G.M.: workflow-burden checkpoints, separate from her resident survey.
-    if active_user=="G.M.":
+    # Current Seniūnė: workflow-burden checkpoints, separate from the resident survey.
+    if active_user==SENIOR_INITIALS:
         st.divider(); st.markdown(f"### {tr('research_scheduler_section')}")
         st.caption(tr("research_scheduler_intro"))
         study_options=[f"{yy:04d}-{mm:02d}" for yy,mm in STUDY_MONTHS]
         current_key=f"{year:04d}-{month:02d}"
         default_idx=study_options.index(current_key) if current_key in study_options else 0
-        month_key=st.selectbox(tr("research_scheduler_month"),study_options,index=default_idx,format_func=lambda x:study_month_label(int(x[:4]),int(x[5:])),key="gm_research_month")
+        month_key=st.selectbox(tr("research_scheduler_month"),study_options,index=default_idx,format_func=lambda x:study_month_label(int(x[:4]),int(x[5:])),key="senior_research_month")
         gy,gm=map(int,month_key.split("-"))
-        checkpoint=st.radio(tr("research_scheduler_checkpoint"),["post_creation","post_month"],format_func=lambda x:tr("research_after_creation") if x=="post_creation" else tr("research_after_month"),horizontal=True,key="gm_research_checkpoint")
+        checkpoint=st.radio(tr("research_scheduler_checkpoint"),["post_creation","post_month"],format_func=lambda x:tr("research_after_creation") if x=="post_creation" else tr("research_after_month"),horizontal=True,key="senior_research_checkpoint")
         old=db.get_my_scheduler_research_checkpoint(gy,gm,checkpoint) or {}
         oa=old.get("answers") or {}; of=old.get("free_text") or {}
         if checkpoint=="post_creation":
             methods=["tool","excel","shadow"]
             method_labels={"tool":tr("research_method_tool"),"excel":tr("research_method_excel"),"shadow":tr("research_method_shadow")}
-            with st.form(f"gm_creation_{gy}_{gm}"):
+            with st.form(f"senior_creation_{gy}_{gm}"):
                 method=st.selectbox(tr("research_workflow_method"),methods,index=methods.index(oa.get("method","shadow") if oa.get("method","shadow") in methods else "shadow"),format_func=lambda x:method_labels[x])
                 c1,c2=st.columns(2)
                 total_minutes=c1.number_input(tr("research_total_minutes"),0,2000,int(oa.get("total_minutes",0) or 0),5)
@@ -7420,19 +10096,19 @@ with tabs[pos]:
                     db.submit_scheduler_research_checkpoint(gy,gm,checkpoint,{"method":method,"total_minutes":total_minutes,"corrections":corrections,"resident_contacts":contacts,"communication_minutes":comm_minutes,"stress":stress,"fairness_confidence":fairness,"hard_confidence":hard,"satisfaction":sat,"excel_minutes":excel_minutes,"tool_minutes":tool_minutes,"excel_corrections":excel_corr,"tool_corrections":tool_corr},{"notes":notes})
                     st.success(tr("research_scheduler_saved"))
         else:
-            with st.form(f"gm_month_{gy}_{gm}"):
+            with st.form(f"senior_month_{gy}_{gm}"):
                 c1,c2=st.columns(2)
                 post_minutes=c1.number_input(tr("research_post_minutes"),0,3000,int(oa.get("post_minutes",0) or 0),5)
                 interventions=c2.number_input(tr("research_post_interventions"),0,500,int(oa.get("interventions",0) or 0),1)
                 contacts=st.number_input(tr("research_post_contacts"),0,1000,int(oa.get("post_contacts",0) or 0),1)
-                stress=st.slider(tr("research_stress"),0,10,int(oa.get("stress",5) or 5),1,key=f"gm_post_stress_{gy}_{gm}")
+                stress=st.slider(tr("research_stress"),0,10,int(oa.get("stress",5) or 5),1,key=f"senior_post_stress_{gy}_{gm}")
                 q1,q2=st.columns(2)
                 actual_conf=q1.slider(tr("research_actual_confidence"),1,5,int(oa.get("actual_confidence",3) or 3),1)
-                sat=q2.slider(tr("research_scheduler_satisfaction"),1,5,int(oa.get("satisfaction",3) or 3),1,key=f"gm_post_sat_{gy}_{gm}")
+                sat=q2.slider(tr("research_scheduler_satisfaction"),1,5,int(oa.get("satisfaction",3) or 3),1,key=f"senior_post_sat_{gy}_{gm}")
                 use_opts=["yes","unsure","no"]; use_labels={"yes":tr("research_yes"),"unsure":tr("research_unsure"),"no":tr("research_no")}
                 old_use=oa.get("use_next","unsure") if oa.get("use_next","unsure") in use_opts else "unsure"
                 use_next=st.selectbox(tr("research_use_next"),use_opts,index=use_opts.index(old_use),format_func=lambda x:use_labels[x])
-                notes=st.text_area(tr("research_scheduler_notes"),value=of.get("notes","") or "",key=f"gm_post_notes_{gy}_{gm}")
+                notes=st.text_area(tr("research_scheduler_notes"),value=of.get("notes","") or "",key=f"senior_post_notes_{gy}_{gm}")
                 if st.form_submit_button(tr("research_submit"),type="primary"):
                     db.submit_scheduler_research_checkpoint(gy,gm,checkpoint,{"post_minutes":post_minutes,"interventions":interventions,"post_contacts":contacts,"stress":stress,"actual_confidence":actual_conf,"satisfaction":sat,"use_next":use_next},{"notes":notes})
                     st.success(tr("research_scheduler_saved"))
@@ -7445,10 +10121,10 @@ with tabs[pos]:
             nsw=len(db.list_swap_requests(gy,gm,None)); bsw=len(db.list_backup_swap_requests(gy,gm,None)); covers=sum(1 for r in db.list_backups(gy,gm) if r.get("completed_at"))
             m1,m2,m3,m4=st.columns(4); m1.metric(tr("research_changed_assignments"),changed); m2.metric(tr("research_normal_swaps"),nsw); m3.metric(tr("research_backup_swaps"),bsw); m4.metric(tr("research_completed_covers"),covers)
 
-    # Aggregate dashboard: G.M. gets group-only results; R.Š. gets full research QA / exports.
-    if active_user in ("R.Š.","G.M.") and advanced_mode:
+    # Aggregate dashboard: current Seniūnė gets group-only results; ŠR gets full research QA / exports.
+    if active_user in (RESEARCHER_INITIALS,SENIOR_INITIALS) and advanced_mode:
         st.divider(); st.markdown(f"### {tr('research_dashboard')}")
-        st.info(tr("research_rs_note") if active_user=="R.Š." else tr("research_gm_note"))
+        st.info(tr("research_rs_note") if active_user==RESEARCHER_INITIALS else tr("research_gm_note"))
         counts=db.research_checkpoint_counts(); summary=db.research_checkpoint_summary()
         count_map={(int(r.get("cycle_year")),int(r.get("cycle_month"))):int(r.get("response_count",0)) for r in counts}
         c1,c2,c3=st.columns(3)
@@ -7482,10 +10158,15 @@ with tabs[pos]:
                 published_sat=gg.get("mean_preference_score")
                 actual_sat=ag.get("mean_preference_score")
                 sat_delta=(round(float(actual_sat)-float(published_sat),1) if published_sat is not None and actual_sat is not None else None)
+                sys_live=calculate_live_fairness_snapshot(yy,mm,br.assignments,people_initials=[p["initials"] for p in DEFAULT_PEOPLE],backup_assignments=[])["global"]
+                act_live=calculate_live_fairness_snapshot(yy,mm,cr.assignments,people_initials=[p["initials"] for p in DEFAULT_PEOPLE],backup_assignments=db.list_backups(yy,mm))["global"]
                 row.update({
                     ("Privalomų taisyklių klaidos" if lang=="LT" else "HARD"):gg.get("hard_errors"),
-                    ("Mėnesio teisingumas" if lang=="LT" else "Monthly fairness"):gg.get("monthly_fairness_score",gg.get("fairness_score")),
-                    ("Kaupiamasis teisingumas" if lang=="LT" else "Cumulative fairness"):gg.get("cumulative_fairness_score",gg.get("fairness_score")),
+                    ("SYSTEM mėnesio fairness" if lang=="LT" else "SYSTEM monthly fairness"):sys_live.get("monthly_fairness_score"),
+                    ("ACTUAL mėnesio fairness" if lang=="LT" else "ACTUAL monthly fairness"):act_live.get("monthly_fairness_score"),
+                    ("ACTUAL−SYSTEM fairness, p.p." if lang=="LT" else "ACTUAL−SYSTEM fairness, pp"):round(float(act_live.get("monthly_fairness_score",0))-float(sys_live.get("monthly_fairness_score",0)),1),
+                    ("SYSTEM postų imbalance" if lang=="LT" else "SYSTEM post imbalance"):sys_live.get("rotation_monthly_imbalance"),
+                    ("ACTUAL postų imbalance" if lang=="LT" else "ACTUAL post imbalance"):act_live.get("rotation_monthly_imbalance"),
                     ("SYSTEM pageidavimų išpildymas %" if lang=="LT" else "SYSTEM request satisfaction %"):published_sat,
                     ("ACTUAL pageidavimų išpildymas %" if lang=="LT" else "ACTUAL request satisfaction %"):actual_sat,
                     ("Pokytis po apsikeitimų, proc. p." if lang=="LT" else "Change after swaps, pp"):sat_delta,
@@ -7508,7 +10189,7 @@ with tabs[pos]:
             st.markdown(f"### {tr('research_generation_telemetry')}")
             st.dataframe(pd.DataFrame(gen_rows),use_container_width=True,hide_index=True)
 
-        if active_user=="R.Š.":
+        if active_user=="ŠR":
             st.caption(tr("research_researcher_only"))
             raw=db.research_survey_deidentified()
             if raw:
@@ -7597,8 +10278,10 @@ if advanced_mode:
                 if pref_requests:
                     score=round(100*(len(pref_requests)-len(pref_miss))/len(pref_requests),1)
                     rows.append({tr("criterion"):tr("preferred_ok"),tr("result"):component_status(score),tr("score"):f"{score}%",tr("explanation"):("—" if not pref_miss else f"{tr('missed_dates')}: {', '.join(map(str,pref_miss))}")})
-                wl_ok=abs(float(cd.get("workload",0))-float(cd.get("target",0)))<1e-9
-                rows.append({tr("criterion"):tr("workload_ok"),tr("result"):tr("matches") if wl_ok else tr("mismatch"),tr("score"):"100%" if wl_ok else "0%",tr("explanation"):f"{cd.get('workload')} / {cd.get('target')}"})
+                wl_credit=float(cd.get("workload_credit",cd.get("workload",0)) or 0)
+                wl_target=float(cd.get("target",0) or 0)
+                wl_ok=abs(wl_credit-wl_target)<1e-9
+                rows.append({tr("criterion"):tr("workload_ok"),tr("result"):tr("matches") if wl_ok else tr("mismatch"),tr("score"):"100%" if wl_ok else "0%",tr("explanation"):(f"{wl_credit:g} / {wl_target:g} · SYSTEM krūvio kreditas užšaldytas publikavimo metu" if lang=="LT" else f"{wl_credit:g} / {wl_target:g} · SYSTEM workload credit frozen at publication")})
                 labels={"weekday_preference":tr("weekday_pref"),"weekend_preference":tr("weekend_pref"),"spread_preference":tr("spread_pref"),"avoid_doubles":tr("avoid_double_shifts")}
                 for key,label in labels.items():
                     if key in comps:
@@ -7644,7 +10327,7 @@ if senior_mode:
             st.markdown("### 5 minučių audito protokolas")
             audit_rows=[
                 {"Žingsnis":"1","Kur žiūrėti":"HARD / diagnostics","Ką patikrinti":"0 TRUE ABSOLUTE HARD klaidų; jei RESIDENT HARD prarastas — turi būti aiškiai nurodyta kas, kada ir kodėl.","Jei blogai":"Nepublikuoti."},
-                {"Žingsnis":"2","Kur žiūrėti":"Post matrix","Ką patikrinti":"SPS RO, SPS UG ir savaitgalių spread 0–1; kiti postai pagal guardrail / post debt.","Jei blogai":"Nepublikuoti arba aiškiai patikrinti, ar nukrypimas matematiškai neišvengiamas."},
+                {"Žingsnis":"2","Kur žiūrėti":"Post matrix","Ką patikrinti":"SPS RO, SPS UG ir savaitgalių spread 0–1; kiti postai pagal einamojo mėnesio struktūrinį water-fill guardrail.","Jei blogai":"Nepublikuoti arba aiškiai patikrinti, ar nukrypimas matematiškai neišvengiamas."},
                 {"Žingsnis":"3","Kur žiūrėti":"Resident stats","Ką patikrinti":"Nėra vieno žmogaus su neproporcingu savaitiniu krūviu; generatoriaus max rolling-7 ir doubles/recovery rodikliai logiški.","Jei blogai":"Regeneruoti / taisyti prieš publikavimą."},
                 {"Žingsnis":"4","Kur žiūrėti":"Išplėstinis / Patikra","Ką patikrinti":"Pasirinkti 3–5 rezidentus, ypač mažiausio ir didžiausio pageidavimų išpildymo, ir ranka patikrinti 1–2 konkrečius įrankio teiginius kiekvienam.","Jei blogai":"Jei teiginys nesutampa su SYSTEM grafiku, laikyti tai metrikos / programos klaida ir nepublikuoti, kol ištaisyta."},
                 {"Žingsnis":"5","Kur žiūrėti":"Grafikas + Proof","Ką patikrinti":"Coverage, nepaaiškintos skylės, akivaizdūs overlap'ai ir ar galutinis grafikas atitinka tai, ką rodo suvestinės.","Jei blogai":"Nepublikuoti."},
@@ -7653,7 +10336,7 @@ if senior_mode:
             st.markdown("### Įrankio teiginių patikra — paprastai, be žargono")
             st.info(
                 "**Teiginys** = vienas konkretus sakinys, kurį įrankis sako apie grafiką. Pvz.: "
-                "„R.Š. 18 d. PM prašė laisvos, bet SYSTEM grafike paskirtas SPS UG PM, todėl pageidavimas neįvykdytas.“ "
+                "„ŠR 18 d. PM prašė laisvos, bet SYSTEM grafike paskirtas SPS UG PM, todėl pageidavimas neįvykdytas.“ "
                 "Patikra reiškia tik viena: atsidaryti 18 d. ir pažiūrėti, ar tas SPS UG PM tikrai yra. "
                 "Nereikia iš naujo perskaičiuoti viso mėnesio."
             )
@@ -7708,9 +10391,9 @@ if senior_mode:
             st.markdown("### Kas po publikavimo yra normalu")
             st.markdown(
                 "- **Swapai** keičia ACTUAL grafiką; SYSTEM fairness baseline lieka užšaldytas.\n"
-                "- **Liga / neatvykimas** gali perkelti jau dirbantį žmogų iš optional posto į SPS; tai fairness-neutral operacinis repair.\n"
+                "- **Liga / neatvykimas** gali perkelti jau dirbantį žmogų iš optional posto į SPS; SYSTEM baseline dėl to nesikeičia, tačiau ACTUAL postų/fairness statistika perskaičiuojama pagal realų darbą.\n"
                 "- **SOFT neįvykdymas** savaime nėra klaida, jei aukštesnio rango taisyklės ir horizontalus water-filling paaiškina rezultatą.\n"
-                "- **Ordinary posto spread iki guardrail** gali būti sąmoningas kompromisas su POST DEBT kompensacija kitais mėnesiais."
+                "- **Ordinary posto spread iki guardrail** gali būti sąmoningas kompromisas su FUTURE CATCH-UP kompensacija kitais mėnesiais."
             )
             st.markdown("### Seniūnės darbo eiga — nuo nulio iki mėnesio uždarymo")
             workflow=pd.DataFrame([
@@ -7734,7 +10417,7 @@ if senior_mode:
             st.markdown("### Five-minute audit protocol")
             audit_rows=[
                 {"Step":"1","Where":"HARD / diagnostics","Verify":"Zero TRUE ABSOLUTE HARD errors; every Resident-HARD loss is explicitly identified and explained.","If failed":"Do not publish."},
-                {"Step":"2","Where":"Post matrix","Verify":"SPS RO, SPS UG and weekend spread 0–1; other posts remain within guardrails / post debt.","If failed":"Do not publish unless the deviation is explicitly proven unavoidable."},
+                {"Step":"2","Where":"Post matrix","Verify":"SPS RO, SPS UG and weekend spread 0–1; other posts remain within the current-month structural water-fill guardrails.","If failed":"Do not publish unless the deviation is explicitly proven unavoidable."},
                 {"Step":"3","Where":"Resident stats","Verify":"No disproportionate weekly load; rolling-7 and double/recovery metrics are plausible.","If failed":"Regenerate / correct before publication."},
                 {"Step":"4","Where":"Advanced / Proof","Verify":"Spot-check 3–5 residents, including the lowest and highest satisfaction, against the actual grid.","If failed":"Treat the tool statement as a metric defect until corrected."},
                 {"Step":"5","Where":"Schedule + Proof","Verify":"Coverage, gaps, overlaps and that summary claims match the schedule.","If failed":"Do not publish."},
@@ -7791,8 +10474,8 @@ with tabs[pos]:
 
     if lang=="LT":
         st.success(
-            "V2.5.65 — PIRMA DARBO DIENOS, TADA DARBO VIETOS. Pirmiausia parenkama, kuriomis dienomis ir kuriuo metu kiekvienas rezidentas dirba, kuo labiau saugant „Negaliu dirbti“, poilsį ir kitus pageidavimus. Tik tada parenkamos konkrečios darbo vietos. Kai tam tikro posto per mėnesį yra nedaug, bet jų užtenka bent po vieną kiekvienam, sistema pirmiausia stengiasi kiekvienam duoti bent vieną kartą, o tik tada skiria antrą. Todėl, pavyzdžiui, 22 Onko / Centro UG / Vaikų UG vietos 16 rezidentų normaliai turi pasiskirstyti po 1–2, o ne 0–2. SPS RO, SPS UG ir savaitgaliai taip pat laikomi kuo lygesni. Konkreti SPS data nėra užrakinama žmogui, jei tą patį bendrą kiekį galima išlaikyti kitu paskyrimu ir geriau įvykdyti jo pageidavimą. Patvirtintos atostogos yra privalomos nedarbo dienos ir proporcingai sumažina to žmogaus mėnesio darbo tikslą. "
-            "V2.5.63 — LYGAUS PASKIRSTYMO FAILSAFE. Prieš atiduodama SYSTEM grafiką sistema dabar turi patvirtinti, kad SPS RO, SPS UG ir savaitgaliai paskirstyti kuo lygiau (įprastai skirtumas tarp daugiausiai ir mažiausiai gavusio ≤1), o kitų pagrindinių darbo vietų skirtumas įprastai ≤2. Jei per skirtą laiką to patvirtinti nepavyksta, labai nelygus grafikas nebegrąžinamas kaip tinkamas — prašoma generuoti dar kartą. Konkrečios SPS datos nėra „užrakinamos“ vien dėl lygybės: jei galima perkelti pamainą kitam tinkamam žmogui ir išlaikyti tokį pat lygų bendrą kiekį, sistema gali taip padaryti, kad įvykdytų asmeninį pageidavimą. "
+            "V2.5.65 — PIRMA DARBO DIENOS, TADA DARBO VIETOS. Pirmiausia parenkama, kuriomis dienomis ir kuriuo metu kiekvienas rezidentas dirba, kuo labiau saugant „Negaliu dirbti“, poilsį ir kitus pageidavimus. Tik tada parenkamos konkrečios darbo vietos. Kai tam tikro posto per mėnesį yra nedaug, bet jų užtenka bent po vieną kiekvienam, sistema pirmiausia stengiasi kiekvienam duoti bent vieną kartą, o tik tada skiria antrą. Todėl, pavyzdžiui, 22 Onko / Centro UG / Vaikų UG vietos 16 rezidentų normaliai turi pasiskirstyti po 1–2, o ne 0–2. SPS RO, SPS UG, šeštadieniai ir sekmadieniai taip pat laikomi kuo lygesni kiekvienoje kategorijoje atskirai. Konkreti SPS data nėra užrakinama žmogui, jei tą patį bendrą kiekį galima išlaikyti kitu paskyrimu ir geriau įvykdyti jo pageidavimą. Patvirtintos atostogos yra privalomos nedarbo dienos ir proporcingai sumažina to žmogaus mėnesio darbo tikslą. "
+            "V2.5.74 — VISŲ POSTŲ STRUKTŪRINIS WATER-FILL. Prieš atiduodama SYSTEM grafiką sistema pirmiausia užrakina darbo datas/blokus, tada VISUS ne-Onko postų labelius sprendžia kartu. SPS RO, SPS UG, šeštadieniai, sekmadieniai ir kiekvienas įprastas ne-Onko postas pirmiausia bandomi raw spread 0–1 koridoriuje. Platesnis 0–2 ar 0–3 koridorius leidžiamas tik po matematinio įrodymo, kad siauresnis koridorius neįmanomas. Timeout nėra įrodymas. Tokiu būdu 1-vs-3 negali likti, jei validus dviejų ar kelių rezidentų postų perkeitimas gali padaryti 2-vs-2 nepakeičiant darbo datos/bloko. "
             "Generatorius lieka konservatyvus: ~40 val./7 d. tikslas, ≤48 val./7 d., ≤6 darbo dienos/7 d. ir recovery po dvigubų. "
             "Po publikavimo bilateral voluntary swapas tikrina ABSOLUTE / operacinius ir darbo-laiko blokatorius, o naują 12 h double, >40/>48 h krūvį, "
             "6 dienų seką, post-double recovery ar savo RESIDENT HARD override parodo pasekmių lentelėje ir prašo paveikto rezidento ACK. "
@@ -7808,16 +10491,16 @@ with tabs[pos]:
         st.markdown("### Supaprastinta vertikali prioritetų lentelė")
         st.dataframe(pd.DataFrame([
             {"Rangas":"1. TRUE ABSOLUTE HARD","Kas įeina":"Sauga, patvirtinta liga/atostogos, fizinis neįmanomumas, coverage; generatoriui ≤48 val./7 d. ir bent 1 laisva diena/7 d.","Kaip sprendžiama":"Generuojant 100%. Po publikavimo tik 48h riba gali būti savanoriškai viršyta normaliu bilateral swapu su aiškiu asmens sutikimu; kiti HARD lieka"},
-            {"Rangas":"2. CRITICAL STRUCTURAL","Kas įeina":"SPS RO + SPS UG + savaitgaliai","Kaip sprendžiama":"Co-equal water-filling; 1 visiems → 2 visiems → 3 visiems; raw spread 0–1. Vengiama clustering"},
+            {"Rangas":"2. CRITICAL STRUCTURAL","Kas įeina":"SPS RO + SPS UG + šeštadieniai + sekmadieniai + penktadieniai","Kaip sprendžiama":"Kiekviena kategorija water-fillinama atskirai; šeštadienių ir sekmadienių raw spread 0–1. Vengiama clustering."},
             {"Rangas":"3. RESIDENT HARD","Kas įeina":"Negaliu dirbti — data / AM / PM / recurring","Kaip sprendžiama":"0 praradimų jei įmanoma; kitaip minimumas + horizontalus water-filling + istorinis naštos balansavimas"},
             {"Rangas":"4. WEEKLY LOAD + RECOVERY","Kas įeina":"Valandos per slenkančias 7 d., kalendorinės savaitės, 12 val. dvigubų dienų seka","Kaip sprendžiama":"Taikosi į ~40 val./7 d.; lygina savaitinį krūvį. Po 1 double vengia kito double; po 2 doubles kita diena PM arba laisva, preferuojama laisva"},
             {"Rangas":"5. ŠVENČIŲ WATER-FILL","Kas įeina":"Oficialios Lietuvos švenčių dienos ir ilgalaikis pasirinkimas: noriu dirbti / neutralu / noriu ilsėtis","Kaip sprendžiama":"Pirmiausia norintys dirbti, tada neutralūs, o norintys ilsėtis — tik kai reikia. Kiekvienoje grupėje 1 visiems → 2 visiems; žiūrima ankstesnė SYSTEM švenčių našta ir mėnesio krūvis."},
-            {"Rangas":"6. Kitas struktūrinis krūvis","Kas įeina":"Dvigubų pamainų bendras skaičius, Fridays, kitas consecutive/fatigue","Kaip sprendžiama":"Lyginama grupėje nebloginant aukštesnių užraktų"},
-            {"Rangas":"7. OTHER POST CORE","Kas įeina":"CENTRO RO, Onko RO, Centro UG, ADC 144, ADC 145, Vaikų UG, Mamografijos","Kaip sprendžiama":"Water-filling; idealu 0–1, normalus guardrail ≤2; ≤3 tik exceptional"},
+            {"Rangas":"6. Kitas struktūrinis krūvis","Kas įeina":"Dvigubų pamainų bendras skaičius ir kitas consecutive/fatigue","Kaip sprendžiama":"Lyginama grupėje nebloginant aukštesnių užraktų; penktadieniai jau užrakinti aukščiau raw 0–1"},
+            {"Rangas":"7. OTHER POST CORE","Kas įeina":"CENTRO RO, Onko RO, Centro UG, ADC 144, ADC 145, Vaikų UG, Mamografijos","Kaip sprendžiama":"Struktūrinis water-filling; HARD target 0–1. 0–2 / 0–3 tik solveriui įrodžius, kad siauresnis koridorius neįmanomas"},
             {"Rangas":"8. SOFT-1","Kas įeina":"Noriu laisvos; struktūruotas recovery / vengti dublių","Kaip sprendžiama":"Horizontalus water-filling: bendras sluoksnis visiems prieš papildomus vieno žmogaus prašymus"},
             {"Rangas":"9. SOFT-2","Kas įeina":"Pageidauju dirbti konkrečią datą / AM / PM","Kaip sprendžiama":"Horizontalus water-filling"},
             {"Rangas":"10. SOFT-3","Kas įeina":"Išsklaidymas / koncentracija","Kaip sprendžiama":"Tik po aukštesnių rangų"},
-            {"Rangas":"11. POST OPTIMAL + DEBT","Kas įeina":"Likęs ordinary-post spread ir ankstesnių mėnesių post debt","Kaip sprendžiama":"SOFT rezultato neblogina; kuo labiau grąžina spread į 0–1 ir taiso exposure skolą"},
+            {"Rangas":"11. CURRENT-MONTH POST OPTIMAL","Kas įeina":"Likęs einamojo mėnesio ordinary-post spread","Kaip sprendžiama":"SOFT rezultato neblogina; kuo labiau grąžina šio mėnesio spread į 0–1. Jokio future catch-up nėra."},
         ]),use_container_width=True,hide_index=True)
 
         st.markdown("### Švenčių dienų paskirstymo protokolas")
@@ -7826,18 +10509,18 @@ with tabs[pos]:
             {"Žingsnis":"2. Noriu dirbti","Veikimas":"Jei keli rezidentai nustatymuose pažymėjo, kad linkę dirbti per šventes, šventinės pamainos pirmiausia skiriamos jiems, bet water-fill'inamos: 1 kiekvienam prieš 2 tam pačiam."},
             {"Žingsnis":"3. Neutralu","Veikimas":"Kai norinčių neužtenka arba nėra, naudojami neutralūs. Tarp lygiaverčių kandidatų prioritetą gauna turintis mažesnę ankstesnę SYSTEM švenčių naštą ir mažesnį einamojo mėnesio krūvį."},
             {"Žingsnis":"4. Noriu ilsėtis","Veikimas":"Rezidentai, pasirinkę poilsį per šventes, naudojami tik kai aukštesnių grupių nepakanka dėl coverage / HARD. Ir jų neišvengiama našta water-fill'inama kuo lygiau."},
-            {"Žingsnis":"5. Istorija","Veikimas":"Švenčių burden kaupiamas tik iš paskelbto SYSTEM grafiko. Swapai ir fairness-neutral repair jo neperrašo; kitą mėnesį / kitą šventę prioritetas koreguojamas pagal sukauptą naštą."},
+            {"Žingsnis":"5. Istorija","Veikimas":"SYSTEM ir ACTUAL švenčių darbo istorija saugoma auditui. Kito mėnesio generatorius jos nenaudoja kompensaciniam catch-up; kiekvienas mėnuo pradeda nuo naujo water-fill baseline."},
         ]),use_container_width=True,hide_index=True)
         st.caption("Švenčių pasirinkimas yra normalizuotas SOFT signalas, o ne teisė visada gauti arba visada išvengti šventės. Jis veikia tik aukštesnių ABSOLUTE / critical SPS / RESIDENT HARD / recovery užraktų viduje. Taip išlaikomas ir norų tenkinimas, ir grupės fairness.")
 
         st.markdown("### Neplanuotas neatvykimas: kritinių SPS postų gelbėjimo hierarchija")
         st.dataframe(pd.DataFrame([
             {"Situacija":"Suserga / neatvyksta žmogus iš SPS RO arba SPS UG","Veiksmas":"Kritinis postas PALIEKAMAS padengtas. Pirmiausia ieškomas tos pačios dienos ir persidengiančio bloko rezidentas, jau dirbantis žemesnės hierarchijos NEPRIVALOMAME poste.","Kas nutinka donoriniam postui":"Rezidentas perkeliamas į SPS; optional donorinis postas gali likti tuščias."},
-            {"Situacija":"Yra keli tinkami donorai","Veiksmas":"Pirmiausia 0 naujų RESIDENT HARD praradimų. Postų spread / post debt donorų pasirinkimui NENAUDOJAMI: tas žmogus jau buvo suplanuotas dirbti tą patį laiką, todėl posto pakeitimas yra fairness-neutral.","Kas nutinka donoriniam postui":"Aukštesnio prioriteto mandatory coverage laimi prieš optional coverage."},
+            {"Situacija":"Yra keli tinkami donorai","Veiksmas":"Pirmiausia 0 naujų RESIDENT HARD praradimų. Donoro parinkimas neturi bandyti atkurti water-fill; po operacinio pakeitimo ACTUAL spread tiesiog perskaičiuojamas ir parodomas.","Kas nutinka donoriniam postui":"Aukštesnio prioriteto mandatory coverage laimi prieš optional coverage."},
             {"Situacija":"Nėra saugaus donorinio rezidento iš optional posto","Veiksmas":"Tik tada rodomas tame bloke laisvo rezidento fallback, jei jis ABSOLUTE-safe ir nekuria overlap / mandatory coverage problemos.","Kas nutinka donoriniam postui":"Nėra priverstinio critical posto aukojimo."},
             {"Situacija":"Neatvykstama iš paprasto optional posto","Veiksmas":"Šis postas nėra aukščiau SPS RO / SPS UG; kritinio SPS rezidento iš jo traukti negalima.","Kas nutinka donoriniam postui":"Post-publication ACTUAL grafike optional gap gali būti toleruojamas; SYSTEM fairness lieka frozen."},
         ]),use_container_width=True,hide_index=True)
-        st.caption("Principas: liga / force majeure pirmiausia perstato jau suplanuotą tos pačios pamainos pajėgumą į privalomą SPS, o ne automatiškai užkrauna papildomą pamainą laisvam žmogui. V2.5.57: toks repair nekeičia ne tik fairness_history, bet ir SYSTEM postų spread, post debt, savaitgalių/dublių burden ar ateities catch-up. ACTUAL operacinė ekspozicija rodoma atskirai tik informacijai.")
+        st.caption("Principas: liga / force majeure pirmiausia perstato jau suplanuotą tos pačios pamainos pajėgumą į privalomą SPS. SYSTEM publikavimo baseline nekinta, bet ACTUAL postų ekspozicija ir fairness perskaičiuojami pagal realią situaciją. Istorija auditinė — jokio ateities catch-up.")
 
         st.markdown("### Savaitinio krūvio ir savanoriško swapo protokolas")
         st.dataframe(pd.DataFrame([
@@ -7854,13 +10537,17 @@ with tabs[pos]:
 
         st.markdown("### Kas swapą BLOKUOJA ir kas tik PERSPĖJA")
         st.dataframe(pd.DataFrame([
-            {"Tipas":"BLOKUOJA","Pavyzdžiai":"ABSOLUTE HARD / pateisinamas neatvykimas; overlap; >12 h/d.; <11 h poilsio; >6 darbo dienų/7 d.; >60 h/7 d.; 24 h post-duty rest; neįmanomas backup/coverage","ACK":"Negali apeiti"},
-            {"Tipas":"PERSPĖJA + ACK","Pavyzdžiai":"Nauja 12 h double; >40 ar >48 h/7 d.; 6 darbo dienų seka; consecutive doubles; darbas po 2 doubles; savo RESIDENT HARD override","ACK":"Kiekvienas paveiktas rezidentas patvirtina atskirai"},
-            {"Tipas":"NEBLOKUOJA VOLUNTARY SWAP","Pavyzdžiai":"SYSTEM post spread, weekend/double fairness, Onko parity, mėnesio target equality, SOFT satisfaction","ACK":"SYSTEM baseline frozen; ACTUAL perskaičiuojamas"},
+            {"Tipas":"BLOKUOJA","Pavyzdžiai":"ABSOLUTE HARD / pateisinamas neatvykimas; overlap; >12 h/d.; <11 h poilsio; >6 darbo dienų/7 d.; >60 h/7 d.; 24 h post-duty rest; neįmanomas backup/coverage; mėnesio target ≠ tikslus; Onko 1/3/5","ACK":"Negali apeiti"},
+            {"Tipas":"PERSPĖJA + ACK","Pavyzdžiai":"Nauja 12 h double; >40 ar >48 h/7 d.; 6 darbo dienų seka; consecutive doubles; darbas po 2 doubles; consecutive Onko; savo RESIDENT HARD override","ACK":"Kiekvienas paveiktas rezidentas patvirtina atskirai"},
+            {"Tipas":"NEBLOKUOJA VOLUNTARY SWAP","Pavyzdžiai":"SYSTEM post spread, weekend/double fairness, SOFT satisfaction","ACK":"SYSTEM baseline frozen; ACTUAL perskaičiuojamas"},
         ]),use_container_width=True,hide_index=True)
         st.caption("ACK nėra teisinė išimtis: jis tik patvirtina rezidentui parodytas pasekmes. Darbo laiko režimo ir apskaitinio laikotarpio teisinį taikymą galutinai nustato darbdavys.")
         st.info("V2.5.66 — vienas rezidentas gali turėti kelis laukiančius apsikeitimus, jei jie liečia skirtingas pamainas. Ta pati konkreti pamaina vienu metu gali būti tik viename aktyviame pasiūlyme. Ta pati taisyklė taikoma dublių apsikeitimams. Savo dar nepriimtą pasiūlymą galima atšaukti. Jau pritaikytas ar atmestas pasiūlymas pamainos neberezervuoja.")
         st.info("V2.5.67 — mėnesio darbo krūvio targetas yra ABSOLIUTUS: 28 reiškia tiksliai 28.0, 26 reiškia tiksliai 26.0. Onko diena = 1.5 pamainos, todėl Onko skiriamas poromis (0, 2, 4...) ir mėnesio skirtumas tarp rezidentų negali viršyti 2. Kas šį mėnesį gauna mažiau Onko, turi catch-up prioritetą kitais mėnesiais pagal publikuotą istoriją.")
+        st.info("V2.5.68 — Onko RO atsigavimo taisyklė yra ABSOLIUTI: tas pats rezidentas negali būti Onko RO dvi kalendorines dienas iš eilės. Jei dirbo Onko paskutinę ankstesnio mėnesio dieną, naujo mėnesio 1 d. Onko jam taip pat blokuojamas. Taisyklė negali būti paaukota dėl postų lygybės ar SOFT pageidavimų.")
+        st.info("V2.5.73 — ONKO PORŲ ABSOLIUTI TAISYKLĖ: kiekvieno rezidento Onko skaičius SYSTEM ir ACTUAL grafike turi būti tik 0, 2, 4, 6... Kadangi viena Onko diena = 1.5 pamainos, nelyginis 1/3/5 sukurtų 0.5 krūvio trupmeną ir yra BLOKUOJAMAS net savanoriškame swape. Jei aktyvių mėnesio Onko dienų skaičius nelyginis, viena Onko diena paliekama neužpildyta, kad bendras užpildytų Onko skaičius būtų lyginis. Consecutive Onko po publikavimo gali likti tik ACK išimtis; parity ir tikslus mėnesio targetas — niekada.")
+        st.info("V2.5.74 — VISŲ POSTŲ STRUCTURAL WATER-FILL: SYSTEM generavime, kai datos ir AM/PM blokai jau parinkti, visi ne-Onko postų labeliai sprendžiami kartu. Kiekvienam postui pirmiausia bandomas floor/ceil pasiskirstymas raw spread 0–1. Pvz., 38 Mamografijos vietos / 16 rezidentų → 10 rezidentų po 2 ir 6 rezidentai po 3; 1-vs-3 negali likti, jei egzistuoja validus postų perkeitimas ar kelių žmonių ciklas. Po publikavimo savanoriški ACTUAL swapai gali išbalansuoti postų ekspoziciją — fairness / UG / Mamografijos kiekiai swapo NEBLOKUOJA; SYSTEM fairness lieka užšaldytas.")
+        st.info("V2.5.77 — PENKTADIENIŲ STRUCTURAL WATER-FILL: SYSTEM grafike visi penktadienio priskyrimai skaičiuojami kaip struktūrinė našta ir turi būti paskirstyti floor/ceil principu, raw max−min ≤1. Pvz., jei yra 72 penktadienio priskyrimai / 16 rezidentų, matematinis water-fill yra 8 rezidentai po 4 ir 8 po 5. Pageidautas penktadienis vis tiek skaičiuojamas kaip penktadienio ekspozicija. Phase 1 subalansuoja penktadienio darbo blokus, Phase 2 ant tų blokų kartu perbalansuoja visus ne-Onko postus. Po publikavimo abipusis ACTUAL swapas gali išbalansuoti penktadienius; SYSTEM baseline dėl to nesikeičia.")
 
         st.markdown("### Emergency — jau įvykusio pakeitimo registravimas")
         st.dataframe(pd.DataFrame([
@@ -7885,9 +10572,10 @@ with tabs[pos]:
 
         st.markdown("### Kaip lyginamas darbas skirtingose pozicijose")
         st.dataframe(pd.DataFrame([
-            {"Grupė":"KRITINĖ","Pozicijos":"SPS RO, SPS UG, savaitgaliai","Taisyklė":"Pirmiausia stengiamasi, kad visi tinkami rezidentai gautų po vieną pamainą; tik tada skiriama antra ir trečia. Žmonių mėnesio skaičiai paprastai skiriasi ne daugiau kaip 1."},
-            {"Grupė":"KITI POSTAI","Pozicijos":"CENTRO RO, Onko RO, Centro UG, ADC 144, ADC 145, Vaikų UG, Mamografijos","Taisyklė":"Jei mėnesio vietų pakanka, pirmiausia kiekvienas turi gauti bent vieną galimybę. Toliau paskirstymas lyginamas kuo labiau; didesnis skirtumas leidžiamas tik kai lygesnis variantas neįmanomas arba būtinas svarbesnei taisyklei."},
-            {"Grupė":"POST DEBT","Pozicijos":"Kiekvienas postas × rezidentas","Taisyklė":"Jei šį mėnesį žmogus konkrečioje darbo vietoje gavo mažiau nei kiti, kitą mėnesį sistema jam teikia pirmenybę pasivyti. Jei gavo daugiau, papildomas paskyrimas pirmiau siūlomas kitiems."},
+            {"Grupė":"KRITINĖ","Pozicijos":"SPS RO, SPS UG, šeštadieniai, sekmadieniai","Taisyklė":"Kiekviena kategorija balansuojama atskirai. Šeštadieniai ir sekmadieniai turi atskirą water-fill 0–1, nes jų atlygio / naštos pobūdis skiriasi."},
+            {"Grupė":"ONKO RO — SPECIALI HARD","Pozicijos":"Onko RO 08:00–17:00","Taisyklė":"1 diena = 1.5 pamainos, todėl SYSTEM skiriama lyginėmis poromis (0/2/4...), mėnesio skirtumas ≤2. Tas pats rezidentas NEGALI būti Onko dvi kalendorines dienas iš eilės, įskaitant mėnesio ribą."},
+            {"Grupė":"KITI POSTAI","Pozicijos":"CENTRO RO, Centro UG, ADC 144, ADC 145, Vaikų UG, Mamografijos","Taisyklė":"Jei mėnesio vietų pakanka, pirmiausia kiekvienas turi gauti bent vieną galimybę. Toliau paskirstymas lyginamas kuo labiau; didesnis skirtumas leidžiamas tik kai lygesnis variantas neįmanomas arba būtinas svarbesnei taisyklei."},
+            {"Grupė":"FUTURE CATCH-UP","Pozicijos":"Kiekvienas postas × rezidentas","Taisyklė":"Jei šį mėnesį žmogus konkrečioje darbo vietoje gavo mažiau nei kiti, kitą mėnesį sistema jam teikia pirmenybę pasivyti. Jei gavo daugiau, papildomas paskyrimas pirmiau siūlomas kitiems."},
             {"Grupė":"TEMPORAL SPACING","Pozicijos":"Ypač savaitgaliai, taip pat SPS RO/SPS UG","Taisyklė":"Vienodi skaičiai dar nereiškia vienodo nuovargio: tarp lygiaverčių variantų vengiami 2–3 savaitgaliai iš eilės ir bereikalingas SPS suspaudimas."},
         ]),use_container_width=True,hide_index=True)
 
@@ -7909,27 +10597,29 @@ with tabs[pos]:
         st.markdown("### Unplanned absence: critical SPS rescue hierarchy")
         st.dataframe(pd.DataFrame([
             {"Situation":"Resident absent from SPS RO or SPS UG","Action":"Keep the critical post covered. First pull a resident already working the same day / overlapping block in a lower-priority NON-MANDATORY post.","Donor post":"Move the resident to SPS; the optional source post may remain empty."},
-            {"Situation":"Several safe donors exist","Action":"Prefer zero new Resident-HARD losses. Do NOT use workplace spread, post debt, or prior pull-down count as fairness ranking: the resident was already scheduled to work that block, so the station change is fairness-neutral.","Donor post":"Mandatory critical coverage outranks optional coverage."},
+            {"Situation":"Several safe donors exist","Action":"Prefer zero new Resident-HARD losses. Do not force a donor choice to restore water-fill; after the operational move, ACTUAL exposure/fairness is simply recalculated and reported.","Donor post":"Mandatory critical coverage outranks optional coverage."},
             {"Situation":"No safe optional-post donor exists","Action":"Only then use a resident free in that block as fallback if ABSOLUTE-safe and overlap/coverage-valid.","Donor post":"Never sacrifice another critical SPS post."},
         ]),use_container_width=True,hide_index=True)
 
         st.markdown("### Simplified vertical-priority table")
         st.dataframe(pd.DataFrame([
             {"Rank":"1. TRUE ABSOLUTE HARD","Includes":"Safety/rest, approved absence, physical impossibility, coverage; generation <=48h/rolling7 and >=1 free day/7d","Method":"100% during generation. Post-publication voluntary swaps use consequence + ACK warnings, but ABSOLUTE/operational and labour-time blockers remain hard"},
-            {"Rank":"2. CRITICAL STRUCTURAL","Includes":"SPS RO + SPS UG + weekends","Method":"Co-equal layered water-fill; raw spread 0–1; reduce temporal clustering"},
-            {"Rank":"3. RESIDENT HARD","Includes":"Unavailable date / AM / PM / recurring","Method":"Zero losses if possible; otherwise minimum + resident water-fill + historical burden"},
+            {"Rank":"2. CRITICAL STRUCTURAL","Includes":"SPS RO + SPS UG + Saturday + Sunday + Fridays","Method":"Saturday and Sunday water-fill independently; raw spread 0–1; reduce temporal clustering"},
+            {"Rank":"3. RESIDENT HARD","Includes":"Unavailable date / AM / PM / recurring","Method":"Zero losses if possible; otherwise current-month minimum + resident water-fill; no historical catch-up"},
             {"Rank":"4. WEEKLY LOAD + RECOVERY","Includes":"Rolling-7 hours, calendar-week load, double-shift sequences","Method":"Aim ~40h/7d; equalize weekly load; after 2 consecutive doubles next day PM-only or off, preferring off"},
-            {"Rank":"5. OTHER STRUCTURAL","Includes":"Total doubles, Fridays, other consecutive/fatigue","Method":"Balance without worsening higher locks"},
-            {"Rank":"6. OTHER POST CORE","Includes":"CENTRO RO, Onko RO, Centro UG, ADC 144/145, Paediatric UG, Mammography","Method":"Layered water-fill; ideal 0–1, normal <=2, exceptional <=3"},
+            {"Rank":"5. OTHER STRUCTURAL","Includes":"Total doubles and other consecutive/fatigue","Method":"Balance without worsening higher locks; Fridays are already structurally locked at raw 0–1"},
+            {"Rank":"6. OTHER POST CORE","Includes":"CENTRO RO, Centro UG, ADC 144/145, Paediatric UG, Mammography; Onko has its own special HARD structure","Method":"Ordinary non-Onko posts: structural floor/ceil water-fill with target raw spread <=1 before SOFT; <=2/<=3 only after the tighter corridor is proven infeasible. Onko: exact-workload even pairs, monthly spread <=2, never consecutive calendar days."},
             {"Rank":"7–9. SOFT","Includes":"SOFT-1 time/recovery; SOFT-2 exact desired work; SOFT-3 month shape","Method":"Vertical rank + horizontal resident water-fill"},
-            {"Rank":"10. POST OPTIMAL + DEBT","Includes":"Residual ordinary-post spread + cumulative debt","Method":"Improve toward 0–1 without worsening locked SOFT; longitudinal catch-up"},
+            {"Rank":"10. CURRENT-MONTH POST OPTIMAL","Includes":"Residual ordinary-post spread in this month","Method":"Improve toward 0–1 without worsening locked SOFT; no longitudinal catch-up"},
         ]),use_container_width=True,hide_index=True)
     # RULES = ENGINE: this summary is rendered from the active engine profile,
     # never from a separate hard-coded policy copy.
     enabled_backup=[]
-    if bool(rule_value("backup_weekends")): enabled_backup.append("savaitgaliai" if lang=="LT" else "weekends")
     if bool(rule_value("backup_sps_ro")): enabled_backup.append("SPS RO")
     if bool(rule_value("backup_sps_ug")): enabled_backup.append("SPS UG")
+    if bool(rule_value("backup_centro120_am")): enabled_backup.append("Centro 120 AM")
+    if bool(rule_value("backup_onko_ro")): enabled_backup.append("Onko RO")
+    if bool(rule_value("backup_centro_ro_best_effort")): enabled_backup.append("CENTRO RO best-effort")
 
     if lang=="LT":
         st.info(
@@ -7941,9 +10631,9 @@ with tabs[pos]:
             f"GENERATION HARD max. valandų per 7 d.: {min(float(rule_value('max_hours_rolling7')), float(FATIGUE_ROLLING7_HARD_CEILING_HOURS)):g}; voluntary swap >48 = ACK, absoliutus guardrail ≤{float(SWAP_ABSOLUTE_MAX_HOURS_ROLLING7):g}; "
             f"planavimo tikslas ~{float(WEEKLY_LOAD_SOFT_TARGET_HOURS):g} val./7 d. "
             f"Mėnesio krūvio targetas: TIKSLUS HARD (leidžiamas nuokrypis 0.0). "
-            f"Onko: 1.5 pamainos, tik lyginės poros (0/2/4...), mėnesio skirtumas ≤2 + istorinis catch-up; "
+            f"Onko: 1.5 pamainos, tik lyginės poros (0/2/4...), mėnesio skirtumas ≤2; jokio istorinio catch-up, niekada dvi kalendorines dienas iš eilės tam pačiam rezidentui; "
             f"savaitgalio unikalumo taisyklė: {'TAIP' if rule_value('weekend_unique_required') else 'NE'}. "
-            f"Struktūrinis guardrail: SPS RO / SPS UG / savaitgaliai raw 0–1; Onko ≤2; kiti postai normaliai ≤2, exceptional ≤3 + post debt. "
+            f"Struktūrinis guardrail: SPS RO / SPS UG / ŠEŠTADIENIAI / SEKMADIENIAI / PENKTADIENIAI raw 0–1; Onko ≤2 poromis; VISI kiti postai pirmiausia raw 0–1. 0–2/0–3 leidžiama tik įrodžius, kad siauresnis variantas neįmanomas. Jokio future future catch-up nėra. "
             f"Kiti pagrindiniai burden spread baseline +{int(rule_value('general_guardrail_tolerance'))}. "
             f"Pageidavimų pateikimo terminas: ankstesnio mėnesio {int(rule_value('deadline_day'))} d."
         )
@@ -7957,9 +10647,9 @@ with tabs[pos]:
             f"GENERATION HARD max hours/7d: {min(float(rule_value('max_hours_rolling7')), float(FATIGUE_ROLLING7_HARD_CEILING_HOURS)):g}; voluntary swap >48 = ACK, absolute guardrail ≤{float(SWAP_ABSOLUTE_MAX_HOURS_ROLLING7):g}; "
             f"planning target ~{float(WEEKLY_LOAD_SOFT_TARGET_HOURS):g}h/7d. "
             f"Monthly workload target: EXACT HARD (allowed deviation 0.0). "
-            f"Onko: 1.5 shift units, even pairs only (0/2/4...), monthly spread ≤2 + historical catch-up; "
+            f"Onko: 1.5 shift units, even pairs only (0/2/4...), monthly spread ≤2 with no historical catch-up, never on consecutive calendar days for the same resident; "
             f"weekend uniqueness: {'YES' if rule_value('weekend_unique_required') else 'NO'}. "
-            f"Structural guardrail: SPS RO / SPS UG / weekends raw 0–1; Onko ≤2; other posts normally ≤2, exceptional ≤3 + post debt. "
+            f"Structural guardrail: SPS RO / SPS UG / SATURDAYS / SUNDAYS / FRIDAYS raw 0–1; Onko ≤2 in even pairs; ALL other posts first target raw 0–1. 0–2/0–3 is allowed only after the tighter corridor is proven infeasible. No future future catch-up exists. "
             f"Other main burden spreads baseline +{int(rule_value('general_guardrail_tolerance'))}. "
             f"Preference deadline: day {int(rule_value('deadline_day'))} of the preceding month."
         )
@@ -7967,17 +10657,17 @@ with tabs[pos]:
     if lang=="LT":
         workflow_rows=[
             {"Etapas":"0. Request pre-check","Sistema":"Užšaldo ORIGINAL request ledger ir pašalina nepriimamus/gaming SOFT signalus.","Vertina":"RESIDENT HARD, tikslias SOFT datas, recovery ir month-shape; generic weekday/weekend pattern ir postų vengimas neįeina.","Principas":"Pageidavimų skaičius nesuteikia daugiau balsų."},
-            {"Etapas":"1. TRUE ABSOLUTE HARD","Sistema":"Randa tik saugų/fiziškai įmanomą grafiką; generuojant taiko ≤48h/7d.","Vertina":"Poilsį, valandas, patvirtintą neatvykimą, coverage/overlap ir kt.","Principas":"Generuojant ≤48h/7d ir recovery griežti. Voluntary swap: 48h/recovery gali tapti ACK perspėjimu, bet >12h/d., <11h poilsio, >6 d./7d., >60h/7d., ABSOLUTE/overlap/coverage lieka blokai."},
-            {"Etapas":"2. Kritinių darbų lygybė","Sistema":"Kartu lygina SPS RO, SPS UG ir savaitgalių skaičių tarp rezidentų.","Vertina":"Kiek daugiausiai ir mažiausiai kartų šį darbą gauna skirtingi rezidentai.","Principas":"Įprastai skirtumas ≤1. Konkrečios datos lieka lanksčios, todėl pageidavimai tenkinami, jei bendras paskirstymas išlieka toks pat lygus."},
-            {"Etapas":"3. RESIDENT HARD","Sistema":"Minimizuoja bendrą `Negaliu dirbti` praradimą, tada water-fill'ina naštą ir istoriją.","Vertina":"Whole-day, AM/PM ir recurring RESIDENT HARD.","Principas":"0 jei įmanoma; kitaip mažiausias būtinas ir kuo lygiau."},
+            {"Etapas":"1. TRUE ABSOLUTE HARD","Sistema":"Randa tik saugų/fiziškai įmanomą grafiką; generuojant taiko ≤48h/7d ir Onko recovery guard.","Vertina":"Poilsį, valandas, patvirtintą neatvykimą, coverage/overlap, tikslų mėnesio krūvį ir lygines Onko poras.","Principas":"Tikslus mėnesio targetas ir Onko 0/2/4/... yra HARD SYSTEM ir ACTUAL. Consecutive Onko gali būti tik savanoriško swapo ACK pasekmė; parity niekada neapeinama."},
+            {"Etapas":"2. Kritinių darbų lygybė","Sistema":"Kartu lygina SPS RO, SPS UG, šeštadienius, sekmadienius ir penktadienius tarp rezidentų.","Vertina":"Šeštadienis ir sekmadienis yra atskiros naštos / atlygio klasės.","Principas":"Neutralus SYSTEM baseline pradeda nuo 0–1 water-fill kiekvienai klasei; po publikavimo savanoriški swapai gali ACTUAL balansą pakeisti."},
+            {"Etapas":"3. RESIDENT HARD","Sistema":"Minimizuoja bendrą `Negaliu dirbti` praradimą, tada water-fill'ina tik einamojo mėnesio neišvengiamą naštą.","Vertina":"Whole-day, AM/PM ir recurring RESIDENT HARD.","Principas":"0 jei įmanoma; kitaip mažiausias būtinas ir kuo lygiau šiame mėnesyje; jokio istorinio catch-up."},
             {"Etapas":"4. Critical spacing","Sistema":"Nejudindama kritinių count spreadų, išdėsto juos laike.","Vertina":"Consecutive weekends ir SPS dienų clustering, įskaitant ankstesnio mėnesio weekend tail.","Principas":"Vengti 2–3 savaitgalių iš eilės ir bereikalingo streso suspaudimo."},
             {"Etapas":"5. WEEKLY LOAD + RECOVERY","Sistema":"Water-fill'ina savaitinį valandų krūvį ir užrakina recovery frontier.","Vertina":"Rolling-7 valandas, kalendorinių savaičių spreadą, consecutive 12h doubles.","Principas":"~40 val./7 d. tikslas; ≤48 HARD; po 2 doubles kita diena tik PM arba laisva, laisva preferinama."},
-            {"Etapas":"6. ŠVENČIŲ WATER-FILL","Sistema":"Šventines pamainas pirmiausia skiria norintiems dirbti, po to neutraliems; poilsį pasirinkusius naudoja tik kai reikia.","Vertina":"Current + cumulative SYSTEM holiday burden ir mėnesio krūvį.","Principas":"Preference group first, tada horizontalus 1 visiems → 2 visiems; šis sluoksnis negali bloginti critical SPS/weekend, RESIDENT HARD ar recovery."},
-            {"Etapas":"7. Kitas burden fairness","Sistema":"Balansuoja bendrą dublių skaičių, Fridays ir kitą consecutive/fatigue.","Vertina":"Nesavanorišką krūvį.","Principas":"Negali bloginti critical/RH/weekly recovery užraktų."},
+            {"Etapas":"6. ŠVENČIŲ WATER-FILL","Sistema":"Šventines pamainas skirsto einamajame mėnesyje, atsižvelgdamas į aktyvų švenčių pageidavimą ir aukštesnius užraktus.","Vertina":"Tik einamojo mėnesio holiday burden ir mėnesio krūvį.","Principas":"Kur įmanoma 1 visiems prieš 2; ankstesni mėnesiai catch-up nesukuria."},
+            {"Etapas":"7. Kitas burden fairness","Sistema":"Balansuoja bendrą dublių skaičių ir kitą consecutive/fatigue.","Vertina":"Likusią struktūrinę naštą.","Principas":"Penktadieniai jau HARD water-fillinti raw 0–1 ir čia nebeatlaisvinami."},
             {"Etapas":"8. Kitų darbo vietų lygybė","Sistema":"Patikrina likusių darbo vietų paskirstymą tarp rezidentų.","Vertina":"Kiek skiriasi daugiausiai ir mažiausiai konkrečią darbo vietą gavę rezidentai.","Principas":"Siekiama 0–1; įprastai leidžiama iki 2; 3 tik jei 2 tikrai neįmanoma dėl svarbesnių taisyklių."},
             {"Etapas":"9. SOFT-1 → SOFT-2 → SOFT-3","Sistema":"Kiekvieną rangą water-fill'ina horizontaliai ir užrakina.","Vertina":"Asmeninį laiką/recovery → tikslias darbo datas → month shape.","Principas":"2,2,3,4 pirmiausia 2,2,2,2; tik tada extras."},
-            {"Etapas":"10. POST OPTIMAL + DEBT","Sistema":"SOFT neblogindama grąžina ordinary post spread kuo arčiau 0–1 ir taiso istorines skolas.","Vertina":"Current + cumulative resident × post exposure.","Principas":"-1 exposure dabar = catch-up prioritetas ateityje; +1 = vėlesnis papildomas vienetas."},
-            {"Etapas":"11. ACTUAL + swaps/repairs","Sistema":"Po swap/repair perskaičiuoja ACTUAL satisfaction prieš ORIGINAL requests. Kritinio SPS neatvykimo atveju pirmiausia perkelia žmogų iš tos pačios pamainos optional posto.","Vertina":"Mandatory SPS coverage, donorinio posto statusą, konkrečius misses ir saugą.","Principas":"SYSTEM fairness baseline lieka užšaldytas. Emergency pull-down gali palikti optional gap; ACTUAL swapas turi consequence + ACK sluoksnį."},
+            {"Etapas":"10. CURRENT-MONTH POST OPTIMAL","Sistema":"SOFT neblogindama grąžina šio mėnesio ordinary post spread kuo arčiau 0–1.","Vertina":"Tik einamojo mėnesio resident × post exposure.","Principas":"Istorija stebima, bet nekuria skolos ir nekeičia kito mėnesio paskyrimų."},
+            {"Etapas":"11. ACTUAL + swaps/repairs","Sistema":"Po swap/repair perskaičiuoja ACTUAL grafiką, satisfaction ir live fairness. Kritinio SPS neatvykimo atveju pirmiausia perkelia žmogų iš tos pačios pamainos optional posto.","Vertina":"Mandatory SPS coverage, realią postų ekspoziciją, ACTUAL spread, konkrečius misses ir saugą.","Principas":"SYSTEM baseline lieka užšaldytas auditui; ACTUAL fairness seka realybę. Post-publication water-fill gali būti pralaužtas, bet jokio future catch-up nesukuria."},
         ]
         if advanced_mode:
             st.markdown("### Generatorius: workflow")
@@ -7987,24 +10677,27 @@ with tabs[pos]:
             st.caption("Pilną generatoriaus workflow lentelę gali matyti Išplėstiniame režime.")
     else:
         st.info(
-            "V2.5.65 — WORKDAYS FIRST, THEN WORKPLACES. The engine first chooses when each resident works while protecting Resident-HARD, recovery and personal requests. It then assigns workplaces. When a post has relatively few monthly slots but enough for at least one exposure per resident, the system gives everyone a first exposure before anyone moves to the second where mathematically feasible. For example, 22 Onko / Centro UG / pediatric US slots across 16 residents should normally distribute 1–2 rather than 0–2. SPS RO, SPS UG and weekends remain as equal as possible. A specific SPS date is not locked to one resident if the same monthly amount can be preserved with another placement that honors the resident's request. Approved vacation is an absolute no-work period and proportionally lowers that resident's monthly workload target. "
+            "V2.5.65 — WORKDAYS FIRST, THEN WORKPLACES. The engine first chooses when each resident works while protecting Resident-HARD, recovery and personal requests. It then assigns workplaces. For ordinary 1.0-unit sparse posts such as Centro UG / pediatric US, the system gives everyone a first exposure before avoidable second exposures where mathematically feasible. Onko is now governed by the later V2.5.67–68 exact-workload pair + recovery rules, not by first-exposure 1–2 logic. SPS RO, SPS UG and weekends remain as equal as possible. A specific SPS date is not locked to one resident if the same monthly amount can be preserved with another placement that honors the resident's request. Approved vacation is an absolute no-work period and proportionally lowers that resident's monthly workload target. "
             "V2.5.63 FAIRNESS FAILSAFE. A SYSTEM draft is returned only after the solver verifies an acceptably even distribution: SPS RO, SPS UG and weekends normally differ by no more than one assignment between residents; other main workplaces normally differ by no more than two. A timeout is not treated as proof that a wider imbalance is necessary. Concrete SPS dates remain flexible, so personal requests may still be honored whenever the same overall equality can be preserved."
         )
         st.info("V2.5.66 — a resident may have several pending swaps when they involve different shifts. The same concrete shift may be in only one active future offer at a time; the same rule applies to backup swaps. A requester may cancel their own still-pending offer. Applied/rejected offers release the shift.")
         st.info("V2.5.67 — the calculated monthly workload target is ABSOLUTE: 28 means exactly 28.0 and 26 means exactly 26.0. One Onko day = 1.5 shift units, so Onko is assigned in pairs (0, 2, 4...) with a monthly resident spread no greater than 2. Residents with fewer Onko exposures receive catch-up priority in later months using published history.")
+        st.info("V2.5.68 — Onko RO recovery is ABSOLUTE: the same resident may not work Onko RO on two consecutive calendar days. If the resident worked Onko on the last day of the previous published month, day 1 of the new month is also blocked for Onko. Fairness or SOFT preferences may not override this rule.")
+        st.info("V2.5.73 — ONKO PAIRING ABSOLUTE: every resident's Onko count must be 0, 2, 4, 6... in both SYSTEM and ACTUAL. Because one Onko day equals 1.5 workload units, odd 1/3/5 would create a half-unit monthly workload and is blocked even in a voluntary swap. If the number of active monthly Onko days is odd, one Onko day remains unfilled so the filled total is even. Consecutive Onko may remain a post-publication ACK exception; parity and exact monthly workload never are.")
+        st.info("V2.5.74 — ALL-POST STRUCTURAL WATER-FILL: in SYSTEM generation, after dates and AM/PM blocks are frozen, all non-Onko post labels are solved jointly. Every post first targets its floor/ceil distribution with raw spread 0–1. Example: 38 Mammography slots / 16 residents → ten residents receive 2 and six receive 3; a 1-vs-3 pattern cannot remain when a valid post exchange or multi-person cycle can equalize it. After publication, voluntary ACTUAL swaps may unbalance exposure — post fairness / US / Mammography counts do NOT block a mutually accepted swap; SYSTEM fairness remains frozen.")
         workflow_rows=[
             {"Stage":"0. Request pre-check","System":"Freezes ORIGINAL request ledger and removes non-whitelisted/gaming SOFT signals.","Evaluates":"Resident-HARD, exact SOFT dates, recovery/month-shape; generic weekday/weekend patterns and station avoidance are excluded.","Principle":"More raw requests do not buy more priority."},
-            {"Stage":"1. TRUE ABSOLUTE HARD","System":"Finds only safe/physically feasible schedules; generation applies <=48h/7d.","Evaluates":"Rest, hours, approved absence, coverage/overlap, etc.","Principle":"Generation is strict. Voluntary swaps convert >48h and recovery-pattern issues into ACK warnings, while >12h/day, <11h rest, >6 workdays/7d, >60h/7d and ABSOLUTE/overlap/coverage remain hard blockers."},
+            {"Stage":"1. TRUE ABSOLUTE HARD","System":"Finds only safe/physically feasible schedules; generation applies <=48h/7d and the Onko recovery guard.","Evaluates":"Rest, hours, approved absence, coverage/overlap, exact monthly workload and even Onko pairing.","Principle":"Exact monthly workload and Onko 0/2/4/... are HARD in SYSTEM and ACTUAL. Consecutive Onko may be accepted only as a voluntary-swap ACK consequence; parity can never be overridden."},
             {"Stage":"2. CRITICAL WATER-FILL","System":"Co-optimizes SPS RO, SPS UG and all weekend exposure.","Evaluates":"Raw max-min in the three critical categories.","Principle":"0–1; first unit for everyone before second; ordinary SOFT cannot widen to 2."},
-            {"Stage":"3. RESIDENT HARD","System":"Minimizes total Unavailable losses, then resident water-fill and historical burden.","Evaluates":"Whole-day, AM/PM and recurring Resident-HARD.","Principle":"Zero if possible; otherwise unavoidable minimum distributed fairly."},
+            {"Stage":"3. RESIDENT HARD","System":"Minimizes total Unavailable losses, then distributes any unavoidable current-month losses by resident water-fill.","Evaluates":"Whole-day, AM/PM and recurring Resident-HARD.","Principle":"Zero if possible; otherwise the unavoidable minimum is distributed fairly within this month; no historical catch-up."},
             {"Stage":"4. Critical spacing","System":"Places equivalent critical counts more evenly in time.","Evaluates":"Consecutive weekends and SPS clustering, including prior-month weekend tail.","Principle":"Avoid concentrated fatigue."},
             {"Stage":"5. WEEKLY LOAD + RECOVERY","System":"Water-fills weekly hours and locks the recovery frontier.","Evaluates":"Rolling-7 hours, calendar-week spread, consecutive 12h doubles.","Principle":"Aim ~40h/7d; <=48h HARD; after 2 doubles next day PM-only or off, preferring off."},
-            {"Stage":"6. HOLIDAY WATER-FILL","System":"Allocates public-holiday duty to holiday-work volunteers first, neutral residents next, and holiday-rest residents only when needed.","Evaluates":"Current + cumulative SYSTEM holiday burden and monthly load.","Principle":"Preference cohort first, then one unit for everyone before seconds; higher safety/critical/RH/recovery locks cannot be worsened."},
-            {"Stage":"7. Other burden","System":"Balances total doubles, Fridays and other consecutive/fatigue burden.","Evaluates":"Other involuntary load.","Principle":"Cannot worsen critical/RH/weekly recovery locks."},
-            {"Stage":"8. OTHER POST CORE","System":"Tests the ordinary-post fairness corridor.","Evaluates":"Seven noncritical post spreads.","Principle":"Ideal 0–1; normal <=2; <=3 only if <=2 is infeasible inside higher locks."},
+            {"Stage":"6. HOLIDAY WATER-FILL","System":"Allocates public-holiday duty within the current month while respecting active holiday preferences and higher locks.","Evaluates":"Current-month holiday burden and monthly load only.","Principle":"One unit for everyone before seconds where feasible; prior months do not create catch-up."},
+            {"Stage":"7. Other burden","System":"Balances total doubles and other consecutive/fatigue burden.","Evaluates":"Remaining structural burden.","Principle":"Fridays are already HARD water-filled at raw 0–1 and are not relaxed here."},
+            {"Stage":"8. OTHER POST CORE","System":"Tests the all-post structural floor/ceil water-fill corridor.","Evaluates":"Seven noncritical post spreads.","Principle":"Target raw 0–1. <=2 and then <=3 are tried only after the tighter corridor is proven infeasible inside higher locks."},
             {"Stage":"9. SOFT-1 → SOFT-2 → SOFT-3","System":"Water-fills residents horizontally and locks each vertical rank.","Evaluates":"Time/recovery → exact desired work → month shape.","Principle":"Common entitlement layers before extras."},
-            {"Stage":"10. POST OPTIMAL + DEBT","System":"Without worsening SOFT, returns ordinary posts toward 0–1 and repairs cumulative debt.","Evaluates":"Current + cumulative resident × post exposure.","Principle":"Underexposed residents receive future catch-up priority."},
-            {"Stage":"11. ACTUAL + swaps/repairs","System":"Recomputes ACTUAL satisfaction. For critical SPS absence, first transfers a resident from a same-block optional post.","Evaluates":"Mandatory SPS coverage, donor-post status, misses and safety.","Principle":"SYSTEM fairness / spread / post debt stay frozen. Repair exposure is excluded from fairness and shown only as ACTUAL operational information; voluntary swaps use consequence + ACK."},
+            {"Stage":"10. CURRENT-MONTH POST OPTIMAL","System":"Without worsening SOFT, returns this month’s ordinary posts toward 0–1.","Evaluates":"Current-month resident × post exposure only.","Principle":"History is monitored but creates no debt and never steers a future month."},
+            {"Stage":"11. ACTUAL + swaps/repairs","System":"Recomputes ACTUAL schedule, satisfaction and live fairness. For critical SPS absence, first transfers a resident from a same-block optional post.","Evaluates":"Mandatory SPS coverage, real post exposure, ACTUAL spreads, misses and safety.","Principle":"SYSTEM publication baseline stays frozen for audit; ACTUAL fairness follows reality. Water-fill may be broken post-publication and no future catch-up is created."},
         ]
         if advanced_mode:
             st.markdown("### Generator workflow")
@@ -8056,26 +10749,30 @@ with tabs[pos]:
 
                 st.markdown("#### Struktūrinės taisyklės" if lang=="LT" else "#### Structural rules")
                 s1,s2=st.columns(2)
-                onko_v=s1.toggle("Onko even pairs — exact workload HARD",value=True,disabled=True,help=("V2.5.67: Onko = 1.5 pamainos, todėl lyginis skaičius yra privalomas, kad mėnesio targetas liktų tikslus." if lang=="LT" else "V2.5.67: Onko = 1.5 shift units, so an even count is mandatory to preserve the exact monthly target."))
+                onko_v=s1.toggle("Onko pairs + recovery — HARD",value=True,disabled=True,help=("V2.5.68: Onko = 1.5 pamainos, todėl skiriamas lyginiu skaičiumi; be to, tam pačiam rezidentui Onko negalima dvi kalendorines dienas iš eilės." if lang=="LT" else "V2.5.68: Onko = 1.5 shift units, so counts are even; additionally, the same resident cannot work Onko on consecutive calendar days."))
                 weekend_unique_v=s2.toggle("Weekend uniqueness required",value=bool(active_cfg["weekend_unique_required"]))
                 weekend_cap_v=st.number_input("Weekend max assignments/resident",1,4,int(active_cfg["weekend_max_assignments_per_resident"]),1)
 
                 st.markdown("#### Dublių apimtis" if lang=="LT" else "#### Backup scope")
-                b1,b2,b3=st.columns(3)
-                backup_weekends_v=b1.toggle("Weekends",value=bool(active_cfg["backup_weekends"]))
-                backup_sps_ro_v=b2.toggle("SPS RO",value=bool(active_cfg["backup_sps_ro"]))
-                backup_sps_ug_v=b3.toggle("SPS UG",value=bool(active_cfg["backup_sps_ug"]))
+                b1,b2=st.columns(2)
+                backup_sps_ro_v=b1.toggle("SPS RO — visos dienos / blokai",value=bool(active_cfg["backup_sps_ro"]))
+                backup_sps_ug_v=b2.toggle("SPS UG — visos dienos / blokai",value=bool(active_cfg["backup_sps_ug"]))
+                backup_weekends_v=False  # compatibility-only; generic weekend scope retired in V2.5.98
+                b4,b5,b6=st.columns(3)
+                backup_centro120_v=b4.toggle("Centro 120 AM",value=bool(active_cfg.get("backup_centro120_am",True)))
+                backup_onko_v=b5.toggle("Onko RO",value=bool(active_cfg.get("backup_onko_ro",True)))
+                backup_centro_ro_v=b6.toggle("CENTRO RO best-effort",value=bool(active_cfg.get("backup_centro_ro_best_effort",True)))
 
                 st.markdown("#### Fairness guardrails")
                 g1,g2=st.columns(2)
                 post_tol_v=g1.number_input("Legacy post tolerance (V2.5.53 constitutional gates are fixed)",0,5,int(active_cfg["post_guardrail_tolerance"]),1,disabled=True)
                 general_tol_v=g2.number_input("Other spread tolerance",0,5,int(active_cfg["general_guardrail_tolerance"]),1)
-                st.caption("V2.5.55 fixed generation gates: SPS RO / SPS UG / weekends raw 0–1; other posts normally ≤2, exceptional ≤3; generation ≤48 known hours and ≤6 worked days per rolling 7 days. Voluntary-swap hard cap is separately configurable 48–60h and should match the employer-approved legal work-time regime.")
+                st.caption("V2.5.74 fixed generation gates: SPS RO / SPS UG / weekends / FRIDAYS raw 0–1; every ordinary non-Onko post targets raw 0–1, widening only after proven infeasibility; generation ≤48 known hours and ≤6 worked days per rolling 7 days. Voluntary-swap hard cap is separately configurable 48–60h and should match the employer-approved legal work-time regime.")
 
                 with st.expander("Optimizerio svoriai — keisti tik sąmoningai" if lang=="LT" else "Optimizer weights — change deliberately"):
                     w1,w2,w3=st.columns(3)
                     post_weight_v=w1.number_input("Monthly post weight",0.0,100000.0,float(active_cfg["monthly_post_spread_weight"]),50.0)
-                    catchup_weight_v=w2.number_input("Cumulative catch-up weight",0.0,100000.0,float(active_cfg["cumulative_post_catchup_weight"]),1.0)
+                    catchup_weight_v=w2.number_input("Legacy catch-up weight — DISABLED in V2.5.96",0.0,100000.0,0.0,1.0,disabled=True,help="Kept only for Rule Profile schema compatibility. Historical fairness is audit-only and never steers future generation.")
                     active_reward_v=w3.number_input("Active SOFT reward",0.0,100000.0,float(active_cfg["active_date_reward"]),10.0)
 
                 candidate_cfg={
@@ -8094,6 +10791,9 @@ with tabs[pos]:
                     "backup_weekends":backup_weekends_v,
                     "backup_sps_ro":backup_sps_ro_v,
                     "backup_sps_ug":backup_sps_ug_v,
+                    "backup_centro120_am":backup_centro120_v,
+                    "backup_onko_ro":backup_onko_v,
+                    "backup_centro_ro_best_effort":backup_centro_ro_v,
                     "post_guardrail_tolerance":post_tol_v,
                     "general_guardrail_tolerance":general_tol_v,
                     "monthly_post_spread_weight":post_weight_v,

@@ -1,0 +1,12 @@
+V2.5.98 LOCKED — POSITION-BASED BACKUPS + CREDIT-ONLY COVER
+
+1. Base = V2.5.97 user-feedback build on V2.5.96 monthly SYSTEM baseline + live ACTUAL fairness.
+2. Backup obligation is position-based, not weekend-based.
+3. SPS RO and SPS UG require named cover on every day/block where those positions exist.
+4. Centro UG 120 AM and Onko RO FULL 9h require named cover.
+5. CENTRO RO remains best-effort and non-blocking.
+6. Current Saturday/Sunday duties are SPS RO and are therefore covered automatically; future SPS RO/SPS UG night slots inherit coverage without a new weekend rule.
+7. Completed actual cover awards one typed rest credit only to the covering resident.
+8. The covered resident receives no work debt and no existing rest credit is consumed.
+9. AM/PM credits remain a future workload-reduction benefit; max 2 daytime credits may be redeemed in one month.
+10. Saturday/Sunday split water-fill, Centro120 PM, Mammography-last, workstyle override, day-status markers, exact workload, Onko pairing/recovery and no-catch-up remain preserved.

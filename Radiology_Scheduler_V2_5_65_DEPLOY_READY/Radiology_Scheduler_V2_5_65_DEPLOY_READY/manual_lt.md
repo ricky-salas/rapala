@@ -1,10 +1,55 @@
+# V2.5.100 — EMAIL LIFECYCLE + DURABLE OUTBOX
+
+- Vienas sistemos siuntėjas siunčia operacinius grafiko pranešimus visiems aktyviems rezidentams.
+- Etapai: **pageidavimai atidaryti → trūkstamų pageidavimų priminimai → preliminarus grafikas / apsikeitimų etapas → FINAL / baigta**.
+- `preferences_open`, `swap_open` ir `final` yra operaciniai etapo pranešimai; individualus `notifications_on` toliau valdo tik periodinius trūkstamų pageidavimų priminimus.
+- Kiekvienas lifecycle laiškas prieš SMTP siuntimą įrašomas į `notification_outbox`. Unikalus `event_key + initials` neleidžia Streamlit rerun ar cron jobui netyčia išsiųsti dublikato.
+- Nepavykę laiškai lieka retry eilėje. Seniūnė gali pakartoti **tik nepavykusiems**, o background worker gali juos bandyti dar kartą automatiškai.
+- Preliminaraus etapo laiškas prisega asmeninį preliminarų `.ics`; FINAL laiškas prisega galutinį `.ics`.
+- Automatinis workeris pageidavimų etapą pradeda ankstesnio mėnesio 1 d. 08:00 Lietuvos laiku. Trūkstamų anketų priminimai nuo rezidento pasirinktos `reminder_start_day` dienos siunčiami daugiausia kartą per dieną iki termino.
+- Senas atskiras `backup_claim_reminder` lifecycle kelyje nebegeneruojamas, kad žmogus negautų dviejų panašių priminimų tą pačią dieną.
+- Seniūnės Simple UI rodo vieną kompaktišką el. pašto paruošimo būseną, kanalo testą ir etapų pristatymo lentelę. SMTP techninė lentelė rodoma tik Išplėstiniame režime.
+- Solverio logika V2.5.100 nekeista; `scheduler_engine.py` yra identiškas V2.5.99.
+
+# V2.5.98 — POZICIJOMIS PAREMTI DUBLIAI + TIK KREDITAS
+
+- Dublio prievolė siejama su darbo vieta, ne su savaitgaliu: **SPS RO ir SPS UG dengiami visada**, Centro UG 120 — rytas, Onko RO — visa 9 val. pamaina. CENTRO RO dengiamas best-effort.
+- Dabartiniai šeštadienio ir sekmadienio budėjimai yra SPS RO, todėl automatiškai patenka į privalomą SPS RO dengimą. Ateityje atsiradę SPS RO / SPS UG naktiniai slotai paveldės tą pačią taisyklę.
+- Realus pavadavimas sukuria **tik poilsio kreditą pavaduojančiam rezidentui**. Pavaduotam žmogui jokia darbo skola nesukuriama ir jo turimi kreditai neatimami.
+- RYTO ir POPIETĖS kreditai gali mažinti būsimo pasirinkto mėnesio dieninį targetą; bendra panaudojimo riba lieka 2 dieniniai kreditai per mėnesį.
+
+# V2.5.97 — NAUDOTOJŲ PASTABŲ ATNAUJINIMAS
+
+> **Šis skyrius papildo ir, jei prieštarauja, yra viršesnis už ankstesnius šio dokumento teiginius. V2.5.96 principas „be kito mėnesio fairness catch-up“ lieka galioti.**
+
+- **Centro UG 120 kab. dabar turi RYTĄ ir POPIETĘ.** Naujos PM vietos pridėtos append-only būdu po senų slotų ID, kad ankstesnių paskelbtų grafikų skaitmeniniai slotų ID nepasikeistų.
+- **Dengimai / dubliai:** privalomas vardinis dengimas taikomas savaitgalio SPS RO, Centro UG 120 RYTUI, Onko RO pilnai 9 val. dienai, darbo dienos SPS RO RYTUI ir šiuo metu išlaikytam SPS UG dengimui. **CENTRO RO** dengiama kuo plačiau pagal likusią saugią talpą, tačiau jos nepadengimas publikavimo neblokuoja.
+- **Mamografija yra paskutinio prioriteto neprivalomas kabinetas.** Kai dėl tikslaus grupės krūvio dalį neprivalomų vietų reikia palikti tuščių, solveris pirmiausia renkasi Mamografijos vietas; kitų kabinetų skylės naudojamos tik kai reikia.
+- **Šeštadieniai ir sekmadieniai nuo šiol yra dvi atskiros teisingumo kategorijos.** SYSTEM generavimo metu kiekviena jų water-fill'inama atskirai iki raw spread 0–1. Po publikavimo leidžiami abipusiai swapai / operaciniai pakeitimai gali ACTUAL balansą pakeisti; SYSTEM baseline auditui lieka nekintamas.
+- **Darbo dienos trukmės pageidavimas yra tikras aktyvus SOFT signalas.** Sistema pirmiausia nustato neutralų bendrą matematiškai reikalingų AM+PM dvigubų dienų kiekį. Tada, nekeisdama šio bendro kiekio, perskirsto jas pagal aktyvius 6 val. / 12 val. darbo pobūdžio pasirinkimus. Neutralus N/A žmogus nekonkuruoja su aiškiu pageidavimu. Todėl jei tik vienas rezidentas renkasi „dažniausiai 12 val.“, jis turi gauti kuo daugiau jau reikalingų 12 val. dienų, kiek leidžia ABSOLUTE/HARD, poilsis, tikslus mėnesio krūvis ir kritiniai SPS / šeštadienio / sekmadienio guardrailai.
+- **Vienodas pageidavimas visai grupei yra atskiras scarcity klausimas.** Galutinė taisyklė, kam pirmiau tenkinti ribotą vienodą pageidavimą, dar neužrakinama V2.5.97 ir bus apibrėžta atskirai.
+- **Operacinės nedarbo dienos:** SR (ir ŠR contingency operatorius Išplėstiniame režime) Grafiko lange gali pažymėti `Nedarbingumas`, `Kvalifikacijos kėlimas` arba `Sveikatinimosi diena`. Žyma spalvinama to rezidento spalva, išima jo tos dienos ACTUAL pamainas ir nekeičia SYSTEM baseline. Tiksli priežastis / pastaba rodoma tik lifecycle operatoriui.
+
+# V2.5.96 — DABARTINĖ FAIRNESS KONSTITUCIJA: MONTHLY BASELINE + LIVE ACTUAL, BE CATCH-UP
+
+> **Šis skyrius yra viršesnis už visus ankstesnius manualo / README teiginius apie fairness-neutral swapus, post debt, cumulative catch-up ar ankstesnių mėnesių kompensavimą.**
+
+- **Kiekvienas naujas mėnuo prasideda nuo švaraus SYSTEM water-fill baseline.** Ankstesnių mėnesių savaitgalių, penktadienių, dublių, darbo dienų, postų ekspozicijų, švenčių ar RESIDENT-HARD nuostolių istorija **nėra solverio input** ir nesukuria kompensacinės skolos.
+- **Jei niekas nieko nekeičia po generavimo, gaunamas neutralus water-fill grafikas.** Individualūs SOFT pageidavimai optimizuojami baseline fairness ribose; jie negali nupirkti platesnio SYSTEM water-fill koridoriaus.
+- **Po publikavimo manual override, abipusis swapas, emergency repair ir kiti leidžiami ACTUAL pakeitimai gali sulaužyti water-fill.** Tai leidžiama, jei praeina išliekantys ABSOLUTE / fizinio įmanomumo / darbo-laiko blokatoriai ir kitos neapeinamos taisyklės.
+- **SYSTEM baseline lieka nekintamas auditui ir tyrimui. ACTUAL fairness yra gyva realybės statistika.** Po kiekvieno pakeitimo ACTUAL postų ekspozicija ir mėnesiniai spread perskaičiuojami pagal tai, kas realiai turi pamainas dabar.
+- **Completed backup cover** perkelia konkretaus covered slot ACTUAL ekspoziciją realiai pavadavusiam žmogui. Vien suplanuotas ar aktyvuotas standby be `completed_at` ACTUAL fairness nekeičia.
+- **Istoriją saugome tik stebėjimui / auditui.** Galima matyti SYSTEM ir ACTUAL skirtumą kiekvieną mėnesį ir trendą, tačiau istorija **niekada negrįžta į kito mėnesio solverį kaip catch-up**.
+- **Post debt / future fairness catch-up išjungtas.** Rule Profile laukas paliktas tik schemos suderinamumui ir V2.5.96 engine jo nenaudoja.
+- **Per mėnesio ribą išlieka tik saugos / spacing kontekstas**, pvz. realiai dirbtų iš eilės savaitgalių tail ir paskutinės dienos Onko būsena. Tai nėra fairness kompensacija.
+
 # Grafiko taisyklės
 
 Šis dokumentas aprašo rezidentų mėnesinio grafiko sudarymo, paskelbimo, pavadavimų ir pakeitimų tvarką. Sistemos tikslas – vienodai taikyti kietas taisykles, skaidriai paskirstyti krūvį ir kuo geriau išpildyti individualius pageidavimus.
 
 ## 1. Vartotojų vaidmenys
 
-V2.5 beta versijoje kiekvienas žmogus turi atskirą paskyrą su el. paštu ir slaptažodžiu. Pirmos registracijos metu paskyra susiejama su konkrečiais rezidento inicialais naudojant vienkartinį kvietimo kodą. Viena paskyra gali būti susieta tik su vienu rezidentu. G.M. paskyra turi seniūnės rolę, todėl tuo pačiu prisijungimu gali persijungti tarp **Rezidento profilio** ir **Seniūnės profilio**.
+Kiekvienas žmogus turi atskirą paskyrą su el. paštu ir slaptažodžiu. Pirmos registracijos metu paskyra susiejama su konkrečia rezidento tapatybe naudojant vienkartinį kvietimo kodą. Viena paskyra gali būti susieta tik su vienu rezidentu. **SR** yra operacinė Seniūnė. **ŠR** turi rezidento / tyrėjo paskyrą ir Išplėstiniame režime gali naudoti kontingencines lifecycle administravimo funkcijas; kitų rezidentų paskyros yra rezidento-only.
 
 ### Rezidento profilis
 
@@ -67,7 +112,7 @@ Konkrečiam mėnesiui galima pažymėti:
 
 - **Negaliu dirbti** – privaloma taisyklė visai dienai, rytui arba popietei;
 - **Noriu laisvos** – minkštas pageidavimas konkrečioms datoms;
-- **Pageidauju dirbti** – pageidavimas konkrečioms datoms. Jei pasirinkta penktadienio ar savaitgalio data, tai laikoma aiškiu savanorišku nepopuliaraus darbo pasirinkimu: ji vykdoma prieš teisingumo balansavimą, jei nepažeidžiamos privalomos taisyklės ir poilsio sauga;
+- **Pageidauju dirbti** – pageidavimas konkrečioms datoms. Jei pasirinkta penktadienio ar savaitgalio data, tai yra SOFT savanoriškas pasirinkimas. Penktadienio pageidavimas vykdomas tik jei kartu išlaikomas SYSTEM penktadienių structural water-fill raw spread 0–1; po publikavimo abipusis ACTUAL swapas gali šį balansą pakeisti;
 - kiek RYTO ir / arba POPIETĖS poilsio kreditų norima panaudoti tam mėnesiui (bendra riba – 2 dieniniai kreditai per mėnesį);
 - papildomą komentarą.
 
@@ -143,7 +188,7 @@ Dviguba pamaina leidžiama tik tada, kai nesikerta laikas. Sistema papildomai ba
 
 Dubliai generuojami **pagal pamainas**, o ne pagal visą dieną.
 
-Pavyzdžiui, jei A.S. tą pačią dieną dirba:
+Pavyzdžiui, jei SA tą pačią dieną dirba:
 
 - Centro RO 08:00–14:00;
 - SPS UG 14:00–20:00,
@@ -186,63 +231,17 @@ Jeigu realybėje pavadavo kitas žmogus, seniūnė gali įvesti **faktinį dubl�
 Po patvirtinto savanoriško apsikeitimo dubliai perskaičiuojami pagal naują galiojantį normalų grafiką.
 
 
-### Realus pavadavimas: poilsio kreditas ir darbo skola
+### Realus pavadavimas: poilsio kreditas
 
-Planuotas ar tik aktyvuotas dublis savaime jokio kredito nesukuria. Balansai pasikeičia tik tada, kai seniūnė pažymi konkretų dublį kaip **realiai įvykdytą pavadavimą**.
+Planuotas ar tik aktyvuotas dublis kredito nesukuria. Kai seniūnė pažymi, kad rezidentas **realiai pavadavo**, pavaduojantis rezidentas gauna vieną tos konkrečios rūšies poilsio kreditą. Pavaduotam žmogui **jokia skola nesukuriama** ir jo jau turimi kreditai dėl šio įvykio neatimami.
 
-V2.5.5 taiko abipusę tos pačios rūšies apskaitą:
-
-- **RYTAS** = 08:00–14:00, 6 val.;
-- **POPIETĖ** = 14:00–20:00, 6 val.;
-- **NAKTIS** = 20:00–08:00, 12 val.
-
-RYTO, POPIETĖS ir NAKTIES balansai yra atskiri. Dieninis kreditas negali kompensuoti naktinio įsipareigojimo ir atvirkščiai.
-
-Kai **A realiai pavaduoja B**:
-
-1. A pusėje sistema tikrina tos pačios rūšies DARBO skolą. Jei A turi aktyvią tos rūšies skolą, naujas realus pavadavimas pirmiausia uždaro **seniausią** skolą. Jei skolos nėra, A gauna naują **POILSIO kreditą**.
-2. B pusėje sistema tikrina laisvą, nepanaudotą ir jokiam būsimam mėnesiui nerezervuotą tos pačios rūšies POILSIO kreditą. Jei toks yra, jis panaudojamas šiam įvykiui kompensuoti ir nauja darbo skola nesukuriama. Jei tokio kredito nėra, B gauna naują **DARBO skolą**.
-
-Taip ilgainiui balansas natūraliai grįžta link nulio: realiai pavaduodamas kitus žmogus uždaro savo ankstesnius pavadavimus / skolas, o tik perteklinis realus pavadavimas tampa poilsio kreditu.
-
-Svarbu: poilsio kreditas, kurį rezidentas jau **rezervavo konkretaus būsimo mėnesio poilsiui**, nėra automatiškai atimamas, jeigu vėliau žmogų kas nors pavaduoja. Tokiu atveju sukuriama atskira darbo skola.
-
-#### Poilsio kreditai
-
-- POILSIO kreditas galioja **12 mėnesių nuo realaus pavadavimo datos**.
-- Jei per 12 mėnesių jis nepanaudojamas ir nėra rezervuotas tinkamam mėnesiui, jis nebegali būti naudojamas.
-- Vienas RYTO kreditas leidžia sumažinti būsimo dieninio grafiko targetą 1 pamaina; vienas POPIETĖS kreditas – taip pat 1 pamaina.
-- Vienam mėnesiui galima panaudoti **daugiausia 2 dieninius poilsio kreditus iš viso**. Tai yra saugiklis, kad daug rezidentų vienu metu nesukauptų didelio pamainų sumažinimo ir grafikas netaptų neįmanomas.
-- Kreditus galima kaupti ir pasirinkti, kuriam būsimam mėnesiui juos pritaikyti, todėl jie gali būti naudojami trumpam poilsio periodui / „mini atostogoms“, tačiau laikantis 2 dieninių kreditų ribos.
-- Dabartinis PGY1 engine dar neturi naktinių normalaus grafiko slotų, todėl NAKTIES poilsio kreditai šiuo metu **tik kaupiami**. Jie negali mažinti dieninio targeto.
-- Dabartinis PGY1 targetas yra bendras dieninis workload targetas. RYTO ir POPIETĖS kreditų kilmė bei likučiai saugomi atskirai, nors jų panaudojimas šioje versijoje mažina bendrą dieninį targetą 1:1.
-
-#### Darbo skolos
-
-DARBO skola reiškia, kad žmogų realiai pavadavo kitas rezidentas ir ateityje žmogus turi grąžinti tos pačios rūšies pavadavimo darbą.
-
-Darbo skolos **nereikia privalomai atidirbti jau kitą mėnesį**. Taikomas slenkantis prioritetas:
-
-- **0–2 mėn.** – skola bankuojama; papildomo priverstinio prioriteto nėra.
-- **3–5 mėn.** – sistema pradeda švelniai teikti prioritetą tos pačios rūšies automatinėms dublio galimybėms.
-- **6–11 mėn.** – tos pačios rūšies darbo skola gauna stiprų prioritetą likusiems automatiškai skiriamiems dublio slotams.
-- **nuo 12 mėn.** – skola žymima **PRADELSTA**, jai taikomas aukščiausias prioritetas ir ji nedingsta, kol realiai neuždaroma.
-
-12 mėnesių terminas yra reali organizacinė pareiga, tačiau sistema negali garantuoti, kad per tą laiką būtinai atsiras faktinis pavadavimo poreikis. Todėl 12 mėn. suėjusi skola **neišnyksta** – ji lieka matoma seniūnei ir gauna aukščiausią prioritetą.
-
-Darbo skola užsidaro tik po **realaus tos pačios rūšies pavadavimo**, o ne vien todėl, kad žmogus buvo paskirtas standby dubliu.
-
-#### Sąveika su first-come dublių pasirinkimu
-
-Rezidentų savarankiškai pasirinkti savaitgalio dubliai ir toliau lieka **first come, first served**. Darbo skolos prioritetas neatima jau savarankiškai rezervuoto sloto.
-
-Darbo skolos amžius naudojamas tik tada, kai sistema automatiškai paskirsto **likusius nepasirinktus** dublio slotus:
-
-- 3–5 mėn. skola veikia kaip minkštas prioritetas;
-- 6+ mėn. skola gali aplenkti įprastą nepasirinkusių rezidentų prioritetinę eilę;
-- 12+ mėn. pradelsta skola turi aukščiausią automatinio paskyrimo prioritetą.
-
-Jeigu įvykdymo žyma įvesta klaidingai, seniūnė gali ją atšaukti. Sistema atšaukia ir su tuo įvykiu sukurtus balansų pokyčius, **jeigu jie dar nebuvo panaudoti ar vėliau uždaryti**. Taip apsaugoma kredito / skolos grandinės istorija.
+- **RYTAS** = 08:00–14:00, 6 val.
+- **POPIETĖ** = 14:00–20:00, 6 val.
+- **NAKTIS** = 20:00–08:00, 12 val. (kai sistemoje atsiras naktiniai slotai).
+- Kreditas galioja 12 mėnesių nuo realaus pavadavimo datos.
+- RYTO ir POPIETĖS kreditas po 1 vienetą gali sumažinti pasirinkto būsimo mėnesio dieninį targetą; per mėnesį galima panaudoti daugiausia 2 dieninius kreditus iš viso.
+- NAKTIES kreditai kol kas kaupiami atskirai ir dabartinio PGY1 dieninio targeto nemažina.
+- Klaidingai pažymėtą realų pavadavimą seniūnė gali atšaukti, jei iš jo gautas kreditas dar nepanaudotas.
 
 ## 10. Fairness: kaip jį suprasti
 
@@ -251,8 +250,8 @@ Fairness **niekada nėra aukščiau už kietas taisykles**. V2.5.6 grafikas vert
 | Lygis | Ką sistema tikrina | Kaip interpretuoti |
 |---|---|---|
 | **1. Privalomų taisyklių atitiktis** | Teisinės, fizinės, prieinamumo ir poilsio saugos taisyklės | **Privaloma 0 klaidų.** Jei yra bent viena privalomos taisyklės klaida, grafiko skelbti negalima. |
-| **2. Savanoriškas nepopuliarus darbas** | Aiškiai pageidautą penktadienio ar savaitgalio darbo datą | **„Savanoriškas pasirinkimas dirbti nepopuliarią pamainą neturi bloginti teisingumo balanso ir turi būti vykdomas prioritetiškai, jei nepažeidžiami Darbo kodekso bei poilsio saugos reikalavimai.“** |
-| **3. Kaupiamasis teisingumas** | Sistemos paskirtą nesavanorišką nepopuliarų krūvį per mėnesius | Balansuojamas tik algoritminis krūvis; aiškiai savanoriškai pasirinktas penktadienis ar savaitgalis į šią naštą neįskaičiuojamas. |
+| **2. Savanoriškas nepopuliarus darbas** | Aiškiai pageidautą penktadienio ar savaitgalio darbo datą | **„Savanoriškas pageidavimas dirbti penktadienį vykdomas tik structural Friday raw spread 0–1 viduje; savaitgalio pageidavimas taip pat negali pralaužti aukštesnių SYSTEM struktūrinių taisyklių.“** |
+| **3. Kaupiamasis teisingumas** | Sistemos paskirtą nesavanorišką nepopuliarų krūvį per mėnesius | SYSTEM penktadienių struktūrinėje taisyklėje skaičiuojami VISI užpildyti penktadienio priskyrimai, net jei data buvo pageidauta. Po publikavimo savanoriški ACTUAL swapai SYSTEM istorijos neperrašo. |
 | **4. Mėnesio teisingumas** | Pasirinkto mėnesio sistemos paskirtą krūvį | Einamojo mėnesio balansas tvarkomas po savanoriškų nepopuliarių pasirinkimų. |
 | **5. Kiti pageidavimai** | Likusius individualius norus | Tenkinami maksimaliai, kai aukštesni lygiai leidžia. |
 | **4. Soft preferences / kosmetika** | Asmeninius norus, darbo stilių, išsklaidymą ir pan. | Optimizuojama tik tada, kai aukštesni lygiai leidžia. |
@@ -470,33 +469,13 @@ Kalbos viename režime nemaišomos.
 
 Teisinis pagrindas: Lietuvos Respublikos darbo kodekso 114 straipsnio maksimaliojo darbo laiko ir 122 straipsnio minimaliojo poilsio principai bei Valstybinės darbo inspekcijos oficiali informacija apie maksimalų darbo laiką ir minimalų poilsio laiką. Prieš naudojant kaip galutinę teisinę kontrolę būtina suderinti su faktiniu Klinikų / LSMU darbo laiko režimu, kolektyvine sutartimi ir apskaitos tvarka.
 
-## Dubliai — V2.5.2 LOCKED
+## Dubliai — V2.5.98 AKTYVI TAISYKLĖ
 
-**Dubliai skiriami tik savaitgaliais.**
+Privalomas dublio dengimas yra **pozicijomis paremtas**: SPS RO ir SPS UG — visada, Centro UG 120 — rytas, Onko RO — visa 9 val. pamaina. CENTRO RO dengiamas kuo plačiau best-effort, tačiau jo trūkumas publikavimo neblokuoja. Generic „savaitgalio dublio“ taisyklės nebėra: dabartinis savaitgalis dengiamas todėl, kad visos savaitgalio budėjimo pamainos yra SPS RO.
 
-- Kiekviena užpildyta šeštadienio arba sekmadienio SPS RO budėjimo pamaina turi turėti konkretų dublį.
-- Pirmadienio–penktadienio pamainoms dubliai neskiriami ir dublio rezervas joms nerezervuojamas.
-- Darbo dienos dublio nebuvimas niekada neblokuoja grafiko paskelbimo; savaitgalio dublio nebuvimas — blokuoja.
-- Dublis turi būti laisvas dubliuojamos savaitgalio pamainos laiko bloku ir tuo metu neturėti kieto negalėjimo dirbti.
-- Dublio įtraukimas į asmeninį `.ics` lieka pasirenkamas. Kadangi dubliai dabar tik savaitgaliais, pasirinkus juos rodyti kalendorius išlieka gerokai švaresnis.
-- Kai realiai reikia pavadavimo, seniūnė aktyvuoja konkretų savaitgalio dublį; rezidentui pagal nustatymus siunčiamas el. laiškas.
-- Kreditas suteikiamas tik tada, kai pažymima, kad žmogus realiai pavadavo; 6 val. = +1, 12 val. = +2.
-- Ši `tik savaitgaliais` taisyklė yra **LOCKED**. Ji neturi būti tyliai pakeista šioje versijoje.
+## Dublių savitarna — V2.5.98
 
-
-## Savaitgalio dublių savitarna — V2.5.3 LOCKED
-
-- Tikslas — po **1 savaitgalio dublio pareigą vienam rezidentui per mėnesį**, kai mėnesyje yra 16 savaitgalio pamainų ir 16 rezidentų.
-- Iki pageidavimų termino kiekvienas pats pasirenka vieną laisvą savaitgalio dublio slotą.
-- Slotai skiriami **first come, first served**. Vieną slotą gali rezervuoti tik vienas žmogus, o vienas žmogus savitarnoje gali turėti vieną rezervaciją per mėnesį.
-- Rezervuotas dublio laiko blokas tampa kietu planavimo apribojimu normaliai pamainai: generatorius negali tam pačiam žmogui skirti persidengiančios normalios pamainos.
-- Jei iki termino dublis nepasirenkamas, žmogui neskiriama atskira „baudos pamaina“, tačiau jis **praranda pasirinkimo prioritetą ir patenka į pirmiausia automatiškai skiriamų dublių eilę**. Likusiems nepaimtiems slotams sistema pirmiausia renkasi iš nepasirinkusių, laikydamasi visų kietų prieinamumo taisyklių.
-- Jei savaitgalio slotų mėnesyje daugiau nei 16, po pirmo rato likusios pareigos paskirstomos kuo tolygiau; todėl mėnesiais su 18 ar 20 savaitgalio pamainų kai kuriems gali tekti antras dublis.
-- Artėjant terminui, jei žmogus dar nepasirinko dublio, siunčiamas atskiras priminimas.
-- Po grafiko paskelbimo savitarna užrakinama. Toliau dublio diena keičiama per `Apsikeitimai`.
-- Dublio apsikeitimas dvišalis. Kitas žmogus priima arba atmeta; prieš pritaikant tikrinama, ar abu lieka tinkami naujiems dublio slotams. Aktyvuotų arba jau įvykdytų dublių apsikeisti negalima.
-- Pavadavimo kreditai gaunami tik už **realiai įvykdytą pavadavimą**, ne už rezervaciją ar standby pareigą.
-
+Rezidentai gali iš anksto rezervuoti privalomus dublio slotus iš galimų pozicijų. Rezervacija visada tikrinama pagal persidengimą, ABSOLUTE HARD ir RESIDENT HARD logiką. Neužimti privalomi slotai paskirstomi automatiškai kuo tolygiau; jokios darbo skolos ar skolos prioriteto eilės nėra.
 
 ## Skyriaus administratorės / stebėtojo READ-ONLY paskyra — V2.5.8 LOCKED
 
@@ -539,7 +518,7 @@ Skyriaus stebėtojui sąmoningai **nerodomi**:
 - asmeninės rezidentų pastabos;
 - el. pašto adresai ir notification nustatymai;
 - slaptažodžiai / kvietimo kodai;
-- individualūs poilsio kreditų ir darbo skolų bankai.
+- individualus poilsio kreditų bankas.
 
 Stebėtojas mato tik tiek asmens duomenų, kiek būtina operacinei grafiko priežiūrai: vardą / inicialus, paskirtas ir aktualias pamainas, su pamainomis susijusius apsikeitimus ir dublio faktą.
 
@@ -560,9 +539,9 @@ Stebėtojo paskyra aktyvuojama atskiru vienkartiniu invite kodu ir po aktyvavimo
 
 Visi rezidentai turi **Tyrimas** skiltį, kurioje gali užpildyti trumpą bazinę („Prieš naudojimą“) arba vėlesnę („Po naudojimo“) anketą. Tie patys pagrindiniai 1–5 balų klausimai kartojami abiejuose etapuose, kad vėliau būtų galima skaičiuoti pokytį.
 
-R.Š. ir G.M. turi papildomą tyrimo skydą. Jame automatiškai rodomi pasirinkto mėnesio operaciniai rodikliai (HARD klaidos, mėnesio ir kumuliacinis fairness, pageidavimų išpildymas, normalūs swapai, dublių swapai, realūs pavadavimai ir sistemos→faktinio grafiko pakeitimai) bei grupės anketų suvestinės.
+ŠR ir SR turi papildomą tyrimo skydą. SR mato grupės lygio operacinius rodiklius ir agreguotas anketų suvestines; ŠR tyrėjo paskyra papildomai turi tyrimo kokybės kontrolės ir eksporto funkcijas.
 
-Privatumas: G.M. mato tik grupės agreguotus anketų rezultatus ir anoniminius komentarus. R.Š. tyrėjo vaizde papildomai prieinami deidentifikuoti individualūs įrašai su pseudoniminiu kodu; šiame lange rezidentų vardai ir inicialai prie atsakymų nerodomi. Tyrimo duomenys saugomi atskiroje lentelėje nuo grafiko pageidavimų.
+Privatumas: SR mato tik grupės agreguotus anketų rezultatus ir anoniminius komentarus. ŠR tyrėjo vaizde papildomai prieinami deidentifikuoti individualūs įrašai su pseudoniminiu kodu; šiame lange rezidentų vardai ir inicialai prie atsakymų nerodomi. Tyrimo duomenys saugomi atskiroje lentelėje nuo grafiko pageidavimų.
 
 Ši anketa yra projekto v0.1 instrumentas, o ne galutinai validuota psichometrinė skalė. Prieš formalų publikavimą klausimynas ir tyrimo protokolas turi būti metodologiškai peržiūrėti ir, jei reikia, suderinti su etikos / IRB tvarka.
 
@@ -577,7 +556,7 @@ Privatumas: G.M. mato tik grupės agreguotus anketų rezultatus ir anoniminius k
 - **Darbo teisės / poilsio saugos duomenys** perkelti į mėnesio pageidavimų apačią, prieš seniūnės „Visų rezidentų pageidavimai“ dalį.
 - Laukas **„Jau žinomo ilgo budėjimo už šio grafiko ribų pradžios data“** skirtas tik iš anksto žinomam budėjimui, kurio ši schedulerio sistema pati neplanuoja. Po tokio įrašo sistema kitą dieną blokuoja įprastoms pamainoms kaip 24 val. poilsio apsaugą.
 - Kai ateityje pati schedulerio sistema skirs ilgą / naktinį LSMU budėjimą, tas budėjimas turi automatiškai patekti į tą patį privalomą poilsio mechanizmą — rezidentui jo ranka kartoti nereikės.
-- Darbo skolų banko stulpeliai pašalinti iš seniūnės „Visų rezidentų pageidavimai“ lentelės, kad pageidavimų langas būtų trumpesnis. Balansų apskaita lieka tam skirtoje dublių / balansų dalyje.
+- Dublių kreditai rodomi atskiroje kreditų dalyje; darbo skolų modelis nebenaudojamas.
 - Anketos kontroliniuose taškuose naudojamos trys aiškios būsenos: **Neužpildyta**, **Dar neaktyvuota**, **✓ Užpildyta**.
 
 ### Dar likęs V2.5.11 darbas
@@ -678,20 +657,9 @@ Pageidavimai optimizuojami dviem kryptimis. **Vertikaliai** galioja griežtas pr
 
 Kiekviename SOFT range pirmiausia maksimalizuojamas blogiausiai aptarnauto rezidento įvykdytų pageidavimų kiekis, po to bendras įvykdymas, o likę lygiaverčiai sprendiniai palenkiami mažesnio išsibarstymo naudai. Jei papildomas pageidavimas gali būti įvykdytas nepabloginant aukštesnio rango ar jau užrakinto bendro sluoksnio, jis nėra švaistomas — sistema jį įvykdo.
 
-## V2.5.52 — kritinis exposure, aukso viduriukas ir POST DEBT
+## V2.5.52 — istorinis fairness etapas
 
-V2.5.52 atskiria tris kritines struktūrinio krūvio kategorijas: **SPS RO, SPS UG ir savaitgalius**. Jos yra vienodo aukščiausio struktūrinio rango iškart po TRUE ABSOLUTE HARD. Kiekvienoje iš jų taikomas sluoksninis water-filling: pirmas exposure vienetas visiems tinkamiems rezidentams prieš antrą, antras prieš trečią ir t. t. Tikslas ir konstitucinis raw max–min spread yra **0–1**, kai tai matematiškai įmanoma. Paprastas SOFT pageidavimas šios ribos iki 2 nepraplečia.
-
-Ši taisyklė saugo ne tik mokomąją ekspoziciją, bet ir nuovargį. Todėl tarp sprendimų su vienodais kritinių kategorijų skaičiais sistema papildomai vengia kelių savaitgalių iš eilės bei bereikalingo SPS RO / SPS UG suspaudimo gretimomis dienomis. Vertinamas ir ankstesnio mėnesio savaitgalių „uodegos“ tęstinumas.
-
-Likę postai — CENTRO RO, Onko RO, Centro UG, ADC 144, ADC 145, Vaikų UG ir Mamografijos — taip pat water-fill'inami. Idealus spread yra 0–1, normalus mėnesio guardrail yra **≤2**. **≤3** leidžiamas tik kaip aiškiai diagnozuota exceptional išimtis, jei ≤2 neįmanoma išlaikius aukštesnio rango užraktus. Legitimus SOFT gali naudoti 0–2 koridoriaus lankstumą, bet negali pralaužti kritinio SPS/weekend 0–1.
-
-Laikinas ordinary-post nukrypimas registruojamas kaip **POST DEBT**. Teigiamas debt reiškia, kad rezidentui istoriškai trūksta konkretaus posto exposure ir ateities mėnesiais jis gauna catch-up prioritetą; neigiamas debt reiškia overexposure ir papildomas tos pozicijos vienetas jam skiriamas vėliau. POST DEBT yra kompensavimo mechanizmas, o ne leidimas sąmoningai sudaryti blogą einamojo mėnesio spreadą.
-
-SOFT įvedimas yra whitelist'inamas. Priimami konkretūs asmeninio laiko / darbo datos poreikiai (`Noriu laisvos`, `Pageidauju dirbti`), struktūruotas recovery / dublių vengimas ir mėnesio išsklaidymo–koncentracijos signalas. Bendras „nenoriu savaitgalių“, „noriu mažiau darbo dienų“ ar postų pasirinkimas („tik SPS RO“, „be Mamografijos“, „daugiau Centro RO“) nėra ordinary SOFT. Jei yra tikras fizinis ar teisinis apribojimas, jis turi būti registruojamas atitinkamu HARD tipu.
-
-SOFT viduje išlieka dviejų dimensijų fairness: vertikaliai SOFT-1 → SOFT-2 → SOFT-3, o horizontaliai kiekviename range taikomas residentų water-filling, kad didelis raw pageidavimų skaičius nesuteiktų papildomos balsavimo galios.
-
+Šio seno etapo cumulative/post-debt kompensavimo dalis **nebenaudojama**. Nuo V2.5.96 kiekvienas mėnuo prasideda nuo švaraus SYSTEM water-fill baseline, o ankstesnių mėnesių istorija yra tik auditui ir tyrimui.
 
 ## V2.5.53 — savaitinio krūvio ir recovery water-filling
 
@@ -772,14 +740,6 @@ Tai nėra „ignoruoti visas taisykles“ mygtukas. Manual ACK neapeina ABSOLUTE
 Patvirtintas manual override įrašomas dublio audite su parodytomis pasekmėmis ir patvirtinimo laiku. SYSTEM fairness baseline dėl to neperrašomas; tai ACTUAL operacinis savanoriškas sprendimas.
 
 
-## Emergency apsikeitimas — jau įvykusio fakto registravimas
-
-Jei skubus pakeitimas realybėje jau įvyko, Apsikeitimai → Emergency lange jį gali užregistruoti seniūnė arba vienas iš dalyvavusių rezidentų. Pasirenkamos dvi buvusios pamainos, sistema iš karto atnaujina ACTUAL grafiką, o SYSTEM publikavimo bazė ir teisingumo istorija neliečiamos.
-
-Jei įrašą sukuria seniūnė, abiem rezidentams rodoma 🔔, kol jie pažymi, kad įrašą matė ir jis teisingas. Jei įrašą sukuria pats rezidentas, jo peržiūra pažymima iš karto, o kitas dalyvis gauna patvirtinimo žymą. Mėnesio pabaigoje galutinis faktinis grafikas remiasi ACTUAL, todėl emergency pakeitimai nelieka tik žinutėse ar atmintyje.
-
-Emergency poskyris nėra skirtas iš anksto planuojamam apsikeitimui — tam naudojamas įprastas savanoriško swapo srautas.
-
 ## V2.5.63 — lygaus paskirstymo failsafe
 Prieš grąžindama SYSTEM grafiką sistema turi patvirtinti pakankamai lygų darbo vietų paskirstymą. SPS RO, SPS UG ir savaitgaliai įprastai gali skirtis daugiausia 1 paskyrimu tarp daugiausiai ir mažiausiai gavusio rezidento; kitos pagrindinės darbo vietos įprastai — daugiausia 2. Jei per skirtą laiką to patvirtinti nepavyksta, nelygus grafikas negrąžinamas kaip tinkamas. Konkreti SPS data nėra užrakinama vien dėl lygybės: ji gali būti perkelta kitam tinkamam žmogui ar kitai dienai, jei bendras mėnesio paskirstymas išlieka toks pat lygus ir nepažeidžiamos svarbesnės taisyklės.
 
@@ -818,3 +778,99 @@ Rezidentas gali turėti kelis laukiančius apsikeitimus, jeigu jie liečia skirt
 ## V2.5.67 — tikslus mėnesio krūvis ir Onko poros
 
 Mėnesio krūvio targetas yra privalomas ir tikslus (nuokrypis 0.0). Onko 08:00–17:00 trunka 9 val., todėl skaičiuojamas kaip 1.5 standartinės 6 val. pamainos. Kad targetas liktų sveikas ir tikslus, Onko SYSTEM grafike skiriamas lyginėmis poromis (0, 2, 4...). To paties mėnesio Onko skirtumas tarp rezidentų negali viršyti 2. Rezidentai, kurie šį mėnesį gauna mažiau Onko, turi prioritetą kitais mėnesiais pagal publikuotą cumulative Onko istoriją.
+
+
+## V2.5.68 — Onko RO atsigavimo HARD taisyklė
+
+Onko RO yra 9 val. FULL darbo diena. Tas pats rezidentas negali būti paskirtas į Onko RO dvi kalendorines dienas iš eilės. Tai yra ABSOLIUTI generatoriaus taisyklė, ne SOFT pageidavimas ir ne lygybės tikslas.
+
+Taisyklė galioja ir per mėnesio ribą: jei rezidentas paskutinę ankstesnio paskelbto SYSTEM mėnesio kalendorinę dieną dirbo Onko RO, naujo mėnesio 1 d. Onko RO jam negalimas.
+
+Onko porų logika išlieka: individualus Onko skaičius SYSTEM grafike turi būti lyginis, mėnesio skirtumas tarp rezidentų negali viršyti 2, o mažiau Onko gavę rezidentai pasiveja kitais mėnesiais. Tačiau jokio catch-up ar posto lygybės tikslo negalima pasiekti skiriant dvi Onko dienas iš eilės.
+
+
+## V2.5.69 — savanoriškas Onko swapo override
+
+SYSTEM generavimo metu dvi Onko RO dienos iš eilės lieka draudžiamos: algoritmas jų pats nesudaro. Tačiau po paskelbimo abipusis savanoriškas dviejų rezidentų apsikeitimas gali sukurti dvi Onko RO dienas iš eilės. Tokiu atveju tai rodoma kaip aiškiai patvirtinama pasekmė, o ne kaip automatinis blokas. Tikros ABSOLUTE HARD taisyklės — persidengimas, pateisinama nebuvimo priežastis, minimalus poilsis ir kiti fizinio / teisinio įmanomumo blokai — lieka neapeinami. SYSTEM fairness istorija nuo savanoriško swapo nesikeičia; keičiasi tik ACTUAL grafikas.
+
+
+## V2.5.70–71 — ilgalaikis pageidaujamos darbo dienos trukmės nustatymas
+
+Nustatymų viršuje kiekvienas rezidentas turi privatų ilgalaikį darbo pobūdžio pasirinkimą **„Pageidaujama darbo dienos trukmė“**. Galimi keturi variantai:
+
+- **Dažniausiai 6 val.** — pageidaujama, kad darbo dienos dažniau būtų trumpesnės.
+- **Dažniausiai 12 val.** — pageidaujama, kad darbo dienos dažniau būtų ilgesnės.
+- **Mišriai** — siekti 6 val. ir 12 val. darbo dienų mišinio.
+- **Nesvarbu** — darbo dienos trukmę parenka optimizatorius pagal likusias taisykles.
+
+**V2.5.71 apsauga:** šis nustatymas negali pats sukurti papildomų dublių. Pirma, be 6/12 val. krypties, nustatomas neutralus visos grupės dublių poreikis; bendras jų skaičius užrakinamas. Tada tas pats dublių kiekis paskirstomas tarp rezidentų, laikant mėnesio dublių skirtumą **max−min ≤2**. Taigi 6 val. pageidavimas nereiškia „be dublių“, o 12 val. pageidavimas nereiškia „pridėti naujų dublių“.
+
+Kai dublis jau reikalingas, konkrečių darbo vietų fazėje pirmiausia stengiamasi, kad tokia diena apimtų bent vieną svarbią **SPS RO arba SPS UG** vietą; sekmadienio budėjimai jau yra SPS RO. Jei dėl aukštesnių taisyklių to padaryti visiems dubliams neįmanoma, paliekamas mažiausias būtinas paprastų postų dublių skaičius.
+
+Onko RO 08:00–17:00 yra atskira svarbi 9 val. pilnos dienos pamaina, tačiau techniškai nėra AM+PM dublis ir į dublių max−min skaičiavimą neįtraukiama.
+
+Nustatymas yra individualus ir kitiems rezidentams ar grupės suvestinėse nerodomas; jį naudoja generatorius sudarydamas konkretų žmogaus grafiką. Privalomos darbo ir poilsio saugos taisyklės, tikslus mėnesio krūvis ir Onko porų taisyklė lieka aukščiau.
+
+
+## V2.5.73 — ONKO PORŲ ABSOLIUTI TAISYKLĖ
+
+- **Kiekvieno rezidento Onko RO skaičius visada turi būti lyginis: 0, 2, 4, 6...** Tai galioja ir SYSTEM, ir ACTUAL grafikui.
+- Viena Onko RO diena yra 9 val. = 1.5 standartinės 6 val. pamainos. Todėl 1, 3, 5... Onko sukurtų 0.5 pamainos trupmeną ir yra ABSOLUTE HARD klaida.
+- Mėnesio darbo targetas lieka tikslus: pvz., target 28 reiškia **28.0**, ne 27.5 ar 28.5.
+- Jei aktyvių (neužblokuotų) mėnesio Onko dienų skaičius lyginis, užpildomos visos. Jei aktyvių Onko dienų skaičius nelyginis, **viena Onko diena paliekama neužpildyta**, kad bendras užpildytų Onko skaičius būtų lyginis ir jį būtų galima dalyti poromis.
+- Savanoriškas apsikeitimas **negali** sukurti 1/3/5 Onko arba 0.5 mėnesio krūvio nuokrypio; toks swapas blokuojamas dar preview etape.
+- V2.5.69 consecutive-Onko išimtis lieka siaura: po publikavimo dvi Onko dienos iš eilės gali būti tik ACK pasekmė, jei visi kiti ABSOLUTE HARD išlaikyti. Ji **neleidžia** apeiti Onko parity ar tikslaus targeto.
+
+Trumpai: **EXACT MONTHLY TARGET + ONKO 0/2/4/... = ABSOLUTE HARD VISUR.**
+
+
+## V2.5.74 — VISŲ POSTŲ STRUKTŪRINIS WATER-FILL
+
+SYSTEM generatorius po darbo datų / AM-PM blokų parinkimo visus ne-Onko postų labelius sprendžia **vienu bendru modeliu**. Kiekvienam postui pirmiausia taikomas floor/ceil entitlement koridorius raw spread 0–1. Tai reiškia, kad trečia ekspozicija negali likti vienam rezidentui, kol kitas tame pačiame poste turi tik vieną, jeigu egzistuoja validus dviejų ar daugiau rezidentų postų perkeitimas, kuris išlaiko darbo datas, blokus, tikslų krūvį ir aukštesnes HARD taisykles.
+
+Jei 0–1 koridorius neturi sprendinio, sistema gali pereiti į 0–2, o po to 0–3 tik tada, kai ankstesnis siauresnis koridorius yra **matematiškai įrodytas neįmanomas**. Timeout nėra toks įrodymas.
+
+Po publikavimo savanoriški bilateraliniai ACTUAL swapai yra fairness-neutral. Jei abu rezidentai sutinka ir nėra tikro saugos / darbo-laiko / fizinio HARD pažeidimo, postų ekspozicijos, UG/Mamografijos kiekiai, diversity ar SYSTEM water-fill nėra swapo blokatoriai. SYSTEM fairness ir postų matrica lieka užšaldyti publikavimo momentu. V2.5.73 tikslus mėnesio workload ir lyginė Onko parity lieka neperžengiami.
+
+
+## V2.5.77 — PENKTADIENIŲ STRUKTŪRINIS WATER-FILL
+
+SYSTEM generatoriuje penktadieniai yra **struktūrinė HARD fairness taisyklė**. Suskaičiavus visus užpildomus penktadienio priskyrimus, kiekvieno rezidento penktadienių skaičius turi patekti į matematinį `floor(total/rezidentai)..ceil(total/rezidentai)` koridorių. Todėl raw max−min spread turi būti **0–1**.
+
+Pavyzdys: 72 penktadienio priskyrimai / 16 rezidentų = 4.5, todėl teisingas water-fill yra **8 rezidentai po 4 ir 8 rezidentai po 5**, o ne 2–8.
+
+Ši taisyklė taikoma **visiems** SYSTEM penktadienio priskyrimams, įskaitant pageidautas penktadienio datas. Pageidavimas yra SOFT ir negali pralaužti structural 0–1.
+
+Architektūra: Phase 1 subalansuoja darbo datas/blokus ir penktadienius; Phase 2 ant jau subalansuotų blokų kartu water-fill'ina visus ne-Onko postus. Taip penktadienio darbo perkėlimas kartu suteikia postų solveriui galimybę gerinti Mamografijos / ADC / UG / kitų postų matricą.
+
+Po publikavimo abipusis savanoriškas ACTUAL swapas gali išbalansuoti penktadienius ar postus, jei nepažeidžiami tikri saugos / darbo-laiko HARD reikalavimai ir V2.5.73 exact workload + Onko parity. SYSTEM fairness baseline lieka toks, kokį paskyrė algoritmas.
+
+
+## V2.5.79 — Vizualūs swap requestai ir ONE-WAY EMERGENCY RESCUE
+
+Įprastas `Apsikeitimai` srautas yra **tik bilateralinis swap requestas**: vienas rezidentas pasiūlo savo pamainą už kito rezidento pamainą, gavėjas priima arba atmeta, o po priėmimo seniūnė pritaiko pakeitimą ACTUAL grafike.
+
+Gyvi requestai rodomi kaip platūs vizualūs cards:
+- inicialai / vardai nuspalvinti pagal rezidento spalvą;
+- rodoma `GAUTA UŽKLAUSA 1/3`, `2/3` ir t. t.;
+- aiškiai atskirta, ką siūlytojas ATIDUODA ir kokios gavėjo pamainos PRAŠO;
+- gavėjui išsaugojus naują requestą siunčiamas operational email pranešimas, jei jo paskyroje yra email ir SMTP sukonfigūruotas;
+- email klaida niekada neatšaukia jau išsaugoto DB requesto.
+
+Po `REQUEST SWAP` nebenaudojamas priverstinis `st.rerun()`, todėl puslapis nebeturi perslinkti į žemiau esantį emergency bloką. Emergency funkcija laikoma atskirame **uždarytame expander**, kuris po normalaus swapo automatiškai neatsidaro.
+
+### ONE-WAY EMERGENCY RESCUE — tai nėra swapas
+
+Senas pavadinimas „Emergency swap“ buvo misnomer. Naujas modelis yra vienpusis operational rescue:
+
+1. Pats realiai perkeltas rezidentas savo paskyroje pasirenka `CURRENT LOCATION`.
+2. Pasirenka to paties laiko kritinį `MOVING TO` postą (SPS RO / SPS UG).
+3. Sistema spalvotai parodo `RESCUED PERSON` — žmogų, kuris tuo metu buvo kritiniame poste.
+4. Patvirtinus:
+   - mover pašalinamas iš seno žemesnio prioriteto optional posto;
+   - jo `CURRENT LOCATION` lieka **tuščias**;
+   - mover įrašomas į `MOVING TO` kritinį postą;
+   - `RESCUED PERSON` atleidžiamas nuo target posto;
+   - rescued person **nėra** perkeliamas į mover seną vietą.
+
+Tai keičia tik ACTUAL operational grafiką. SYSTEM fairness, publication post matrix ir post debt lieka užšaldyti. Nauji rescue įrašai žurnale rodomi `CURRENT LOCATION → MOVING TO` formatu, su spalvotais mover / rescued inicialais. Seni `emergency_actual` bilateraliniai įrašai paliekami tik kaip aiškiai pažymėtas LEGACY auditas.

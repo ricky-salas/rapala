@@ -1,0 +1,69 @@
+V2.5.98 TEST REPORT — POSITION-BASED BACKUPS + CREDIT-ONLY COVER
+================================================================
+
+PASS 1 — Python compile
+- app.py
+- db.py
+- scheduler_engine.py
+Result: PASS
+
+PASS 2 — Engine API lock
+- app expects scheduler_engine API 2.5.98
+- scheduler_engine declares API 2.5.98
+Result: PASS
+
+PASS 3 — Position-based mandatory backup scope
+September 2026 slot inspection:
+- SPS RO: every unblocked day/block requires backup
+- SPS UG: every unblocked day/block requires backup
+- Centro UG 120 AM: requires backup
+- Centro UG 120 PM: does NOT require mandatory backup
+- Onko RO FULL 9h: requires backup
+- generic weekend flag forced OFF
+- current weekend required slots are SPS RO
+Result: PASS
+
+PASS 4 — Future-night readiness
+Synthetic slot inspection:
+- SPS RO NIGHT -> mandatory backup: YES
+- SPS UG NIGHT -> mandatory backup: YES
+- CENTRO RO NIGHT -> not mandatory under current constitution (CENTRO RO remains best-effort)
+Result: PASS
+
+PASS 5 — Current slot-layout regression
+Compared V2.5.97 vs V2.5.98 make_slots for 2026-09, 2026-10, 2026-12, 2027-01:
+- slot IDs / dates / departments / blocks / workload / mandatory / blocked fields: byte-for-structure identical
+- 2026-09 and 2026-10 required backup sets unchanged
+- 2026-12 and 2027-01 intentionally gain holiday SPS RO PM backup coverage, because V2.5.98 covers SPS RO on every block rather than AM-only/generic-weekend logic
+Result: PASS
+
+PASS 6 — Credit-only application path
+Static code inspection:
+- app.py contains no calls to work-debt readers or debt-priority backup ranking
+- db.py work-debt reader helpers removed
+- automatic backup ranking no longer uses debt age / due date
+- credit UI shows rest credits only
+- completed-cover UI reports credit only to coverer
+Result: PASS
+
+PASS 7 — Supabase credit-only migration
+Applied migration: v2_5_98_credit_only_cover
+Verified after migration:
+- backup_work_debts row count = 0
+- complete_backup_cover_v255 no longer references backup_work_debts
+- undo_backup_credit no longer references backup_work_debts
+- completed cover inserts REST_EARNED for coverer and NONE for covered resident
+- covered resident credit is never consumed by a cover event
+Result: PASS
+
+PRESERVED FROM V2.5.97 / V2.5.96
+- Centro UG 120 PM append-only slot
+- Mammography optional-last gap behavior
+- Saturday and Sunday separate critical SYSTEM water-fill categories
+- workstyle redistributes fixed neutral double pool without manufacturing extra doubles
+- operator ACTUAL day-status markers
+- monthly clean SYSTEM baseline / live ACTUAL fairness / no future catch-up
+- exact monthly workload and Onko pair/recovery rules
+
+NOTE
+Full MILP month solve was not rerun in this patch because the scheduling assignment model was not changed except for backup-required classification. Current-month slot layout is unchanged, and the active 2026-09/10 required-backup set is identical to V2.5.97. The changed December/January backup set is the intended SPS RO all-block fix.
