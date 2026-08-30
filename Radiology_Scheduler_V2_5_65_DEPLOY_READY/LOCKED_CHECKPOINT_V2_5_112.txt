@@ -1,0 +1,15 @@
+V2.5.112 ADMIN WATERFILL + DREAM TEAM + AUTO BACKUPS + SR GATE + WESTON — LOCKED CHECKPOINT
+
+- Cannot-work / RESIDENT HARD remains zero-violation mandatory.
+- Resident weekend preferences cannot buy extra SYSTEM weekend exposure.
+- SYSTEM searches the tightest feasible RAW Saturday / Sunday / total-weekend water-fill corridor.
+- September 2026 tightest feasible overall weekend cap = 4 under the current exact workload + HARD availability set.
+- SR + ŠR + GE Dream Team: together on CENTRO RO at least once per represented workweek when mathematically feasible; September = 5/5.
+- Workplace fairness search now tests tighter ordinary-post corridors before widening. September ordinary non-Onko post spreads = 1; SPS RO/SPS UG = 2; Onko separate parity spread = 2.
+- AUTO named backup duties generated immediately with the draft.
+- Required backup scope: SPS RO, SPS UG, Centro UG 120 AM, Onko RO FULL; CENTRO RO is safe best-effort fairness filler.
+- September AUTO backups = 158 total (126 required + 32 best-effort), 9–10 per resident, spread 1, zero backup HARD errors.
+- Personal schedule / Summary / Excel show AUTO backups; 12h AM+PM workdays remain a separate statistic.
+- Normal and backup swaps require both residents + final SR APPROVE/DECLINE before ACTUAL changes.
+- SR Generate/Regenerate click = +1 persistent WESTON beer; lifetime/month totals shown in SR stats.
+- Production migration v2_5_112_weston_sr_swap_gate applied successfully.

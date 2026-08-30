@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.108"
+ENGINE_API_VERSION = "2.5.112"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -716,7 +716,7 @@ DOUBLE_SPREAD_MAX = 2
 
 # Internal allocation priority. Not part of resident preference scoring/UI.
 _PRIORITY_COLOCATION_GROUP = ("SR", "GE", "ŠR")
-_PRIORITY_COLOCATION_MAX_PER_MONTH = 4
+_PRIORITY_COLOCATION_MAX_PER_MONTH = 6
 
 # V2.5.53 WEEKLY LOAD / RECOVERY CONSTITUTION.
 # These are safety/fatigue guardrails, not user-selectable SOFT preferences.
@@ -1515,7 +1515,7 @@ def _v2564_choose_fixed_gaps(year, month, slots, gap_meta, seconds=5.0):
     return fixed
 
 
-def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds=60.0, structural_relaxation=False):
+def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds=60.0, structural_relaxation=False, weekend_spread_cap=4):
     """Phase 1: choose dates/AM/PM/FULL without deciding weekday post labels.
 
     V2.5.107 keeps every `Negaliu dirbti` block mandatory. The normal pass uses
@@ -1737,10 +1737,9 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             return True
         return False
 
-    baseline_weekend_volunteer_mode=any(
-        any(date(year,month,int(d)).weekday()>=5 for d in (set(p.preferred)|set(p.preferred_am)|set(p.preferred_pm)))
-        for p in people
-    )
+    # V2.5.112 ADMIN RAW WEEKEND WATER-FILL. Weekend wishes are audit-only
+    # during SYSTEM generation and never exempt raw Saturday/Sunday/weekend burden.
+    baseline_weekend_volunteer_mode=False
     weekend_raw_expr={}
     weekend_vol_expr={}
     weekend_fair_expr={}
@@ -1797,7 +1796,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
                 co=dict(_combined_weekend_expr[i])
                 for v,c in _combined_weekend_expr[j].items():
                     co[v]=co.get(v,0.0)-c
-                mb.constraint(co,-4.0,4.0)
+                mb.constraint(co,-float(weekend_spread_cap),float(weekend_spread_cap))
 
     # Saturday and Sunday are independently water-filled using the same
     # volunteer-adjusted burden semantics.
@@ -1845,7 +1844,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
                     for v,c in _exprs[j].items():
                         _co[v]=_co.get(v,0.0)-c
                     if _co:
-                        mb.constraint(_co,-4.0,4.0)
+                        mb.constraint(_co,-float(weekend_spread_cap),float(weekend_spread_cap))
 
     # V2.5.102 PERSISTENT WORK-STYLE DIRECTION. These costs are applied in the
     # day-pattern phase, where weekend/weekday placement is still changeable.
@@ -1854,11 +1853,9 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     # water-filled. The persistent weekend-style slider remains a directional
     # SOFT tie-break inside the remaining feasible capacity.
     for pi,p in enumerate(people):
-        _we=max(-2,min(2,int(getattr(p,"weekend_preference",0) or 0)))
-        if _we:
-            _w=700.0*abs(_we)
-            for v,c in weekend_raw_expr[pi].items():
-                mb.c[v] += (-_w if _we>0 else _w)*float(c)
+        # V2.5.112: residents cannot buy extra SYSTEM weekend exposure through
+        # a long-term weekend preference. The setting is retained for audit/UI only.
+        _we=0
         _wd=max(-2,min(2,int(getattr(p,"weekday_preference",0) or 0)))
         if _wd:
             _w=90.0*abs(_wd)
@@ -1936,12 +1933,18 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         nfree=len(p.soft_free)+len(p.soft_free_am)+len(p.soft_free_pm)
         npref=len(p.preferred)+len(p.preferred_am)+len(p.preferred_pm)
         free_w=5000.0/max(1,nfree); pref_w=2000.0/max(1,npref)
-        for d in p.soft_free: add_hit(pi,d,None,+free_w)
-        for d in p.soft_free_am: add_hit(pi,d,"AM",+free_w)
-        for d in p.soft_free_pm: add_hit(pi,d,"PM",+free_w)
-        for d in p.preferred: add_hit(pi,d,None,-pref_w)
-        for d in p.preferred_am: add_hit(pi,d,"AM",-pref_w)
-        for d in p.preferred_pm: add_hit(pi,d,"PM",-pref_w)
+        for d in p.soft_free:
+            if date(year,month,d).weekday()<5: add_hit(pi,d,None,+free_w)
+        for d in p.soft_free_am:
+            if date(year,month,d).weekday()<5: add_hit(pi,d,"AM",+free_w)
+        for d in p.soft_free_pm:
+            if date(year,month,d).weekday()<5: add_hit(pi,d,"PM",+free_w)
+        for d in p.preferred:
+            if date(year,month,d).weekday()<5: add_hit(pi,d,None,-pref_w)
+        for d in p.preferred_am:
+            if date(year,month,d).weekday()<5: add_hit(pi,d,"AM",-pref_w)
+        for d in p.preferred_pm:
+            if date(year,month,d).weekday()<5: add_hit(pi,d,"PM",-pref_w)
     # Internal high-priority co-location target: maximize distinct calendar weeks
     # with one shared CENTRO RO AM/PM block, capped monthly. This is deliberately
     # outside resident request/satisfaction accounting.
@@ -2063,18 +2066,24 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         for pi,p in enumerate(people):
             full_free=set(p.soft_free)
             for d in sorted(full_free):
-                mb.constraint({work[(pi,d)]:1.0},0.0,0.0)
+                if date(year,month,d).weekday()<5:
+                    mb.constraint({work[(pi,d)]:1.0},0.0,0.0)
             for d in sorted(set(p.soft_free_am)-full_free):
-                mb.constraint({am[(pi,d)]:1.0,full[(pi,d)]:1.0},0.0,0.0)
+                if date(year,month,d).weekday()<5:
+                    mb.constraint({am[(pi,d)]:1.0,full[(pi,d)]:1.0},0.0,0.0)
             for d in sorted(set(p.soft_free_pm)-full_free):
-                mb.constraint({pm[(pi,d)]:1.0,full[(pi,d)]:1.0},0.0,0.0)
+                if date(year,month,d).weekday()<5:
+                    mb.constraint({pm[(pi,d)]:1.0,full[(pi,d)]:1.0},0.0,0.0)
             full_pref=set(p.preferred)
             for d in sorted(full_pref):
-                mb.constraint({work[(pi,d)]:1.0},1.0,1.0)
+                if date(year,month,d).weekday()<5:
+                    mb.constraint({work[(pi,d)]:1.0},1.0,1.0)
             for d in sorted(set(p.preferred_am)-full_pref):
-                mb.constraint({am[(pi,d)]:1.0,full[(pi,d)]:1.0},1.0,1.0)
+                if date(year,month,d).weekday()<5:
+                    mb.constraint({am[(pi,d)]:1.0,full[(pi,d)]:1.0},1.0,1.0)
             for d in sorted(set(p.preferred_pm)-full_pref):
-                mb.constraint({pm[(pi,d)]:1.0,full[(pi,d)]:1.0},1.0,1.0)
+                if date(year,month,d).weekday()<5:
+                    mb.constraint({pm[(pi,d)]:1.0,full[(pi,d)]:1.0},1.0,1.0)
 
         _workstyle_lock_mark=len(mb.rows)
         for pi,p in enumerate(people):
@@ -2103,6 +2112,11 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         for (pi,d),v in am.items(): mb.c[v]+=(((pi+1)*31+d*7)%97)*1e-8
         for (pi,d),v in pm.items(): mb.c[v]+=(((pi+1)*29+d*11)%89)*1e-8
         for (pi,d),v in full.items(): mb.c[v]+=(((pi+1)*23+d*13)%83)*1e-8
+        # Dream Team is an administrator rule above ordinary SOFT. Maximize the
+        # number of represented weeks with a common SR+GE+ŠR work block inside
+        # the already-fixed weekend water-fill corridor.
+        for wv in priority_colocation_week_vars:
+            mb.c[wv]-=1000.0
     else:
         mb.c=single_costs
 
@@ -2163,6 +2177,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             pattern["full"][(pi,d)]=float(res.x[full[(pi,d)]])>0.5
     pattern["resident_hard_min_total"]=int(round(sum(float(res.x[v]) for vals in rh_by_person.values() for v in vals)))
     pattern["structural_relaxation_mode"]=bool(structural_relaxation)
+    pattern["weekend_spread_cap"]=int(1 if not structural_relaxation else weekend_spread_cap)
     pattern["zero_hard_fallback_wish_mode"]=_fallback_mode
     pattern["resident_hard_max_loss"]=int(round(float(res.x[rhmax])))
     pattern["resident_hard_minimum_proven"]=bool(_rh_minimum_proven)
@@ -2478,9 +2493,9 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
       * SPS RO/SPS UG and ordinary post water-fill are tried in the same ascending
         certified corridors;
       * weekend-volunteered SPS RO exposure is offset from the fairness burden;
-      * SR+GE+ŠR CENTRO RO co-location is maximized up to four distinct weeks, but
-        automatically degrades 4 -> 3 -> 2 -> 1 if a higher count conflicts with
-        post feasibility;
+      * SR+GE+ŠR CENTRO RO co-location is maximized across every represented week;
+        if all weeks cannot coexist with higher HARD/critical fairness, the engine
+        returns the largest feasible weekly count and reports it explicitly;
       * Onko-zero residents are preferentially given at least one of the remaining
         Mammography assignments.
 
@@ -2524,9 +2539,11 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
     # corridors are still tried first and widened only after HiGHS proves the
     # tighter one infeasible. This lets the engine preserve 0 hard-wish losses
     # instead of forcing a resident to work merely to keep a pretty post spread.
-    trials=[(1,1),(1,2),(1,3),(2,3),(3,4),(4,5),(5,6)]
+    trials=[(1,1),(1,2),(1,3),(1,4),(1,5),(1,6),(2,1),(2,2),(2,3),(2,4),(3,1),(3,2),(3,3),(3,4),(4,1),(4,2),(4,3),(4,4),(5,5),(6,6)]
     total_seconds=max(12.0,float(seconds)); per_trial=max(3.0,total_seconds/max(1,len(trials)))
     logs=[]
+    best=None  # (dream_count, -critical_cap, -noncritical_cap, assignments, cc, nc, obj)
+    dream_target=min(int(_PRIORITY_COLOCATION_MAX_PER_MONTH),len(_priority_candidates_by_week))
 
     for critical_cap,noncritical_cap in trials:
         mb=_V2564FastMB(); x={}
@@ -2579,7 +2596,7 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
                             shift=float(offsets[i]-offsets[j])
                             mb.constraint(co,-float(cap)+shift,float(cap)+shift)
 
-            # High-priority co-location: maximize feasible distinct weeks, max four.
+            # High-priority co-location: maximize feasible distinct weeks across the month.
             coloc_week_vars=[]
             for wk,cands in sorted(_priority_candidates_by_week.items()):
                 cvars=[]
@@ -2617,7 +2634,8 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
 
             res=mb.solve(per_trial,mip_gap=0.0)
             status=int(getattr(res,"status",99)); has=bool(res.x is not None)
-            logs.append({"critical_cap":critical_cap,"noncritical_cap":noncritical_cap,"status":status,"incumbent":has,"solver":"V25105_RESILIENT_POST"})
+            dream_count=(int(round(sum(float(res.x[v]) for v in coloc_week_vars))) if has and coloc_week_vars else 0)
+            logs.append({"critical_cap":critical_cap,"noncritical_cap":noncritical_cap,"status":status,"incumbent":has,"solver":"V25105_RESILIENT_POST","dream_team_weeks":dream_count,"dream_team_target":dream_target})
             if has:
                 assignments={}
                 onko_by_day={sl.day:sl for sl in slots if sl.department=="Onko RO centre" and not sl.blocked and sl.idx not in fixed_gaps}
@@ -2629,13 +2647,26 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
                             assignments[os.idx]=p.initials
                 for (pi,sid),v in x.items():
                     if float(res.x[v])>0.5: assignments[sid]=people[pi].initials
-                return assignments,critical_cap,noncritical_cap,logs,float(getattr(res,"fun",0.0) or 0.0)
-            # Only proven infeasibility permits a wider corridor.
-            if status!=2:
+                candidate=(dream_count,-int(critical_cap),-int(noncritical_cap),assignments,critical_cap,noncritical_cap,float(getattr(res,"fun",0.0) or 0.0))
+                if best is None or candidate[:3]>best[:3]:
+                    best=candidate
+                # Dream Team is above ordinary noncritical-post cosmetic spread.
+                # Once every phase-1 feasible represented week is achieved, stop.
+                if dream_count>=dream_target:
+                    return assignments,critical_cap,noncritical_cap,logs,float(getattr(res,"fun",0.0) or 0.0)
+                # Continue to wider post corridors to try to buy missing Dream-Team weeks.
+                continue
+            # A time-limit/no-incumbent does not prove infeasibility. If we already
+            # have a valid tighter candidate, keep searching only when budget allows;
+            # otherwise fail closed to the caller's clean-process retry.
+            if status!=2 and best is None:
                 return None,None,None,logs,None
             continue
         # broke because a slot had no eligible worker in this fixed pattern
-        return None,None,None,logs,None
+        if best is None:
+            return None,None,None,logs,None
+    if best is not None:
+        return best[3],best[4],best[5],logs,best[6]
     return None,None,None,logs,None
 
 def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_snapshot, time_limit=90.0):
@@ -2669,14 +2700,18 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
     # single-pass work-pattern solve enough room to find its first incumbent so
     # we avoid the slower fail-then-retry path on ordinary cloud workers.
     work_first=min(35.0,max(30.0,time_limit*0.20))
-    pattern=_v2564_work_pattern(year,month,people,slots,targets,fixed_gaps,seconds=work_first,structural_relaxation=False)
+    pattern=_v2564_work_pattern(year,month,people,slots,targets,fixed_gaps,seconds=work_first,structural_relaxation=False,weekend_spread_cap=1)
     if pattern is None:
-        # Hard wishes outrank structural 0-1 fairness. Retry in a zero-hard fallback
-        # that keeps safety/coverage/targets/Onko parity hard and minimizes only the
-        # fairness deviation that is actually necessary.
-        work_retry=min(55.0,max(45.0,time_limit*0.30))
-        retry_trace.append({"phase":"work_pattern_zero_hard_structural_fallback","first_seconds":round(work_first,1),"retry_seconds":round(work_retry,1)})
-        pattern=_v2564_work_pattern(year,month,people,slots,targets,fixed_gaps,seconds=work_retry,structural_relaxation=True)
+        # V2.5.112 ADMIN RAW WEEKEND WATER-FILL: find the tightest feasible raw
+        # weekend/Saturday/Sunday spread. Weekend wishes are not allowed to widen
+        # this frontier. Lower tiers (Friday/double shaping/ordinary SOFT) may bend.
+        pattern=None
+        for _cap in (1,2,3,4):
+            _sec=min(26.0,max(14.0,time_limit*0.14))
+            retry_trace.append({"phase":"work_pattern_admin_weekend_waterfill","cap":_cap,"seconds":round(_sec,1)})
+            pattern=_v2564_work_pattern(year,month,people,slots,targets,fixed_gaps,seconds=_sec,structural_relaxation=True,weekend_spread_cap=_cap)
+            if pattern is not None:
+                break
     if pattern is None: return None
 
     post_first=min(45.0,max(15.0,time_limit*0.35))
@@ -2691,7 +2726,7 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         # VL's requested Sundays and all HARD constraints intact.
         rescue_work=min(35.0,max(30.0,time_limit*0.20))
         retry_trace.append({"phase":"post_feasibility_pattern_rescue","seconds":round(rescue_work,1)})
-        rescue_pattern=_v2564_work_pattern(year,month,people,slots,targets,fixed_gaps,seconds=rescue_work,structural_relaxation=bool(pattern.get("structural_relaxation_mode",False)))
+        rescue_pattern=_v2564_work_pattern(year,month,people,slots,targets,fixed_gaps,seconds=rescue_work,structural_relaxation=bool(pattern.get("structural_relaxation_mode",False)),weekend_spread_cap=int(pattern.get("weekend_spread_cap",1) or 1))
         if rescue_pattern is not None:
             rescue_post=min(40.0,max(20.0,time_limit*0.20))
             assigned2,cc2,nc2,post_log2,post_obj2=_v25105_assign_posts_resilient(
@@ -2709,6 +2744,26 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
     if assigned is None: return None
     stats=validate_schedule(year,month,people,slots,assigned,targets)
     g=stats.setdefault("global",{})
+    # V2.5.112 Dream Team audit: count weeks with SR+GE+ŠR together on the same
+    # CENTRO RO AM or PM block in the final SYSTEM assignment.
+    _dream_weeks=[]
+    _dream_group=set(_PRIORITY_COLOCATION_GROUP)
+    _by_week={}
+    for sl in slots:
+        if sl.blocked or sl.department=="Onko RO centre" or not sl.department.startswith("CENTRO RO "):
+            continue
+        who=assigned.get(sl.idx)
+        if who not in _dream_group:
+            continue
+        wk=date(year,month,sl.day)-timedelta(days=date(year,month,sl.day).weekday())
+        _by_week.setdefault((wk,sl.day,sl.block),set()).add(who)
+    for (wk,d,block),who in sorted(_by_week.items()):
+        if who==_dream_group:
+            _dream_weeks.append({"week_start":wk.isoformat(),"day":int(d),"block":block})
+    g["dream_team_centro_weeks"]=len({x["week_start"] for x in _dream_weeks})
+    g["dream_team_centro_details"]=_dream_weeks
+    g["dream_team_centro_target_weeks"]=len({(date(year,month,d)-timedelta(days=date(year,month,d).weekday())).isoformat() for d in range(1,calendar.monthrange(year,month)[1]+1) if date(year,month,d).weekday()<5})
+    g["admin_weekend_spread_cap_used"]=int(pattern.get("weekend_spread_cap",1) or 1)
     if int(g.get("hard_errors",9999) or 0)>0: return None
     rotation_spreads=g.get("rotation_monthly_spreads") or {}
     critical_spreads=dict(g.get("critical_structural_spreads") or {
@@ -2788,22 +2843,18 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "friday_pattern_ceil":int(pattern.get("friday_ceil",0) or 0),
         "friday_post_coupling":"Phase 1 water-fills Friday work blocks; Phase 2 then jointly water-fills all non-Onko post labels on those fixed blocks.",
         "double_priority":"V2.5.106 single-pass objective keeps every AM+PM double positively costly and applies 6h/mixed/12h only as a smaller tie-breaker; work-style therefore redistributes preference pressure without creating a second blocking full-model solve. SPS RO / SPS UG are preferred when assigning labels to an already-needed AM+PM double. Onko RO is a separate 9h FULL day, not a double.",
-        "baseline_weekend_volunteer_mode":bool(pattern.get("baseline_weekend_volunteer_mode",False)),
+        "baseline_weekend_volunteer_mode":False,
         "baseline_weekend_volunteers":list(pattern.get("baseline_weekend_volunteers") or []),
         "baseline_weekend_volunteer_locks":dict(pattern.get("baseline_weekend_volunteer_locks") or {}),
         "weekend_volunteer_counts":dict(pattern.get("weekend_volunteer_counts") or {}),
         "weekend_raw_counts":dict(pattern.get("weekend_raw_counts") or {}),
         "weekend_fair_counts":dict(pattern.get("weekend_fair_counts") or {}),
-        "weekend_volunteer_policy":"Explicit weekend Pageidauju dirbti assignments are voluntary burden. SYSTEM water-fills the remaining non-voluntary Saturday/Sunday/SPS-RO burden; raw weekend exposure may therefore exceed 0-1. SPS UG remains raw structural. ACTUAL swaps may widen raw exposure further.",
+        "weekend_volunteer_policy":"V2.5.112 ADMIN rule: SYSTEM uses RAW weekend/Saturday/Sunday water-fill. Weekend work/off wishes and the weekend-style slider are audit-only and cannot buy extra SYSTEM weekend exposure. The engine searches the tightest feasible raw cap before lower fairness/SOFT tiers. ACTUAL swaps may later change real exposure after SR approval.",
     })
     msg=(
         "OK — exact-workload fairness-first two-phase schedule. Mėnesio krūvio targetas kiekvienam rezidentui išlaikytas tiksliai; Onko skiriamas poromis ir ne dvi kalendorines dienas iš eilės; "
-        + (
-            f"savaitgalio savanoriški Pageidauju dirbti prašymai panaudoti, o LIKUSIO nesavanoriško SPS RO / šeštadienių / sekmadienių + SPS UG / penktadienių fairness skirtumas ≤ {critical_cap}; "
-            if pattern.get("baseline_weekend_volunteer_mode") else
-            f"SPS RO / SPS UG / šeštadienių / sekmadienių / penktadienių skirtumas ≤ {critical_cap}; "
-        )
-        + f"kitų ne-Onko postų struktūrinis water-fill skirtumas ≤ {noncritical_cap}."
+        f"ADMIN RAW savaitgalių koridorius užrakintas ties mažiausiu rastu įmanomu cap={int(pattern.get('weekend_spread_cap',1) or 1)}; "
+        f"SPS ir kitų postų paskirstymas optimizuotas pagal aukštesnius 0-HARD / Dream-Team / water-fill prioritetus. Tikslūs kiekvienos kategorijos spread rodomi statistikoje."
     )
     obj=float(pattern.get("objective_value",0.0) or 0.0)+float(post_obj or 0.0)
     return SolveResult(True,msg,assigned,targets,stats,obj,request_snapshot=request_snapshot)
@@ -6528,7 +6579,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             "critical_worst_spread":int(critical_worst_spread),
             "critical_worst_spread_raw":int(critical_worst_spread_raw),
             "baseline_weekend_volunteer_mode":bool(_baseline_weekend_volunteer_mode),
-            "weekend_volunteer_adjustment_policy":"V25104: explicit weekend Pageidauju dirbti assignments are voluntary burden and are excluded from SYSTEM fairness burden; remaining non-voluntary Saturday/Sunday/SPS-RO load is water-filled; raw exposure remains visible",
+            "weekend_volunteer_adjustment_policy":"V2.5.112 ADMIN: no volunteer exemption. SYSTEM uses raw Saturday/Sunday/total-weekend water-fill and locks the tightest feasible corridor before lower preferences; ACTUAL swaps may diverge only after the operational approval flow.",
             "critical_spread_quality_target":int(CRITICAL_SPREAD_TARGET),
             "critical_spread_quality_gate_passed":critical_spread_quality_gate_passed,
             "noncritical_post_spreads":noncritical_post_spreads,

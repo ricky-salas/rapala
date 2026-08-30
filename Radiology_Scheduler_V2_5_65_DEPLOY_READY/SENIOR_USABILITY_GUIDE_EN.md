@@ -1,14 +1,16 @@
-# V2.5.104 — PREFERENCE-AWARE WATER-FILL + ONKO-0 → MAMMOGRAPHY
+# CURRENT OPERATIONAL POLICY — V2.5.112
 
-> **This section refines the V2.5.96/V2.5.103 SYSTEM water-fill constitution and supersedes older wording that said an explicit weekend preference could never widen raw SYSTEM weekend spread.**
+> This V2.5.112 policy supersedes older historical version notes below: Cannot-work = zero violations; weekends use ADMIN RAW water-fill and cannot be bought through preference; SR+ŠR+GE Dream Team is targeted together at CENTRO RO once per week; AUTO backup duties are fairness-water-filled automatically; a voluntary swap changes ACTUAL only after both residents consent and SR gives final APPROVE.
 
-- **An explicit weekend “Prefer to work” request is a voluntary unpopular-burden choice.** If a resident specifically requests a Saturday/Sunday date, including a recurring long-term request, the generator tries to honor it before forcing the same unpopular burden onto neutral / prefer-not-to-work residents, provided ABSOLUTE HARD, rest, coverage and exact monthly workload remain valid.
-- **Water-fill remains active.** The 0–1 fairness corridor applies to the REMAINING NON-VOLUNTARY Saturday, Sunday and weekend SPS RO burden. Voluntary requests may therefore make RAW SYSTEM weekend/SPS-RO exposure exceed 1; raw exposure is still reported separately.
-- **SPS UG remains a raw structural critical category.** The weekend volunteer exception does not relax SPS UG water-fill.
-- **One resident still has at most one weekend duty within a specific Saturday+Sunday pair.** Volunteering changes fairness accounting, not weekend uniqueness.
-- **After publication, bilateral swaps and other permitted ACTUAL changes may widen raw exposure further.** SYSTEM remains frozen for audit and creates no next-month catch-up.
-- **Mammography remains the last-priority optional cabinet.** Once the optional-gap layer has decided how many Mammography slots remain open, residents with **0 Onko RO** that month receive first-exposure priority for at least one of those remaining Mammography slots when feasible. This is a current-month breadth preference inside the proven post-spread corridor and cannot widen that corridor.
-- No new database migration is required for V2.5.104.
+# V2.5.112 — ADMIN WATER-FILL + DREAM TEAM + AUTO BACKUPS + SR GATE + WESTON
+
+- **SYSTEM weekends are no longer resident-selectable.** A specific Saturday/Sunday “Prefer to work” request and the legacy weekend-direction setting cannot buy extra weekend exposure. The generator first searches for the **tightest mathematically feasible RAW Saturday, Sunday and total-weekend spread**, while preserving zero Cannot-work violations, safety, coverage and exact workload.
+- If 0–1 is impossible, the engine does not pretend equality was achieved: it tests 1 → 2 → 3 → 4 and locks the first feasible corridor. Voluntary post-publication swaps may change ACTUAL balance, but never rewrite the SYSTEM baseline.
+- **Dream Team SR + ŠR + GE** is prioritized together at **CENTRO RO in at least one AM or PM block in every represented calendar week**, unless a higher HARD rule prevents it. The achieved-week count is shown explicitly.
+- **AUTO backup duties are generated at the same Generate click**, so they immediately appear in draft statistics, the Excel Backups sheet and each personal schedule. Required scope: SPS RO, SPS UG, Centro UG 120 AM and Onko RO. CENTRO RO is used only as a best-effort fairness filler: low-backup residents are lifted toward the upper required-backup layer, but optional cover is stopped before it creates new inequality.
+- A resident backup claim is only a tie-break inside the equal-load layer; it cannot bypass backup water-fill. A backup is never planned through a Cannot-work block.
+- **An ACTUAL swap requires 3 steps:** requester → other resident consent → **SR final APPROVE / DECLINE**. SR sees all normal and backup swaps. Swaps may intentionally break SYSTEM fairness; the result remains visible as an ACTUAL change.
+- **WESTON:** each SR `GENERATE / REBUILD` click adds +1 WESTON beer. The counter is persisted in the database and shown in SR statistics.
 
 # V2.5.100 — EMAIL LIFECYCLE + DURABLE OUTBOX
 

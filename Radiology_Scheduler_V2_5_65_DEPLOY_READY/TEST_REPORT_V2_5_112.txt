@@ -1,0 +1,60 @@
+V2.5.112 TEST REPORT — ADMIN WATERFILL + DREAM TEAM + AUTO BACKUPS + SR GATE + WESTON
+
+PASS — Python compile: app.py / db.py / scheduler_engine.py / solver_runner.py
+PASS — app version = 2.5.112
+PASS — engine API = 2.5.112
+
+SEPTEMBER 2026 REAL-INPUT GENERATION REGRESSION
+PASS — solver returned valid schedule
+PASS — generation ~24 seconds in local regression
+PASS — HARD errors = 0
+PASS — RESIDENT HARD / Cannot-work losses = 0
+PASS — MG September 11 remains OFF
+PASS — exact monthly workload targets maintained
+PASS — Onko even-pair constitution maintained
+PASS — ADMIN RAW weekend preference exemption disabled
+PASS — weekend cap search tested 1 → 2 → 3 → 4; first feasible cap = 4
+PASS — resident weekend wishes do not force VL Sundays
+PASS — Dream Team SR + ŠR + GE = 5 / 5 represented weeks at CENTRO RO
+
+FINAL POST WATER-FILL REGRESSION
+PASS — SPS RO spread = 2
+PASS — SPS UG spread = 2
+PASS — CENTRO RO spread = 1
+PASS — Centro UG spread = 1
+PASS — ADC 144 spread = 1
+PASS — ADC 145 spread = 1
+PASS — Vaikų UG spread = 1
+PASS — Mamografijos spread = 1
+PASS — Onko separate even-pair spread = 2
+PASS — ordinary-post fairness improved from experimental spread 3 to final spread 1
+PASS — monthly fairness diagnostic = 92.6%
+NOTE — Friday RAW spread is wider in the zero-HARD fallback. Tight Friday floor/ceil and even ±1 entitlement were tested experimentally and made the real September work-pattern model infeasible. The final build keeps zero Cannot-work violations and the tightest feasible weekend frontier above Friday cosmetic equality.
+
+AUTO BACKUP REGRESSION
+PASS — required backup slots = 126
+PASS — CENTRO RO best-effort filler backups = 32
+PASS — total AUTO backup duties = 158
+PASS — every resident receives at least one backup
+PASS — resident backup counts = 9–10
+PASS — backup count spread = 1
+PASS — backup validation HARD errors = 0
+PASS — no backup is placed through resident Cannot-work / ABSOLUTE-HARD conflict
+PASS — generated backups are frozen into the draft payload and available to personal schedule / stats / Excel export
+
+SWAP / SR GATE STATIC + DB CHECKS
+PASS — normal resident accept stores waiting-for-senior phase; ACTUAL is not changed by resident consent alone
+PASS — SR sees all accepted normal swaps and may APPLY or DECLINE
+PASS — backup participant acceptance does not apply the backup swap
+PASS — SR-only backup approval function applies the swap; SR decline rejects it
+PASS — voluntary ACTUAL swaps may disturb SYSTEM fairness after approval, while safety/operational validation remains
+
+WESTON
+PASS — SR Generate / Regenerate click calls persistent WESTON ledger RPC
+PASS — button shows running WESTON total
+PASS — SR personal stats show lifetime and selected-month WESTON totals
+PASS — WESTON has no solver/fairness effect
+
+DATABASE
+PASS — production migration present: 20260830180440 v2_5_112_weston_sr_swap_gate
+PASS — WESTON ledger and SR swap-gate functions confirmed in production

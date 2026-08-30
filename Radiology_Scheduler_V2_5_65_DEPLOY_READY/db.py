@@ -1624,3 +1624,57 @@ def record_research_shadow_run_v2545(
         "p_assignments":{str(k):v for k,v in (assignments or {}).items()},
     }).execute())
     return rows[0] if rows else {}
+
+# ---------------------------------------------------------------------------
+# V2.5.110 — SR WESTON beer ledger
+# ---------------------------------------------------------------------------
+def record_weston_beer_click_v25110(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("record_weston_beer_click_v25110",{
+        "p_cycle_year":int(year),"p_cycle_month":int(month),
+    }).execute()))
+    row=rows[0] if rows else {}
+    return {"total_beers":int(row.get("total_beers",0) or 0),"month_beers":int(row.get("month_beers",0) or 0)}
+
+
+def weston_beer_stats_v25110(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("weston_beer_stats_v25110",{
+        "p_cycle_year":int(year),"p_cycle_month":int(month),
+    }).execute()))
+    row=rows[0] if rows else {}
+    return {"total_beers":int(row.get("total_beers",0) or 0),"month_beers":int(row.get("month_beers",0) or 0)}
+
+# ---------------------------------------------------------------------------
+# V2.5.111 — SR leader gate for all voluntary swaps
+# ---------------------------------------------------------------------------
+def accept_backup_swap_participant_v25111(request_id: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc(
+        "accept_backup_swap_participant_v25111",{"p_request_id":int(request_id)}
+    ).execute()))
+    if isinstance(rows,dict): return rows
+    return rows[0] if rows else {}
+
+
+def approve_backup_swap_by_sr_v25111(request_id: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc(
+        "approve_backup_swap_by_sr_v25111",{"p_request_id":int(request_id)}
+    ).execute()))
+    if isinstance(rows,dict): return rows
+    return rows[0] if rows else {}
+
+
+def reject_backup_swap_by_sr_v25111(request_id: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc(
+        "reject_backup_swap_by_sr_v25111",{"p_request_id":int(request_id)}
+    ).execute()))
+    if isinstance(rows,dict): return rows
+    return rows[0] if rows else {}
+
+
+def mark_normal_swap_sr_decision_v25111(request_id: int, decision: str) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc(
+        "mark_normal_swap_sr_decision_v25111",{
+            "p_request_id":int(request_id),"p_decision":str(decision)
+        }
+    ).execute()))
+    if isinstance(rows,dict): return rows
+    return rows[0] if rows else {}
