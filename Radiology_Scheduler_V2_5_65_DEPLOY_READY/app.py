@@ -904,10 +904,10 @@ def _save_sp_dream_team_v25130(y: int, m: int, centro_members, adc_members, cent
 
 
 def render_sp_dream_team_settings_v25125(y: int, m: int):
-    """Private Dream Team block visible to SP and ŠR; only SP edits it."""
+    """Dream Team block visible and editable to SP and ŠR only."""
     if active_user not in (SENIOR_INITIALS,RESEARCHER_INITIALS):
         return
-    can_edit=(active_user==SENIOR_INITIALS)
+    can_edit=(active_user in (SENIOR_INITIALS,RESEARCHER_INITIALS))
     try:
         cfg=_get_sp_dream_team_config_v25130() or {}
         mon=_get_sp_dream_team_month_v25130(y,m) or {}

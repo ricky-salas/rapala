@@ -1,7 +1,7 @@
-SHIFT HAPPENS V2.5.132 — leidimo patikra
-
-- Diskretiški Pageidavimų blokų pavadinimai: TAIP
-- Dream Team / CENTRO RO / ADC 144/145: TAIP
-- Dirbti su / Dirbti be be papildomos sekcijos antraštės: TAIP
-- Python kompiliacija: tikrinama leidimo metu
-- ZIP vientisumas: tikrinamas leidimo metu
+V2.5.133 leidimo patikra
+- Python kompiliacija: PRAĖJO
+- V2.5.132 regresijos testai: PRAĖJO
+- V2.5.133 Dream Team SP + ŠR testai: 4/4 PRAĖJO
+- Dream Team matomas tik SP ir ŠR
+- Dream Team redaguojamas ir SP, ir ŠR
+- Reikalinga nauja RLS migracija: SUPABASE_MIGRATION_V2_5_133_DREAM_TEAM_SP_SR_EDIT.sql
