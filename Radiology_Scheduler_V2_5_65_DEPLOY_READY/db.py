@@ -380,23 +380,22 @@ def delete_sp_private_pair_preference_v25123(pref_id: int) -> bool:
 
 
 def list_operator_private_pair_preferences_v25128(year: int, month: int, owner_initials: str | None = None) -> List[dict]:
-    """Return the private SP/ŠR pair-wish layer for a month.
-
-    RLS allows details only to the approved SP and ŠR accounts.  The optional
-    owner filter is used by each account's private editor; generation deliberately
-    loads both owners so either operator gets the same private refinement input.
-    """
-    try:
-        q=(client().table("operator_private_pair_preferences_v25128")
-           .select("id,owner_initials,year,month,preference_type,target_initials,scope_type,scope_start_date,block,workplace,created_at,updated_at")
-           .eq("year",int(year)).eq("month",int(month)))
-        if owner_initials:
-            q=q.eq("owner_initials",str(owner_initials))
-        rows=_data(_retry_db(lambda: q.order("created_at").execute()))
-    except Exception:
-        return []
-    return [dict(r) for r in rows]
-
+    """Return SP/ŠR grouped people wishes; compatible with pre-V2.5.134 schema."""
+    last_exc=None
+    for cols in (
+        "id,group_id,owner_initials,year,month,preference_type,target_initials,scope_type,scope_start_date,block,workplace,created_at,updated_at",
+        "id,owner_initials,year,month,preference_type,target_initials,scope_type,scope_start_date,block,workplace,created_at,updated_at",
+    ):
+        try:
+            q=(client().table("operator_private_pair_preferences_v25128")
+               .select(cols).eq("year",int(year)).eq("month",int(month)))
+            if owner_initials:
+                q=q.eq("owner_initials",str(owner_initials))
+            rows=_data(_retry_db(lambda: q.order("created_at").execute()))
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            last_exc=exc
+    return []
 
 def operator_private_pair_preferences_exist_v25128(year: int, month: int) -> bool:
     """Privacy-preserving existence check; exposes no owner/target/scope details."""
@@ -443,6 +442,36 @@ def delete_operator_private_pair_preference_v25128(pref_id: int) -> bool:
     if isinstance(rows,dict): return bool(next(iter(rows.values()))) if rows else False
     return False
 
+
+
+def create_operator_private_group_preference_v25134(year: int, month: int, preference_type: str, target_initials, scope_type: str, scope_start_date, block: str, workplace: str) -> List[dict]:
+    """Create one grouped wish. One DB row per target, one shared group_id."""
+    targets=[str(x) for x in (target_initials or []) if str(x)]
+    rows=_data(_retry_db(lambda: client().rpc("operator_create_private_group_preference_v25134",{
+        "p_year":int(year),
+        "p_month":int(month),
+        "p_preference_type":str(preference_type),
+        "p_target_initials":targets,
+        "p_scope_type":str(scope_type),
+        "p_scope_start_date":None if scope_start_date in (None,"") else str(scope_start_date),
+        "p_block":str(block or "ANY"),
+        "p_workplace":str(workplace),
+    }).execute()))
+    if isinstance(rows,dict): return [dict(rows)]
+    return [dict(x) for x in (rows or []) if isinstance(x,dict)]
+
+
+def delete_operator_private_group_preference_v25134(group_id: str) -> bool:
+    rows=_data(_retry_db(lambda: client().rpc("operator_delete_private_group_preference_v25134",{
+        "p_group_id":str(group_id)
+    }).execute()))
+    if isinstance(rows,bool): return bool(rows)
+    if isinstance(rows,list) and rows:
+        v=rows[0]
+        if isinstance(v,bool): return v
+        if isinstance(v,dict): return bool(next(iter(v.values()))) if v else False
+    if isinstance(rows,dict): return bool(next(iter(rows.values()))) if rows else False
+    return False
 
 def auto_submit_zero_preferences_v2594(year: int, month: int, cutoff_iso: str) -> dict:
     """After the exact preference cutoff, create zero-request submissions for missing active residents.

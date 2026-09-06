@@ -51,7 +51,7 @@ import db
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.132 DISKRETIŠKI PAGEIDAVIMŲ BLOKAI"
+APP_VERSION = "2.5.134 GRUPINIAI PAGEIDAVIMAI"
 EXPECTED_ENGINE_API_VERSION = "2.5.121"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "SP"
@@ -948,92 +948,118 @@ def render_sp_dream_team_settings_v25125(y: int, m: int):
                 st.error(str(exc))
 
 
+def _operator_private_group_rows_v25134(rows) -> list[dict]:
+    """Sujungia vieno pageidavimo žmones į vieną UI / audito grupę."""
+    buckets={}
+    order=[]
+    for raw in (rows or []):
+        row=dict(raw)
+        gid=str(row.get("group_id") or f"legacy-{row.get('id')}")
+        if gid not in buckets:
+            buckets[gid]={"group_id":gid,"rows":[],"pref":row,"targets":[]}
+            order.append(gid)
+        buckets[gid]["rows"].append(row)
+        target=str(row.get("target_initials") or "")
+        if target and target not in buckets[gid]["targets"]:
+            buckets[gid]["targets"].append(target)
+    return [buckets[x] for x in order]
+
+
 def _list_operator_private_pair_preferences_v25130(y: int, m: int, owner: str | None = None) -> list[dict]:
-    """Compatibility reader: works even when an older db.py is deployed beside app.py."""
+    """Suderinamumo skaitytuvas: V2.5.134 grupės + senesnės vieno žmogaus eilutės."""
     fn=getattr(db,"list_operator_private_pair_preferences_v25128",None)
     if callable(fn):
         try:
             return [dict(x) for x in (fn(y,m,owner) or [])]
         except Exception:
             pass
-    try:
-        q=(db.client().table("operator_private_pair_preferences_v25128")
-           .select("id,owner_initials,year,month,preference_type,target_initials,scope_type,scope_start_date,block,workplace,created_at,updated_at")
-           .eq("year",int(y)).eq("month",int(m)))
-        if owner:
-            q=q.eq("owner_initials",str(owner))
-        resp=q.order("created_at").execute()
-        return [dict(x) for x in (getattr(resp,"data",None) or [])]
-    except Exception:
-        if str(owner or "")=="SP":
-            legacy=getattr(db,"list_sp_private_pair_preferences_v25123",None)
-            if callable(legacy):
-                try:
-                    return [dict(x,owner_initials="SP") for x in (legacy(y,m) or [])]
-                except Exception:
-                    pass
-        return []
+    # Pirmiausia bandome V2.5.134 schemą su group_id; jei migracija dar nepaleista,
+    # skaitome seną schemą be group_id, kad pats Pageidavimų langas nenulūžtų.
+    for select_cols in (
+        "id,group_id,owner_initials,year,month,preference_type,target_initials,scope_type,scope_start_date,block,workplace,created_at,updated_at",
+        "id,owner_initials,year,month,preference_type,target_initials,scope_type,scope_start_date,block,workplace,created_at,updated_at",
+    ):
+        try:
+            q=(db.client().table("operator_private_pair_preferences_v25128")
+               .select(select_cols).eq("year",int(y)).eq("month",int(m)))
+            if owner:
+                q=q.eq("owner_initials",str(owner))
+            resp=q.order("created_at").execute()
+            return [dict(x) for x in (getattr(resp,"data",None) or [])]
+        except Exception:
+            continue
+    if str(owner or "")=="SP":
+        legacy=getattr(db,"list_sp_private_pair_preferences_v25123",None)
+        if callable(legacy):
+            try:
+                return [dict(x,owner_initials="SP") for x in (legacy(y,m) or [])]
+            except Exception:
+                pass
+    return []
 
 
-def _create_operator_private_pair_preference_v25130(y: int, m: int, owner: str, preference_type: str, target_initials: str, scope_type: str, scope_start_date, block: str, workplace: str) -> dict:
-    fn=getattr(db,"create_operator_private_pair_preference_v25128",None)
+def _create_operator_private_group_preference_v25134(y: int, m: int, owner: str, preference_type: str, target_initials, scope_type: str, scope_start_date, block: str, workplace: str) -> list[dict]:
+    targets=[str(x) for x in (target_initials or []) if str(x) and str(x)!=str(owner)]
+    targets=list(dict.fromkeys(targets))
+    if not targets:
+        raise ValueError("Pasirink bent vieną žmogų.")
+    fn=getattr(db,"create_operator_private_group_preference_v25134",None)
     if callable(fn):
-        return dict(fn(y,m,preference_type,target_initials,scope_type,scope_start_date,block,workplace) or {})
-    payload={
-        "owner_initials":str(owner),"year":int(y),"month":int(m),
-        "preference_type":str(preference_type),"target_initials":str(target_initials),
-        "scope_type":str(scope_type),"scope_start_date":None if scope_start_date in (None,"") else str(scope_start_date),
-        "block":str(block or "ANY"),"workplace":str(workplace or "ANY"),
-    }
-    try:
-        resp=db.client().table("operator_private_pair_preferences_v25128").insert(payload).execute()
-        rows=getattr(resp,"data",None) or []
-        return dict(rows[0]) if rows else payload
-    except Exception as exc:
-        if str(owner)=="SP":
-            legacy=getattr(db,"create_sp_private_pair_preference_v25123",None)
-            if callable(legacy):
-                return dict(legacy(y,m,preference_type,target_initials,scope_type,scope_start_date,block,workplace) or {})
-        raise RuntimeError("Šiems nustatymams reikia paleisti V2.5.128 duomenų bazės migraciją.") from exc
+        return [dict(x) for x in (fn(y,m,preference_type,targets,scope_type,scope_start_date,block,workplace) or [])]
+    # V2.5.134 grupių semantikai reikalingas group_id ir ADC 144/145 jungtinės zonos
+    # apribojimas, todėl tyčia neimituojame grupės senoje DB schemoje.
+    raise RuntimeError("Paleisk SUPABASE_MIGRATION_V2_5_134_GROUPED_PEOPLE_WISHES.sql ir perkrauk programą.")
 
 
-def _delete_operator_private_pair_preference_v25130(pref_id: int, owner: str) -> bool:
-    fn=getattr(db,"delete_operator_private_pair_preference_v25128",None)
-    if callable(fn):
-        return bool(fn(int(pref_id)))
-    try:
-        resp=(db.client().table("operator_private_pair_preferences_v25128")
-              .delete().eq("id",int(pref_id)).eq("owner_initials",str(owner)).execute())
-        return bool(getattr(resp,"data",None) is not None)
-    except Exception as exc:
-        if str(owner)=="SP":
-            legacy=getattr(db,"delete_sp_private_pair_preference_v25123",None)
-            if callable(legacy):
-                return bool(legacy(int(pref_id)))
-        raise RuntimeError("Šiems nustatymams reikia paleisti V2.5.128 duomenų bazės migraciją.") from exc
+def _delete_operator_private_group_preference_v25134(group: dict, owner: str) -> bool:
+    gid=str(group.get("group_id") or "")
+    if gid and not gid.startswith("legacy-"):
+        fn=getattr(db,"delete_operator_private_group_preference_v25134",None)
+        if callable(fn):
+            return bool(fn(gid))
+    # Senoms vieno žmogaus eilutėms paliekame saugų ištrynimą po vieną.
+    ok=True
+    for row in (group.get("rows") or []):
+        pref_id=int(row.get("id"))
+        fn=getattr(db,"delete_operator_private_pair_preference_v25128",None)
+        if callable(fn):
+            ok=bool(fn(pref_id)) and ok
+        else:
+            try:
+                db.client().table("operator_private_pair_preferences_v25128").delete().eq("id",pref_id).eq("owner_initials",str(owner)).execute()
+            except Exception:
+                ok=False
+    return ok
 
 
 def operator_private_pair_preference_summary(owner_initials: str, y: int, m: int, result: SolveResult, prefs=None) -> dict:
-    """Private operator-only satisfaction audit; never saved into public schedule JSON."""
+    """SP/ŠR grupinių pageidavimų auditas; viena žmonių grupė = vienas pageidavimas."""
     owner=str(owner_initials or "")
-    prefs=[dict(x) for x in (prefs if prefs is not None else _list_operator_private_pair_preferences_v25130(y,m,owner))]
-    if not prefs or result is None:
-        return {"total":len(prefs),"honored":0,"missed":len(prefs),"rate":None,"rows":[]}
+    raw=[dict(x) for x in (prefs if prefs is not None else _list_operator_private_pair_preferences_v25130(y,m,owner))]
+    groups=_operator_private_group_rows_v25134(raw)
+    if not groups or result is None:
+        return {"total":len(groups),"honored":0,"missed":len(groups),"rate":None,"rows":[]}
     slots=make_slots(y,m)
     assignments=dict(getattr(result,"assignments",{}) or {})
     by_person={}
     for sl in slots:
         who=assignments.get(sl.idx)
-        if not who:
-            continue
-        by_person.setdefault(str(who),[]).append(sl)
+        if who:
+            by_person.setdefault(str(who),[]).append(sl)
 
     def active_in(sl: Slot, d: int, block: str) -> bool:
         return int(sl.day)==int(d) and blocks_overlap(str(sl.block),str(block))
 
+    def in_zone(sl: Slot, workplace: str) -> bool:
+        cat=rotation_category(sl)
+        if workplace=="ADC 144/145":
+            return cat in ("ADC 144","ADC 145")
+        return cat==workplace
+
     rows=[]; honored=0
-    for pref in prefs:
-        target=str(pref.get("target_initials") or "")
+    for group in groups:
+        pref=dict(group["pref"])
+        targets=list(group["targets"])
         ptype=str(pref.get("preference_type") or "").lower()
         workplace=_scheduler_engine.private_pair_workplace(pref)
         days=_scheduler_engine.private_pair_scope_days(pref,y,m)
@@ -1041,64 +1067,64 @@ def operator_private_pair_preference_summary(owner_initials: str, y: int, m: int
         matches=[]
         for d in days:
             for b in blocks:
-                own_slots=[sl for sl in by_person.get(owner,[]) if active_in(sl,d,b)]
-                tg_slots=[sl for sl in by_person.get(target,[]) if active_in(sl,d,b)]
-                if workplace=="ANY":
-                    if own_slots and tg_slots:
-                        matches.append((d,b,"ANY"))
+                own_here=[sl for sl in by_person.get(owner,[]) if active_in(sl,d,b) and in_zone(sl,workplace)]
+                if not own_here:
+                    continue
+                target_here=[]
+                for target in targets:
+                    target_here.append(any(active_in(sl,d,b) and in_zone(sl,workplace) for sl in by_person.get(target,[])))
+                if ptype=="together":
+                    if targets and all(target_here):
+                        matches.append((d,b))
                 else:
-                    own_here=[sl for sl in own_slots if rotation_category(sl)==workplace]
-                    tg_here=[sl for sl in tg_slots if rotation_category(sl)==workplace]
-                    if own_here and tg_here:
-                        matches.append((d,b,workplace))
+                    if any(target_here):
+                        matches.append((d,b))
         ok=(len(matches)>0) if ptype=="together" else (len(matches)==0)
         honored+=int(ok)
-        type_label="Dirbti su" if ptype=="together" else "Dirbti be"
-        result_label="Įvykdyta" if ok else "Neįvykdyta"
-        match_txt="; ".join(f"{d:02d} {block_label(b)}" for d,b,_ in matches[:4])
-        if len(matches)>4:
-            match_txt+="; …"
+        match_txt="; ".join(f"{d:02d} {block_label(b)}" for d,b in matches[:4])
+        if len(matches)>4: match_txt+="; …"
         rows.append({
-            "ID":pref.get("id"),
-            "Tipas":type_label,
-            "Asmuo":target,
+            "Tipas":"Dirbti su" if ptype=="together" else "Dirbti be",
+            "Žmonės":", ".join(targets) or "—",
             "Laikotarpis":_sp_private_scope_label(pref,y,m),
             "Laikas":_sp_private_block_label(pref.get("block")),
             "Vieta":_sp_private_workplace_label(pref.get("workplace")),
-            "Rezultatas":result_label,
-            "Rasta kartu":(match_txt or "—"),
+            "Rezultatas":"Įvykdyta" if ok else "Neįvykdyta",
+            "Rasta kartu":match_txt or "—",
         })
-    total=len(prefs)
+    total=len(groups)
     return {"total":total,"honored":honored,"missed":total-honored,"rate":round(100.0*honored/total,1) if total else None,"rows":rows}
 
 
 def render_operator_private_pair_preferences(y: int, m: int, owner_initials: str):
-    """SP/ŠR porų pageidavimų redaktorius, rodomas tiesiai Pageidavimų lange."""
+    """SP/ŠR grupiniai „Dirbti su / Dirbti be“ pageidavimai tiesiai Pageidavimuose."""
     owner=str(owner_initials or "")
     if active_user not in (SENIOR_INITIALS,RESEARCHER_INITIALS) or owner!=active_user:
         return
-    prefs=_list_operator_private_pair_preferences_v25130(y,m,owner)
+    raw=_list_operator_private_pair_preferences_v25130(y,m,owner)
+    groups=_operator_private_group_rows_v25134(raw)
     state=db.get_schedule_state(y,m)
     lifecycle=db.get_schedule_lifecycle(y,m)
     frozen=bool(state.get("has_published")) or str(lifecycle.get("state") or "") in ("working","swap_open","swap_closed","final")
 
     name_map={p["initials"]:p["name"] for p in DEFAULT_PEOPLE}
-    for pref in prefs:
+    for group in groups:
+        pref=dict(group["pref"]); targets=list(group["targets"])
         together=str(pref.get("preference_type"))=="together"
         border="#22c55e" if together else "#ef4444"
-        bg="rgba(34,197,94,.10)" if together else "rgba(239,68,68,.10)"
+        bg="rgba(34,197,94,.07)" if together else "rgba(239,68,68,.07)"
         title="Dirbti su" if together else "Dirbti be"
-        target=str(pref.get("target_initials") or "")
+        people_txt=", ".join(f"{ini} — {name_map.get(ini,ini)}" for ini in targets)
         st.markdown(
-            f'<div style="border-left:6px solid {border};border-top:1px solid {border}55;border-right:1px solid {border}55;border-bottom:1px solid {border}55;'
-            f'background:{bg};border-radius:13px;padding:11px 14px;margin:8px 0;">'
-            f'<b style="color:{border};">{html.escape(title)}</b> &nbsp; {html.escape(target)} — {html.escape(name_map.get(target,target))}<br>'
-            f'<span style="opacity:.86">{html.escape(_sp_private_scope_label(pref,y,m))} · {html.escape(_sp_private_block_label(pref.get("block")))} · {html.escape(_sp_private_workplace_label(pref.get("workplace")))}</span>'
+            f'<div style="border-left:4px solid {border};border-top:1px solid {border}33;border-right:1px solid {border}33;border-bottom:1px solid {border}33;'
+            f'background:{bg};border-radius:10px;padding:9px 12px;margin:7px 0;">'
+            f'<b>{html.escape(title)}</b> &nbsp; {html.escape(people_txt)}<br>'
+            f'<span style="opacity:.72">{html.escape(_sp_private_scope_label(pref,y,m))} · {html.escape(_sp_private_block_label(pref.get("block")))} · {html.escape(_sp_private_workplace_label(pref.get("workplace")))}</span>'
             f'</div>',unsafe_allow_html=True
         )
-        if not frozen and st.button("Pašalinti",key=f"op_priv_del_{owner}_{pref.get('id')}"):
+        if not frozen and st.button("Pašalinti",key=f"op_group_del_{owner}_{group['group_id']}"):
             try:
-                _delete_operator_private_pair_preference_v25130(int(pref["id"]),owner)
+                _delete_operator_private_group_preference_v25134(group,owner)
                 st.rerun()
             except Exception as exc:
                 st.error(str(exc))
@@ -1107,15 +1133,26 @@ def render_operator_private_pair_preferences(y: int, m: int, owner_initials: str
         st.caption("Šio mėnesio nustatymai jau užfiksuoti.")
         return
 
-    targets=[p["initials"] for p in DEFAULT_PEOPLE if p["initials"]!=owner]
+    all_targets=[p["initials"] for p in DEFAULT_PEOPLE if p["initials"]!=owner]
     c1,c2=st.columns(2)
     with c1:
-        ptype_label=st.radio("",["Dirbti su","Dirbti be"],horizontal=True,label_visibility="collapsed",key=f"op_priv_type_{owner}_{y}_{m}")
+        ptype_label=st.radio("",["Dirbti su","Dirbti be"],horizontal=True,label_visibility="collapsed",key=f"op_group_type_{owner}_{y}_{m}")
         ptype="together" if ptype_label=="Dirbti su" else "apart"
-        target=st.selectbox("Asmuo",targets,format_func=lambda i:f"{i} — {name_map.get(i,i)}",key=f"op_priv_target_{owner}_{y}_{m}")
     with c2:
-        scope_label=st.selectbox("Laikotarpis",["Visas mėnuo","Visa savaitė","Viena diena"],key=f"op_priv_scope_{owner}_{y}_{m}")
+        workplace=st.selectbox("Vieta",["CENTRO RO","ADC 144/145"],key=f"op_group_wp_{owner}_{y}_{m}")
+
+    max_people=(3 if workplace=="CENTRO RO" else 1) if ptype=="together" else None
+    selected=st.multiselect(
+        "Žmonės",all_targets,format_func=lambda i:f"{i} — {name_map.get(i,i)}",
+        max_selections=max_people,key=f"op_group_targets_{owner}_{y}_{m}_{ptype}_{workplace}"
+    )
+    c3,c4=st.columns(2)
+    with c3:
+        scope_label=st.selectbox("Laikotarpis",["Visas mėnuo","Visa savaitė","Viena diena"],key=f"op_group_scope_{owner}_{y}_{m}")
         scope={"Visas mėnuo":"month","Visa savaitė":"week","Viena diena":"day"}[scope_label]
+    with c4:
+        block_label_ui=st.selectbox("Laikas",["Bet kuris laikas","Rytas","Popietė"],key=f"op_group_block_{owner}_{y}_{m}")
+        block={"Bet kuris laikas":"ANY","Rytas":"AM","Popietė":"PM"}[block_label_ui]
 
     scope_date=None
     if scope=="week":
@@ -1124,25 +1161,18 @@ def render_operator_private_pair_preferences(y: int, m: int, owner_initials: str
             dd=date(y,m,d); monday=dd-timedelta(days=dd.weekday())
             if monday not in seen:
                 seen.append(monday); opts.append(dd)
-        scope_date=st.selectbox("Savaitė",opts,format_func=lambda dd:_sp_private_scope_label({"scope_type":"week","scope_start_date":dd.isoformat()},y,m),key=f"op_priv_week_{owner}_{y}_{m}")
+        scope_date=st.selectbox("Savaitė",opts,format_func=lambda dd:_sp_private_scope_label({"scope_type":"week","scope_start_date":dd.isoformat()},y,m),key=f"op_group_week_{owner}_{y}_{m}")
     elif scope=="day":
-        d=st.selectbox("Diena",list(range(1,calendar.monthrange(y,m)[1]+1)),format_func=lambda x:pretty_day(y,m,x),key=f"op_priv_day_{owner}_{y}_{m}")
+        d=st.selectbox("Diena",list(range(1,calendar.monthrange(y,m)[1]+1)),format_func=lambda x:pretty_day(y,m,x),key=f"op_group_day_{owner}_{y}_{m}")
         scope_date=date(y,m,int(d))
 
-    c3,c4=st.columns(2)
-    with c3:
-        block_label_ui=st.selectbox("Laikas",["Bet kuris laikas","Rytas","Popietė"],key=f"op_priv_block_{owner}_{y}_{m}")
-        block={"Bet kuris laikas":"ANY","Rytas":"AM","Popietė":"PM"}[block_label_ui]
-    with c4:
-        workplaces=(
-            ["ANY","CENTRO RO"] if ptype=="together"
-            else ["ANY","CENTRO RO","Onko RO","SPS RO","Centro UG","SPS UG","ADC 144","ADC 145","Vaikų UG","Mamografijos"]
-        )
-        workplace=st.selectbox("Vieta",workplaces,format_func=_sp_private_workplace_label,key=f"op_priv_wp_{owner}_{y}_{m}")
-
-    if st.button("PRIDĖTI PAGEIDAVIMĄ",type="primary",use_container_width=True,key=f"op_priv_add_{owner}_{y}_{m}"):
+    if st.button("PRIDĖTI PAGEIDAVIMĄ",type="primary",use_container_width=True,key=f"op_group_add_{owner}_{y}_{m}"):
         try:
-            _create_operator_private_pair_preference_v25130(y,m,owner,ptype,target,scope,scope_date.isoformat() if scope_date else None,block,workplace)
+            if not selected:
+                raise ValueError("Pasirink bent vieną žmogų.")
+            _create_operator_private_group_preference_v25134(
+                y,m,owner,ptype,selected,scope,scope_date.isoformat() if scope_date else None,block,workplace
+            )
             st.rerun()
         except Exception as exc:
             st.error(str(exc))
@@ -1155,25 +1185,16 @@ def render_operator_private_pair_stats(y: int, m: int, owner_initials: str, resu
     prefs=_list_operator_private_pair_preferences_v25130(y,m,owner)
     if not prefs:
         return
-    st.markdown("### Mano privataus sluoksnio rezultatas")
-    st.caption("Vertinama pagal preliminaraus / pradinio grafiko paskirstymą. Vėlesni savanoriški apsikeitimai šios statistikos neperrašo.")
-    if result is None:
-        st.caption("Privatūs planavimo pageidavimai pateikti, bet grafikas dar nesugeneruotas.")
-        return
-    sm=operator_private_pair_preference_summary(owner,y,m,result,prefs)
-    a,b,c,d=st.columns(4)
-    a.metric("Pateikta",sm["total"])
-    b.metric("Įvykdyta",sm["honored"])
-    c.metric("Neįvykdyta",sm["missed"])
-    d.metric("Įvykdymas",("—" if sm["rate"] is None else f"{sm['rate']}%"))
-    if sm["rows"]:
-        df=pd.DataFrame(sm["rows"])
-        def _row_style(row):
-            ok=str(row.get("Rezultatas"))=="Įvykdyta"
-            bg="background-color: rgba(34,197,94,.12);" if ok else "background-color: rgba(239,68,68,.12);"
-            return [bg]*len(row)
-        st.dataframe(df.style.apply(_row_style,axis=1),use_container_width=True,hide_index=True)
-
+    sm=operator_private_pair_preference_summary(owner,y,m,result,prefs) if result is not None else None
+    with st.expander("Rezultatas",expanded=False):
+        if sm is None:
+            st.caption("Grafikas dar nesugeneruotas.")
+            return
+        a,b,c,d=st.columns(4)
+        a.metric("Pateikta",sm["total"]); b.metric("Įvykdyta",sm["honored"]); c.metric("Neįvykdyta",sm["missed"])
+        d.metric("Įvykdymas",("—" if sm["rate"] is None else f"{sm['rate']}%"))
+        if sm["rows"]:
+            st.dataframe(pd.DataFrame(sm["rows"]),use_container_width=True,hide_index=True)
 
 def deadline_message(y,m):
     dl=deadline_for(y,m); today=date.today(); diff=(dl-today).days

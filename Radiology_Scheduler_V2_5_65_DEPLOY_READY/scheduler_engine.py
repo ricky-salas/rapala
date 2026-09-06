@@ -845,9 +845,36 @@ def private_pair_scope_blocks(pref: dict) -> Tuple[str,...]:
 
 
 def private_pair_workplace(pref: dict) -> str:
-    w=str((pref or {}).get("workplace") or "ANY")
-    allowed={"ANY","CENTRO RO","Onko RO","SPS RO","Centro UG","SPS UG","ADC 144","ADC 145","Vaikų UG","Mamografijos"}
-    return w if w in allowed else "ANY"
+    w=str((pref or {}).get("workplace") or "CENTRO RO")
+    allowed={"CENTRO RO","ADC 144/145","ADC 144","ADC 145","ANY","Onko RO","SPS RO","Centro UG","SPS UG","Vaikų UG","Mamografijos"}
+    return w if w in allowed else "CENTRO RO"
+
+
+def private_pair_workplace_categories(pref: dict) -> Tuple[str,...]:
+    """Canonical zone categories for grouped people wishes."""
+    w=private_pair_workplace(pref)
+    if w=="ADC 144/145":
+        return ("ADC 144","ADC 145")
+    return (w,)
+
+
+def grouped_private_pair_preferences(prefs) -> List[dict]:
+    """Collapse one-row-per-target storage into one logical group wish."""
+    buckets={}
+    order=[]
+    for raw in (prefs or []):
+        row=dict(raw)
+        gid=str(row.get("group_id") or f"legacy-{row.get('id')}")
+        if gid not in buckets:
+            base=dict(row)
+            base["group_id"]=gid
+            base["target_initials_list"]=[]
+            buckets[gid]=base
+            order.append(gid)
+        target=str(row.get("target_initials") or "")
+        if target and target not in buckets[gid]["target_initials_list"]:
+            buckets[gid]["target_initials_list"].append(target)
+    return [buckets[gid] for gid in order]
 
 
 def rotation_category(slot: Slot) -> str:
@@ -2073,75 +2100,59 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             if date(year,month,d).weekday()<5: add_hit(pi,d,"AM",-pref_w)
         for d in p.preferred_pm:
             if date(year,month,d).weekday()<5: add_hit(pi,d,"PM",-pref_w)
-    # Privatūs SP + ŠR poriniai pageidavimai modelyje egzistuoja su NULINIU
-    # svoriu per viešą grupės optimizavimą. Jie naudojami tik paskutiniame
-    # refinemente, kai kiekvieno rezidento matomų pageidavimų rezultatas jau
-    # užrakintas, todėl negali nupirkti kito rezidento pageidavimo praradimo.
-    sp_private_pair_success_vars=[]  # backward-compatible variable name; includes SP + ŠR owners
+    # SP + ŠR grupiniai „Dirbti su / Dirbti be“ pageidavimai yra privatus
+    # refinemento sluoksnis. Viešame optimizavime jie neturi jokio svorio.
+    # Šiame datos/bloko etape padedame tik „Dirbti su“ grupei sutapti laike;
+    # konkreti CENTRO RO arba ADC 144/145 zona optimizuojama vėliau, kai jau
+    # užrakinti visi kitų rezidentų pageidavimų rezultatai ir darbo vietų kiekiai.
+    sp_private_pair_success_vars=[]  # backward-compatible name; now logical group hits
     sp_private_pair_overlap_vars=[]
     _private_ini_to_pi={p.initials:pi for pi,p in enumerate(people)}
     for _owner_pi,_owner_person in enumerate(people):
-        _owner_prefs=list(getattr(_owner_person,"privileged_pair_preferences",[]) or [])
-        if not _owner_prefs:
-            continue
-        for _pref in _owner_prefs:
-            _target_pi=_private_ini_to_pi.get(str(_pref.get("target_initials") or ""))
-            if _target_pi is None or _target_pi==_owner_pi:
-                continue
+        _owner_groups=grouped_private_pair_preferences(getattr(_owner_person,"privileged_pair_preferences",[]) or [])
+        for _pref in _owner_groups:
             _ptype=str(_pref.get("preference_type") or "").lower()
-            _workplace=private_pair_workplace(_pref)
-            _days=private_pair_scope_days(_pref,year,month)
-            _blocks=private_pair_scope_blocks(_pref)
-            if _ptype=="together":
-                _cvars=[]
-                for _d in _days:
-                    for _b in _blocks:
-                        _a=[am[(_owner_pi,_d)],full[(_owner_pi,_d)]] if _b=="AM" else [pm[(_owner_pi,_d)],full[(_owner_pi,_d)]]
-                        _t=[am[(_target_pi,_d)],full[(_target_pi,_d)]] if _b=="AM" else [pm[(_target_pi,_d)],full[(_target_pi,_d)]]
-                        _cv=mb.var(0.0,1.0,True,cost=0.0)
+            if _ptype!="together":
+                continue
+            _target_pis=[]
+            for _ini in (_pref.get("target_initials_list") or []):
+                _pi=_private_ini_to_pi.get(str(_ini))
+                if _pi is not None and _pi!=_owner_pi and _pi not in _target_pis:
+                    _target_pis.append(_pi)
+            if not _target_pis:
+                continue
+            _participants=[_owner_pi]+_target_pis
+            _cvars=[]
+            for _d in private_pair_scope_days(_pref,year,month):
+                for _b in private_pair_scope_blocks(_pref):
+                    _cv=mb.var(0.0,1.0,True,cost=0.0)
+                    _all_active_vars=[]
+                    valid=True
+                    for _pi in _participants:
+                        _act=[am[(_pi,_d)],full[(_pi,_d)]] if _b=="AM" else [pm[(_pi,_d)],full[(_pi,_d)]]
+                        if not _act:
+                            valid=False; break
+                        # cv <= active(person)
                         _co={_cv:1.0}
-                        for _v in _a: _co[_v]=_co.get(_v,0.0)-1.0
+                        for _v in _act:
+                            _co[_v]=_co.get(_v,0.0)-1.0
+                            _all_active_vars.append(_v)
                         mb.constraint(_co,-np.inf,0.0)
-                        _co={_cv:1.0}
-                        for _v in _t: _co[_v]=_co.get(_v,0.0)-1.0
-                        mb.constraint(_co,-np.inf,0.0)
-                        _co={_cv:1.0}
-                        for _v in _a: _co[_v]=_co.get(_v,0.0)-1.0
-                        for _v in _t: _co[_v]=_co.get(_v,0.0)-1.0
-                        mb.constraint(_co,-1.0,np.inf)
-                        _cvars.append(_cv)
-                if _cvars:
-                    _hit=mb.var(0.0,1.0,True,cost=0.0)
-                    _co={_hit:1.0}
-                    for _cv in _cvars: _co[_cv]=_co.get(_cv,0.0)-1.0
-                    mb.constraint(_co,-np.inf,0.0)
-                    sp_private_pair_success_vars.append(_hit)
-            elif _ptype=="apart" and _workplace=="ANY":
-                _ovs=[]
-                for _d in _days:
-                    for _b in _blocks:
-                        _a=[am[(_owner_pi,_d)],full[(_owner_pi,_d)]] if _b=="AM" else [pm[(_owner_pi,_d)],full[(_owner_pi,_d)]]
-                        _t=[am[(_target_pi,_d)],full[(_target_pi,_d)]] if _b=="AM" else [pm[(_target_pi,_d)],full[(_target_pi,_d)]]
-                        _ov=mb.var(0.0,1.0,True,cost=0.0)
-                        _co={_ov:1.0}
-                        for _v in _a: _co[_v]=_co.get(_v,0.0)-1.0
-                        mb.constraint(_co,-np.inf,0.0)
-                        _co={_ov:1.0}
-                        for _v in _t: _co[_v]=_co.get(_v,0.0)-1.0
-                        mb.constraint(_co,-np.inf,0.0)
-                        _co={_ov:1.0}
-                        for _v in _a: _co[_v]=_co.get(_v,0.0)-1.0
-                        for _v in _t: _co[_v]=_co.get(_v,0.0)-1.0
-                        mb.constraint(_co,-1.0,np.inf)
-                        _ovs.append(_ov); sp_private_pair_overlap_vars.append(_ov)
-                if _ovs:
-                    _clean=mb.var(0.0,1.0,True,cost=0.0)
-                    for _ov in _ovs:
-                        mb.constraint({_clean:1.0,_ov:1.0},-np.inf,1.0)
-                    _co={_clean:1.0}
-                    for _ov in _ovs: _co[_ov]=_co.get(_ov,0.0)+1.0
-                    mb.constraint(_co,1.0,np.inf)
-                    sp_private_pair_success_vars.append(_clean)
+                    if not valid:
+                        continue
+                    # cv >= sum(active participants) - (N-1)
+                    _co={_cv:1.0}
+                    for _v in _all_active_vars:
+                        _co[_v]=_co.get(_v,0.0)-1.0
+                    mb.constraint(_co,-float(len(_participants)-1),np.inf)
+                    _cvars.append(_cv)
+            if _cvars:
+                _hit=mb.var(0.0,1.0,True,cost=0.0)
+                _co={_hit:1.0}
+                for _cv in _cvars:
+                    _co[_cv]=_co.get(_cv,0.0)-1.0
+                mb.constraint(_co,-np.inf,0.0)
+                sp_private_pair_success_vars.append(_hit)
 
     # Private monthly co-location candidates are represented with ZERO weight in
     # the ordinary resident solve.  They are optimized only in the final private
@@ -2838,53 +2849,96 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
                             shift=float(offsets[i]-offsets[j])
                             mb.constraint(co,-float(cap)+shift,float(cap)+shift)
 
-            # Vietai specifiniai privatūs SP + ŠR poriniai pageidavimai čia irgi
-            # turi nulinį viešo tikslo svorį. Jie optimizuojami tik po to, kai
-            # užrakinamas įprastas darbo vietų paskirstymas kiekvienam rezidentui.
-            _sp_pair_success=[]  # backward-compatible variable name; contains both operator owners
+            # Vietai specifiniai SP + ŠR grupiniai pageidavimai. Vienas pageidavimas
+            # gali turėti kelis žmones. CENTRO RO reiškia tą pačią CENTRO RO zoną;
+            # ADC 144/145 reiškia dviejų gretimų kabinetų porą (vienas gali būti 144,
+            # kitas 145). Šių tikslų svoris pridedamas tik po viešų postų kiekių lock.
+            _sp_pair_success=[]
             _sp_pair_overlap=[]
             for _owner_pi,_owner_prefs in _operator_private_sets:
-                for _pref in _owner_prefs:
-                    _wp=private_pair_workplace(_pref)
-                    if _wp=="ANY" or _wp=="Onko RO":
+                for _pref in grouped_private_pair_preferences(_owner_prefs):
+                    _zone=set(private_pair_workplace_categories(_pref))
+                    if not _zone or "ANY" in _zone or "Onko RO" in _zone:
                         continue
-                    _tpi=_ini_to_pi.get(str(_pref.get("target_initials") or ""))
-                    if _tpi is None or _tpi==_owner_pi:
+                    _target_pis=[]
+                    for _ini in (_pref.get("target_initials_list") or []):
+                        _pi=_ini_to_pi.get(str(_ini))
+                        if _pi is not None and _pi!=_owner_pi and _pi not in _target_pis:
+                            _target_pis.append(_pi)
+                    if not _target_pis:
                         continue
                     _ptype=str(_pref.get("preference_type") or "").lower()
                     _events=[]
+                    _violations=[]
                     for _d in private_pair_scope_days(_pref,year,month):
                         for _b in private_pair_scope_blocks(_pref):
-                            if not bool(pattern[_b.lower()][(_owner_pi,_d)]) or not bool(pattern[_b.lower()][(_tpi,_d)]):
+                            _owner_works=bool(pattern[_b.lower()][(_owner_pi,_d)])
+                            if not _owner_works:
                                 continue
-                            _a={v:1.0 for (ppi,sid),v in x.items() if ppi==_owner_pi and byid[sid].day==_d and byid[sid].block==_b and rotation_category(byid[sid])==_wp}
-                            _t={v:1.0 for (ppi,sid),v in x.items() if ppi==_tpi and byid[sid].day==_d and byid[sid].block==_b and rotation_category(byid[sid])==_wp}
-                            if not _a or not _t:
+                            _owner_zone={v:1.0 for (ppi,sid),v in x.items()
+                                         if ppi==_owner_pi and byid[sid].day==_d and byid[sid].block==_b
+                                         and rotation_category(byid[sid]) in _zone}
+                            if not _owner_zone:
                                 continue
-                            _ov=mb.var(0.0,1.0,True,cost=0.0)
-                            _co={_ov:1.0}
-                            for _v in _a: _co[_v]=_co.get(_v,0.0)-1.0
-                            mb.constraint(_co,-np.inf,0.0)
-                            _co={_ov:1.0}
-                            for _v in _t: _co[_v]=_co.get(_v,0.0)-1.0
-                            mb.constraint(_co,-np.inf,0.0)
-                            _co={_ov:1.0}
-                            for _v in _a: _co[_v]=_co.get(_v,0.0)-1.0
-                            for _v in _t: _co[_v]=_co.get(_v,0.0)-1.0
-                            mb.constraint(_co,-1.0,np.inf)
-                            _events.append(_ov); _sp_pair_overlap.append(_ov)
+                            if _ptype=="together":
+                                _participants=[_owner_pi]+_target_pis
+                                if not all(bool(pattern[_b.lower()][(_pi,_d)]) for _pi in _participants):
+                                    continue
+                                _cv=mb.var(0.0,1.0,True,cost=0.0)
+                                _all_zone_vars=[]
+                                valid=True
+                                for _pi in _participants:
+                                    _zexpr={v:1.0 for (ppi,sid),v in x.items()
+                                            if ppi==_pi and byid[sid].day==_d and byid[sid].block==_b
+                                            and rotation_category(byid[sid]) in _zone}
+                                    if not _zexpr:
+                                        valid=False; break
+                                    _co={_cv:1.0}
+                                    for _v in _zexpr:
+                                        _co[_v]=_co.get(_v,0.0)-1.0
+                                        _all_zone_vars.append(_v)
+                                    mb.constraint(_co,-np.inf,0.0)
+                                if valid:
+                                    _co={_cv:1.0}
+                                    for _v in _all_zone_vars:
+                                        _co[_v]=_co.get(_v,0.0)-1.0
+                                    mb.constraint(_co,-float(len(_participants)-1),np.inf)
+                                    _events.append(_cv)
+                            elif _ptype=="apart":
+                                # „Dirbti be“ grupė yra švari tik tada, kai savininkas
+                                # pasirinktoje zonoje nesutampa su nė vienu pasirinktu žmogumi.
+                                for _tpi in _target_pis:
+                                    if not bool(pattern[_b.lower()][(_tpi,_d)]):
+                                        continue
+                                    _target_zone={v:1.0 for (ppi,sid),v in x.items()
+                                                  if ppi==_tpi and byid[sid].day==_d and byid[sid].block==_b
+                                                  and rotation_category(byid[sid]) in _zone}
+                                    if not _target_zone:
+                                        continue
+                                    _ov=mb.var(0.0,1.0,True,cost=0.0)
+                                    _co={_ov:1.0}
+                                    for _v in _owner_zone: _co[_v]=_co.get(_v,0.0)-1.0
+                                    mb.constraint(_co,-np.inf,0.0)
+                                    _co={_ov:1.0}
+                                    for _v in _target_zone: _co[_v]=_co.get(_v,0.0)-1.0
+                                    mb.constraint(_co,-np.inf,0.0)
+                                    _co={_ov:1.0}
+                                    for _v in _owner_zone: _co[_v]=_co.get(_v,0.0)-1.0
+                                    for _v in _target_zone: _co[_v]=_co.get(_v,0.0)-1.0
+                                    mb.constraint(_co,-1.0,np.inf)
+                                    _violations.append(_ov); _sp_pair_overlap.append(_ov)
                     if _ptype=="together" and _events:
                         _hit=mb.var(0.0,1.0,True,cost=0.0)
                         _co={_hit:1.0}
                         for _v in _events: _co[_v]=_co.get(_v,0.0)-1.0
                         mb.constraint(_co,-np.inf,0.0)
                         _sp_pair_success.append(_hit)
-                    elif _ptype=="apart" and _events:
+                    elif _ptype=="apart" and _violations:
                         _clean=mb.var(0.0,1.0,True,cost=0.0)
-                        for _ov in _events:
+                        for _ov in _violations:
                             mb.constraint({_clean:1.0,_ov:1.0},-np.inf,1.0)
                         _co={_clean:1.0}
-                        for _ov in _events: _co[_ov]=_co.get(_ov,0.0)+1.0
+                        for _ov in _violations: _co[_ov]=_co.get(_ov,0.0)+1.0
                         mb.constraint(_co,1.0,np.inf)
                         _sp_pair_success.append(_clean)
 

@@ -1,7 +1,11 @@
-V2.5.133 leidimo patikra
+V2.5.134 leidimo patikra
+
+- Grupiniai „Dirbti su / Dirbti be“ pageidavimai: PRAĖJO
+- Vieta tik CENTRO RO / ADC 144/145: PRAĖJO
+- ADC 144/145 traktuojama kaip viena dviejų kabinetų zona: PRAĖJO
+- Viena žmonių grupė = vienas loginis pageidavimas: PRAĖJO
+- Dream Team redagavimas SP + ŠR išliko: PRAĖJO
 - Python kompiliacija: PRAĖJO
-- V2.5.132 regresijos testai: PRAĖJO
-- V2.5.133 Dream Team SP + ŠR testai: 4/4 PRAĖJO
-- Dream Team matomas tik SP ir ŠR
-- Dream Team redaguojamas ir SP, ir ŠR
-- Reikalinga nauja RLS migracija: SUPABASE_MIGRATION_V2_5_133_DREAM_TEAM_SP_SR_EDIT.sql
+- pytest V2.5.134: 8/8 PRAĖJO
+- Failų skaičius pakete: 32
+- Nauja migracija: SUPABASE_MIGRATION_V2_5_134_GROUPED_PEOPLE_WISHES.sql
