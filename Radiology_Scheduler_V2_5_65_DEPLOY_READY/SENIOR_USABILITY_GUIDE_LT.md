@@ -243,3 +243,9 @@ Pageidavimų audite planinių dublių ignoruokite kaip darbo pamainas — sistem
 
 ### V2.5.116 — Dublių oversight prieš paskelbimą
 Po GENERUOTI neik tiesiai į paskelbimą. Tame pačiame Sudarymas lange peržiūrėk **TEORINIS DUBLIŲ PLANAS — SENIŪNĖS PATIKRA**: ar visi privalomi standby postai uždengti, ar nėra keistų koncentracijų vienam žmogui ir ar konkrečios datos / pozicijos atrodo logiškai. Tai teorinis sluoksnis ir normalaus grafiko pageidavimų nekeičia.
+
+## V2.5.118 — SP patikra: FCFS dubliai + pageidavimų prioritetas
+
+Nuo lapkričio ciklo Pageidavimų lange tikrinkite du atskirus progresus: anketos pateiktos /16 ir savaitgalio dubliai užpildyti /16. Lentelėje matoma pirmo pateikimo vieta (#1–#16), taškai (16–1) ir konkretus pasirinktas 6 h savaitgalio dublis. Redagavimas nepakeičia pirmo pateikimo vietos. Dubliai yra tik teorinis standby ir neturi būti interpretuojami kaip darbo pamainos ar pageidavimų pažeidimai.
+
+Prioriteto taškai veikia tik kaip SOFT konflikto sprendėjas po visų HARD ir struktūrinių SYSTEM taisyklių bei po SOFT water-fill užrakinimo. Jie nėra leidimas iškreipti savaitgalių ar postų pasiskirstymą. Jei po termino trūksta dublių, SYSTEM juodraštį galima matyti ir tikrinti, tačiau publikavimo kontrolė turi aiškiai rodyti, kad FCFS sluoksnis nėra 16/16.

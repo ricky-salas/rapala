@@ -1,0 +1,29 @@
+V2.5.121 TEST REPORT
+====================
+
+PASS — Python compilation:
+  app.py
+  db.py
+  scheduler_engine.py
+  solver_runner.py
+
+PASS — test_v25120_live_countdown_two_stage.py
+  - second-by-second countdown preserved
+  - explicit PRELIMINARY publication preserved
+  - FINAL still gated to senior-review phase
+  - generation remains draft-only
+
+PASS — test_v25121_lt_phase_monthly_priority.py
+  - polished Lithuanian lifecycle labels present
+  - old cloggy Lithuanian stage labels removed
+  - 1/2 preliminary + 2/2 final buttons preserved with natural wording
+  - applied priority comes from exactly the previous schedule cycle
+  - January year-boundary mapping verified
+  - monthly priority is explicitly non-cumulative
+  - senior stats distinguish applied-now vs earned-next points
+
+DATABASE
+  No new Supabase migration required for V2.5.121.
+  Existing preference_priority_points_v25118 is already keyed by (year, month, initials),
+  so every monthly race is independent. V2.5.121 centralizes the one-cycle lookup in db.py
+  and makes the reset semantics explicit in the UI.

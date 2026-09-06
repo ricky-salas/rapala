@@ -235,6 +235,45 @@ def all_preferences(year: int, month: int) -> Dict[str, dict]:
     return {r["initials"]: _pref_from_row(r) for r in rows}
 
 
+def all_preference_priorities(year: int, month: int) -> Dict[str, dict]:
+    """First-submission ranking for this schedule month (V2.5.118+)."""
+    try:
+        rows=_data(_retry_db(lambda:
+            client().table("preference_priority_points_v25118")
+            .select("year,month,initials,first_submitted_at,submission_order,points_awarded,source")
+            .eq("year",int(year)).eq("month",int(month))
+            .order("submission_order")
+            .execute()
+        ))
+    except Exception:
+        return {}
+    return {str(r.get("initials")):dict(r) for r in rows}
+
+
+def get_preference_priority(year: int, month: int, initials: str) -> dict:
+    return all_preference_priorities(year,month).get(str(initials),{})
+
+
+def preference_priority_source_month(year: int, month: int) -> tuple[int,int]:
+    """Return the single previous schedule cycle whose rank applies now.
+
+    V2.5.121: priority is intentionally monthly and non-cumulative. A resident's
+    rank earned while submitting preferences for one schedule month is used only
+    for the immediately following schedule month, then it expires from solver use.
+    """
+    year=int(year); month=int(month)
+    return (year-1,12) if month==1 else (year,month-1)
+
+
+def all_applied_preference_priorities(year: int, month: int) -> Dict[str, dict]:
+    py,pm=preference_priority_source_month(year,month)
+    return all_preference_priorities(py,pm)
+
+
+def get_applied_preference_priority(year: int, month: int, initials: str) -> dict:
+    return all_applied_preference_priorities(year,month).get(str(initials),{})
+
+
 def auto_submit_zero_preferences_v2594(year: int, month: int, cutoff_iso: str) -> dict:
     """After the exact preference cutoff, create zero-request submissions for missing active residents.
 
@@ -777,6 +816,59 @@ def get_backup_claims(year: int, month: int, initials: str) -> List[dict]:
 def get_weekend_backup_claim(year: int, month: int, initials: str) -> Optional[dict]:
     rows=get_backup_claims(year,month,initials)
     return rows[0] if rows else None
+
+
+def scheduler_cycle_phase_v25119(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("scheduler_cycle_phase_v25119",{
+        "p_year":int(year),"p_month":int(month),
+    }).execute()))
+    if isinstance(rows,dict): return rows
+    if isinstance(rows,list) and rows: return rows[0] if isinstance(rows[0],dict) else {}
+    return {}
+
+def sync_schedule_cycle_v25119(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("sync_schedule_cycle_v25119",{
+        "p_year":int(year),"p_month":int(month),
+    }).execute()))
+    if isinstance(rows,dict): return rows
+    if isinstance(rows,list) and rows: return rows[0] if isinstance(rows[0],dict) else {}
+    return {}
+
+def auto_fill_weekend_backups_v25119(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("auto_fill_weekend_backups_v25119",{
+        "p_year":int(year),"p_month":int(month),
+    }).execute()))
+    if isinstance(rows,dict): return rows
+    if isinstance(rows,list) and rows: return rows[0] if isinstance(rows[0],dict) else {}
+    return {}
+
+
+def operator_set_weekend_backup_v25119(year: int, month: int, target_initials: str, covered_slot: int, reason: str) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("operator_set_weekend_backup_v25119",{
+        "p_year":int(year),"p_month":int(month),"p_target_initials":str(target_initials),
+        "p_covered_slot":int(covered_slot),"p_reason":str(reason),
+    }).execute()))
+    if isinstance(rows,dict): return rows
+    if isinstance(rows,list) and rows: return rows[0] if isinstance(rows[0],dict) else {}
+    return {}
+
+
+def claim_weekend_backup_fcfs_v25118(year: int, month: int, covered_slot: int, day: int, block: str):
+    """Atomic authenticated FCFS claim. Identity is resolved server-side."""
+    rows=_data(_retry_db(lambda: client().rpc("claim_weekend_backup_fcfs_v25118",{
+        "p_year":int(year),"p_month":int(month),"p_covered_slot":int(covered_slot),
+        "p_day":int(day),"p_block":str(block),
+    }).execute()))
+    return rows[0] if isinstance(rows,list) and rows else (rows if isinstance(rows,dict) else {})
+
+
+def release_weekend_backup_fcfs_v25118(year: int, month: int) -> bool:
+    rows=_data(_retry_db(lambda: client().rpc("release_weekend_backup_fcfs_v25118",{
+        "p_year":int(year),"p_month":int(month),
+    }).execute()))
+    if isinstance(rows,bool): return rows
+    if isinstance(rows,list) and rows: return bool(rows[0])
+    return bool(rows)
 
 
 def claim_backup_slot(year: int, month: int, initials: str, covered_slot: int):

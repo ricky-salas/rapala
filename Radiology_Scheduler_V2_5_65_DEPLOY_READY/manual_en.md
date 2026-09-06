@@ -684,3 +684,11 @@ Until publication this remains a draft snapshot only. It is **not work**, does n
 The ŠR account retains `Schedule → Schedule confirmation` controls in both Simple and Advanced modes. Interface mode changes technical detail only, not lifecycle authorization. Actions remain audited as ŠR; the SP account is never impersonated.
 
 `Credits` is an operational tab and is visible in both interface modes. SP and ŠR additionally see the same persistent WESTON ledger there: SP as debt / negative balance, ŠR as receivable / positive balance.
+
+## V2.5.118 — weekend FCFS backups and preference-priority points
+
+Starting with the November 2026 schedule, theoretical backups are a separate layer from the normal schedule. For now there are exactly 16 weekend 6-hour backup positions: one for each of the 16 group members. A resident chooses one in Preferences on a first-come-first-served basis. The window for the next schedule month opens at 00:00 on day 1 of the preceding month and closes with the preference deadline. One resident can hold only one place and one place can belong to only one resident. A theoretical backup is not a work shift and never enters workload, rest, Cannot-work, SOFT satisfaction or SYSTEM fairness calculations. Only a genuinely completed cover recorded as COMPLETED becomes ACTUAL work.
+
+The first real monthly preference submission also freezes an immutable submission order: #1 earns 16 points, #2 earns 15, … #16 earns 1. Editing the form later never resets the rank. These points are not HARD rights and cannot bypass Cannot-work, safety, ADMIN weekend water-fill, Dream Team, workplace fairness or a higher SOFT tier. Within each SOFT tier the horizontal water-fill and maximum feasible total fulfilment are locked first; only then, if multiple equally fair mathematical alternatives remain, the higher first-submission score wins the conflicting preference. Automatic zero-request forms created after the deadline receive 0 points.
+
+The senior Preferences statistics show submission completion, rank and points, each resident's chosen backup, the 16/16 fill status and anyone still missing a choice.

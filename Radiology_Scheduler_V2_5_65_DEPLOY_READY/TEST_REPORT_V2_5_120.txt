@@ -1,0 +1,51 @@
+V2.5.120 LIVE COUNTDOWN + TWO-STAGE PUBLISH — TEST REPORT
+Date: 2026-09-06
+
+PASS — Python compile
+  app.py
+  scheduler_engine.py
+  db.py
+  solver_runner.py
+
+PASS — App/engine version match
+  APP expects 2.5.120
+  scheduler_engine ENGINE_API_VERSION = 2.5.120
+
+PASS — Live lifecycle countdown implementation
+  always-visible helper exists for automatic FCFS cycles
+  browser display updates every 1 second
+  preferences countdown targets day 14 00:00 Europe/Vilnius
+  pre-FINAL swap countdown targets day 16 00:00 Europe/Vilnius
+  senior-review and FINAL states render without a false countdown
+  display clock is non-authoritative; server RPC timestamps still gate writes
+
+PASS — Draft generation is no longer publication
+  automatic draft→preliminary publication removed from Generate/Rebuild
+  Generate/Rebuild may be repeated before preliminary publication
+
+PASS — Explicit PRELIMINARY publication
+  dedicated SP/ŠR button exists during the timed swap phase
+  publication freezes SYSTEM and creates ACTUAL
+  residents cannot see/use the preliminary schedule until explicit publication
+
+PASS — Timed FINAL gate
+  October+ FCFS FINAL is disabled before senior_review
+  after day 16 00:00 SP/ŠR reviews/manual-overrides and explicitly confirms FINAL
+
+PASS — No third pseudo-publication action in automatic FCFS cycle
+  legacy direct freeze button is excluded from the automatic FCFS workflow
+  normal publication decisions are PRELIMINARY then FINAL
+
+PASS — Missed preliminary fallback
+  if no preliminary was published before day 16, SP/ŠR can freeze the selected SYSTEM for senior review without reopening resident swaps
+
+PASS — October FCFS engine catalog unchanged
+  weekend_fcfs_backup_mode(2026,10) = True
+  exactly 16 weekend 6h slots
+  dates: Oct 3/4, 10/11, 17/18, 24/25; AM+PM
+
+PASS — Operational email independence preserved
+  FCFS FINAL has no SMTP/missing-email gate
+
+NO DATABASE MIGRATION REQUIRED
+  Uses already-deployed V2.5.119 automatic lifecycle functions/cron.

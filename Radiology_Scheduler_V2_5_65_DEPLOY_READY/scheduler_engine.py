@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.112"
+ENGINE_API_VERSION = "2.5.121"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -157,6 +157,13 @@ def rule_value(key: str):
     return _RUNTIME_RULES.get(key, DEFAULT_RULE_PROFILE[key])
 
 
+WEEKEND_FCFS_BACKUP_START = (2026, 10)
+
+def weekend_fcfs_backup_mode(year: int, month: int) -> bool:
+    """Return True for the new theoretical FCFS weekend-backup constitution."""
+    return (int(year), int(month)) >= WEEKEND_FCFS_BACKUP_START
+
+
 @dataclass
 class Person:
     initials: str
@@ -180,6 +187,9 @@ class Person:
     # It is carried into the schedule payload so published-vs-ACTUAL satisfaction
     # is always recalculated against the ORIGINAL submitted request set.
     request_items: List[dict] = field(default_factory=list)
+    # V2.5.118: first-submission priority for this schedule month.
+    preference_priority_points: int = 0
+    preference_priority_rank: int = 0
     rest_credit_am_to_use: int = 0
     rest_credit_pm_to_use: int = 0
 
@@ -392,8 +402,8 @@ def normal_assignment_blocked(person: Person, day: int, block: str, include_resi
         return True
     if include_resident_hard and resident_hard_unavailable_for_block(person, day, block):
         return True
-    # A self-selected backup slot remains a concrete commitment and blocks an
-    # overlapping normal assignment.
+    # Legacy reservations may block normal work. V2.5.118 new-month FCFS dubliai
+    # never reach this set: the app deliberately loads reserved_backup=set().
     return any(rday == day and blocks_overlap(rblock, block) for rday, rblock in person.reserved_backup)
 
 
@@ -571,6 +581,8 @@ def serialize_people_request_snapshot(people: List[Person]) -> dict:
             "prior_consecutive_weekend_streak":int(p.prior_consecutive_weekend_streak),
             "prior_last_day_onko":bool(getattr(p,"prior_last_day_onko",False)),
             "request_items":[dict(x) for x in (p.request_items or [])],
+            "preference_priority_points":max(0,int(getattr(p,"preference_priority_points",0) or 0)),
+            "preference_priority_rank":max(0,int(getattr(p,"preference_priority_rank",0) or 0)),
             "reserved_backup":[[int(d),str(b)] for d,b in sorted(p.reserved_backup)],
         }
         for f in set_fields:
@@ -604,6 +616,8 @@ def people_from_request_snapshot(snapshot: Optional[dict]) -> List[Person]:
                 preferred_pm=set(r.get("preferred_pm") or []),
                 target_adjustment=int(r.get("target_adjustment") or 0),
                 request_items=[dict(x) for x in (r.get("request_items") or [])],
+                preference_priority_points=max(0,int(r.get("preference_priority_points") or 0)),
+                preference_priority_rank=max(0,int(r.get("preference_priority_rank") or 0)),
                 rest_credit_am_to_use=int(r.get("rest_credit_am_to_use") or 0),
                 rest_credit_pm_to_use=int(r.get("rest_credit_pm_to_use") or 0),
                 weekday_preference=int(r.get("weekday_preference") or 0),
@@ -949,6 +963,46 @@ def make_slots(year: int, month: int) -> List[Slot]:
     for d,wd,holiday_closed in centro120_pm_days:
         add(d, wd, "Centro UG 120kab", "PM", blocked=bool(holiday_closed))
     return slots
+
+
+def weekend_fcfs_backup_slots(year: int, month: int) -> List[Slot]:
+    """Return exactly 16 weekend 6h theoretical-backup positions for V2.5.119.
+
+    Current cohort constitution is one weekend dublis per each of 16 residents.
+    Weekend duty is SPS RO AM/PM only.  Calendar months can expose 16, 18 or 20
+    weekend 6h duty rows, so this temporary PGY1 rule chooses four complete
+    Saturday+Sunday weekend pairs inside the month (4 weekends x 2 days x 2
+    blocks = 16 positions).  Boundary orphan days are excluded first.  If a
+    rare month contains five complete weekend pairs, the first four are used;
+    this catalog is deliberately isolated so night duties / a future senior-
+    configured slot catalog can replace it without touching the normal solver.
+    """
+    all_slots=make_slots(year,month)
+    by_day={}
+    for sl in all_slots:
+        if sl.weekday>=5 and sl.block in ("AM","PM") and sl.department.startswith("SPS RO budėjimai"):
+            by_day.setdefault(sl.day,[]).append(sl)
+    complete_pairs=[]
+    for d in sorted(by_day):
+        if date(year,month,d).weekday()!=5:  # Saturday
+            continue
+        if d+1 in by_day and date(year,month,d+1).weekday()==6:
+            complete_pairs.append((d,d+1))
+    chosen_days=[]
+    for sat,sun in complete_pairs[:4]:
+        chosen_days.extend([sat,sun])
+    # Defensive fallback for unusual/legacy calendars: supplement from remaining
+    # weekend dates until exactly eight dates are represented.
+    if len(chosen_days)<8:
+        for d in sorted(by_day):
+            if d not in chosen_days:
+                chosen_days.append(d)
+                if len(chosen_days)>=8:
+                    break
+    chosen=set(chosen_days[:8])
+    out=[sl for sl in all_slots if sl.day in chosen and sl.weekday>=5 and sl.block in ("AM","PM") and sl.department.startswith("SPS RO budėjimai")]
+    out.sort(key=lambda sl:(sl.day,0 if sl.block=="AM" else 1,sl.idx))
+    return out[:16]
 
 
 class ModelBuilder:
@@ -1564,11 +1618,12 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             # V2.5.107 RESIDENT HARD is a real generation constraint. A resident
             # marked unavailable for a block cannot be assigned there for any reason;
             # lower structural fairness or SOFT wishes must adapt around this.
-            if hard_unavailable_for_block(p,d,"AM") or any(rday==d and blocks_overlap(rblock,"AM") for rday,rblock in p.reserved_backup):
+            _legacy_backup_block = not weekend_fcfs_backup_mode(year,month)
+            if hard_unavailable_for_block(p,d,"AM") or (_legacy_backup_block and any(rday==d and blocks_overlap(rblock,"AM") for rday,rblock in p.reserved_backup)):
                 mb.constraint({am[(pi,d)]:1.0},0.0,0.0)
-            if hard_unavailable_for_block(p,d,"PM") or any(rday==d and blocks_overlap(rblock,"PM") for rday,rblock in p.reserved_backup):
+            if hard_unavailable_for_block(p,d,"PM") or (_legacy_backup_block and any(rday==d and blocks_overlap(rblock,"PM") for rday,rblock in p.reserved_backup)):
                 mb.constraint({pm[(pi,d)]:1.0},0.0,0.0)
-            if hard_unavailable_for_block(p,d,"FULL") or any(rday==d and blocks_overlap(rblock,"FULL") for rday,rblock in p.reserved_backup):
+            if hard_unavailable_for_block(p,d,"FULL") or (_legacy_backup_block and any(rday==d and blocks_overlap(rblock,"FULL") for rday,rblock in p.reserved_backup)):
                 mb.constraint({full[(pi,d)]:1.0},0.0,0.0)
         co={}
         for d in range(1,ndays+1): co[am[(pi,d)]]=2.0; co[pm[(pi,d)]]=2.0; co[full[(pi,d)]]=3.0
@@ -1932,7 +1987,13 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     for pi,p in enumerate(people):
         nfree=len(p.soft_free)+len(p.soft_free_am)+len(p.soft_free_pm)
         npref=len(p.preferred)+len(p.preferred_am)+len(p.preferred_pm)
-        free_w=5000.0/max(1,nfree); pref_w=2000.0/max(1,npref)
+        # V2.5.118: first-submission ranking modifies only the SOFT layer.
+        # 16 pts (first) => 2.6x, 1 pt => 1.1x, 0 => neutral 1.0x.
+        # The 0.10 slope is deliberately capped so SOFT1 time-off still outranks
+        # SOFT2 positive-work wishes while all ADMIN/HARD tiers remain above both.
+        _pp=max(0,min(16,int(getattr(p,"preference_priority_points",0) or 0)))
+        _pmult=1.0 + 0.10*_pp
+        free_w=(5000.0*_pmult)/max(1,nfree); pref_w=(2000.0*_pmult)/max(1,npref)
         for d in p.soft_free:
             if date(year,month,d).weekday()<5: add_hit(pi,d,None,+free_w)
         for d in p.soft_free_am:
@@ -2142,14 +2203,17 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         if res.x is not None:
             _fallback_mode="ALL_EXACT_WISHES_FEASIBLE_WORKSTYLE_RELAXED"
     if res.x is None and structural_relaxation and _exact_soft_lock_mark is not None:
-        # Exact wishes are SOFT and can conflict with one another. Remove them only
-        # after the stronger exact-wish pass failed, but keep every HARD block.
+        # Exact wishes are SOFT and can conflict with one another. After the
+        # all-exact proof fails, restore the weighted objective instead of dropping
+        # everyone to an equal zero-objective baseline. This is where V2.5.118
+        # submission-priority points resolve mathematically difficult conflicts.
         del mb.rows[_exact_soft_lock_mark:]
         if _rh_loss_vars:
             mb.constraint({lv:1.0 for lv in _rh_loss_vars},0.0,0.0)
+        mb.c=list(single_costs)
         res=mb.solve(_bounded)
         if res.x is not None:
-            _fallback_mode="MANDATORY_ZERO_HARD_BASELINE_ONLY"
+            _fallback_mode="PRIORITY_WEIGHTED_SOFT_CONFLICT_RESOLUTION"
     if res.x is None:
         return None
     _rh_minimum_proven=True
@@ -3575,32 +3639,29 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
                             f"DK min11h rest {p.initials} {d} {a.idx}-{b.idx}"
                         )
 
-    # HARD backup availability — V2.5.32 LOCKED.
-    # Every filled WEEKEND, SPS RO and SPS UG shift must have at least one
-    # HARD-available resident with no overlapping normal assignment.
-    # Self-claimed backup reservations are already blocked from overlapping
-    # normal work through Person.reserved_backup / normal_assignment_blocked().
-    for covered_slot in [s for s in slots if backup_required_slot(s)]:
-        candidates = [
-            (pi,p) for pi,p in enumerate(people)
-            if not absolute_unavailable_for_block(p, covered_slot.day, covered_slot.block)
-        ]
-        if not candidates:
-            continue
-        busy={}
-        for pi,_p in candidates:
-            for s in slots:
-                if s.day != covered_slot.day:
-                    continue
-                if not blocks_overlap(s.block, covered_slot.block):
-                    continue
-                busy[x[(pi,s.idx)]]=1
-        # All current backup-required shifts are mandatory. Therefore one
-        # candidate must remain free for the covered block.
-        mb.constraint(
-            busy, 0, len(candidates)-1,
-            f"backup availability {covered_slot.department} {covered_slot.block} day {covered_slot.day}"
-        )
+    # Legacy HARD backup-capacity coupling is retained only for historical months.
+    # From Nov-2026 dubliai are an entirely separate theoretical FCFS weekend
+    # layer and may not shape the normal SYSTEM schedule in any way.
+    if not weekend_fcfs_backup_mode(year,month):
+        for covered_slot in [s for s in slots if backup_required_slot(s)]:
+            candidates = [
+                (pi,p) for pi,p in enumerate(people)
+                if not absolute_unavailable_for_block(p, covered_slot.day, covered_slot.block)
+            ]
+            if not candidates:
+                continue
+            busy={}
+            for pi,_p in candidates:
+                for sl2 in slots:
+                    if sl2.day != covered_slot.day:
+                        continue
+                    if not blocks_overlap(sl2.block, covered_slot.block):
+                        continue
+                    busy[x[(pi,sl2.idx)]]=1
+            mb.constraint(
+                busy, 0, len(candidates)-1,
+                f"backup availability {covered_slot.department} {covered_slot.block} day {covered_slot.day}"
+            )
 
     # Optional administrative rule: even Onko assignment count.
     if bool(rule_value("onko_even_required")):
@@ -5031,7 +5092,45 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
         mb.constraint({tv["min"]:1.0},floor-1e-6,np.inf,f"V2552 {tier} minimum entitlement lock")
         mb.constraint({tv["total"]:1.0},total-1e-6,np.inf,f"V2552 {tier} total fulfilment lock")
         mb.constraint({tv["max"]:1.0},-np.inf,ceiling+1e-6,f"V2552 {tier} maximum entitlement lock")
-        waterfill_locks[tier]={"min":round(floor,6),"total":round(total,6),"max":round(ceiling,6),"active":len(tv["active"])}
+
+        # V2.5.121 MONTHLY FIRST-SUBMISSION PRIORITY — one-cycle conflict resolver, never cumulative and never a new
+        # structural/HARD tier.  We first lock the agreed horizontal water-fill
+        # result above (minimum entitlement, maximum feasible total, ceiling).
+        # Only then, inside that equally-fair frontier, maximize the immutable
+        # points earned by submitting preferences early: #1=16 ... #16=1.
+        # Consequently points cannot buy extra weekends, widen post fairness,
+        # break Dream Team, or override Cannot-work; they decide *which* SOFT
+        # requests survive when the already-locked fair frontier has alternatives.
+        _priority_costs=[0.0 for _ in mb.c]
+        _priority_expr={}
+        _priority_const=0.0
+        for pi in tv["active"]:
+            pts=max(0,min(16,int(getattr(people[pi],"preference_priority_points",0) or 0)))
+            if pts<=0:
+                continue
+            rec=soft_tier_expr[tier][pi]
+            for vidx,coef in rec["coeffs"].items():
+                _priority_expr[vidx]=_priority_expr.get(vidx,0.0)+float(pts)*float(coef)
+                _priority_costs[vidx]-=float(pts)*float(coef)
+            _priority_const += float(pts)*float(rec["const"])
+        _priority_score=None
+        if _priority_expr:
+            _assignment_tiebreak(_priority_costs,1000000000.0)
+            mb.c=_priority_costs
+            pr=mb.solve(time_limit=max(2.0,min(4.0,per_tier_limit*0.45)))
+            if pr.x is not None:
+                tier_res=pr
+                _priority_score=_priority_const + sum(float(coef)*float(pr.x[vidx]) for vidx,coef in _priority_expr.items())
+                # Freeze this tier's ranked choice before moving down vertically to
+                # the next SOFT tier.  A later SOFT-2/3 solve cannot steal an
+                # already-earned higher-tier priority result.
+                mb.constraint(_priority_expr,float(_priority_score)-1e-6,np.inf,f"V25118 {tier} submission priority lock")
+
+        waterfill_locks[tier]={
+            "min":round(floor,6),"total":round(total,6),"max":round(ceiling,6),
+            "active":len(tv["active"]),
+            "submission_priority_score":None if _priority_score is None else round(float(_priority_score),6),
+        }
 
     # Stage I — now optimize NONCRITICAL post spread and explicit longitudinal
     # catch-up (post debt) WITHOUT sacrificing any locked SOFT result.

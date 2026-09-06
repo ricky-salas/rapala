@@ -156,3 +156,9 @@ Planned backups must be ignored as work in the request audit; the system now enf
 
 ### V2.5.116 — Backup oversight before publication
 After GENERATE, do not go straight to publication. In the same Generation window review **THEORETICAL BACKUP PLAN — SENIOR REVIEW**: confirm mandatory standby coverage, look for odd concentration on one resident, and inspect concrete dates/positions. This is a theoretical layer and does not change normal-schedule wish satisfaction.
+
+## V2.5.118 — SP review: FCFS backups + preference priority
+
+From the November cycle, review two separate completion measures in Preferences: forms submitted /16 and weekend backups filled /16. The table shows immutable first-submission rank (#1–#16), points (16–1), and the selected 6-hour weekend backup. Editing a form does not reset first-submission rank. Backups are theoretical standby only and must never be interpreted as work shifts or preference violations.
+
+Priority points resolve only SOFT conflicts after every HARD/structural SYSTEM rule and the SOFT water-fill result are locked. They are not permission to distort weekend or workplace allocation. If backups are still missing after the deadline, the SYSTEM draft may still be reviewed, but publication control must clearly show that the FCFS layer is not 16/16.

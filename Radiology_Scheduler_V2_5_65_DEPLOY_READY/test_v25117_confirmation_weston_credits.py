@@ -1,6 +1,6 @@
 from pathlib import Path
 src=Path('app.py').read_text(encoding='utf-8')
-assert 'APP_VERSION = "2.5.117 CONFIRMATION + WESTON CREDITS"' in src
+assert 'APP_VERSION = "2.5.118 WEEKEND FCFS + PRIORITY POINTS"' in src
 # ŠR must retain lifecycle confirmation in both interface modes.
 assert 'lifecycle_operator_ui=(is_seniune_account or is_researcher_account)' in src
 assert '(is_researcher_account and advanced_mode)' not in src[src.index('# V2.5.117'):src.index('st.sidebar.caption',src.index('# V2.5.117'))]

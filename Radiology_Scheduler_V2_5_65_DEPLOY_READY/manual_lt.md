@@ -926,3 +926,11 @@ Paspaudus **GENERUOTI / PERKURTI JUODRAŠTĮ**, kartu su normaliu SYSTEM juodra�
 ŠR paskyra turi `Grafikas → Grafiko tvirtinimas` valdymą tiek Paprastame, tiek Išplėstiniame režime. Sąsajos režimas keičia tik techninės informacijos kiekį, bet ne operatoriaus teises. Veiksmai registruojami kaip ŠR; SP paskyra neperimama.
 
 `Kreditai` yra operacinė skiltis ir rodoma abiejuose sąsajos režimuose. SP ir ŠR joje papildomai mato tą patį persistent WESTON ledgerį: SP kaip skolą / neigiamą balansą, ŠR kaip gautiną / teigiamą balansą.
+
+## V2.5.118 — savaitgalio FCFS dubliai ir pageidavimų prioriteto taškai
+
+Nuo 2026 m. lapkričio grafiko teoriniai dubliai yra atskiras nuo normalaus grafiko sluoksnis. Šiuo etapu naudojamos tik 16 savaitgalio 6 val. vietų: po vieną kiekvienam iš 16 grupės žmonių. Dublis pasirenkamas Pageidavimų skiltyje principu „first come, first served“. Pasirinkimo langas kitam mėnesiui atsidaro ankstesnio mėnesio 1 d. 00:00 ir užsidaro kartu su pageidavimų terminu. Vienas žmogus gali turėti tik vieną vietą, o viena vieta — tik vieną žmogų. Dublis nėra darbo pamaina, nedalyvauja workload, poilsio, „Negaliu dirbti“, SOFT išpildymo ar SYSTEM fairness skaičiavime. Tik realiai įvykęs ir pažymėtas COMPLETED pavadavimas tampa ACTUAL darbu.
+
+Pirmasis realus mėnesio pageidavimų pateikimas taip pat užfiksuoja nekintamą pateikimo eilę: #1 gauna 16 tšk., #2 — 15 tšk., … #16 — 1 tšk. Vėlesnis anketos redagavimas vietos eilėje nekeičia. Šie taškai nėra HARD teisė ir negali apeiti „Negaliu dirbti“, saugos, ADMIN savaitgalių water-fill, Dream Team, postų fairness ar aukštesnio SOFT rango. Kiekviename SOFT range pirmiausia užrakinamas horizontalus water-fill ir maksimalus įmanomas bendras išpildymas; tik tada, jei lieka keli vienodai teisingi matematiniai variantai, aukštesni taškai suteikia pirmenybę konfliktuojančiam pageidavimui. Automatinė 0 pageidavimų anketa po termino gauna 0 taškų.
+
+Seniūnės pageidavimų statistikoje rodoma: kiek anketų pateikta, prioritetinė vieta ir taškai, kas pasirinko dublį, kiek dublių užpildyta iš 16 ir kas dar nepateikė pasirinkimo.
