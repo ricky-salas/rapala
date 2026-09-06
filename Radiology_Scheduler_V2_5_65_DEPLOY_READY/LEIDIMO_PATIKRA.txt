@@ -1,11 +1,5 @@
-V2.5.134 leidimo patikra
-
-- Grupiniai „Dirbti su / Dirbti be“ pageidavimai: PRAĖJO
-- Vieta tik CENTRO RO / ADC 144/145: PRAĖJO
-- ADC 144/145 traktuojama kaip viena dviejų kabinetų zona: PRAĖJO
-- Viena žmonių grupė = vienas loginis pageidavimas: PRAĖJO
-- Dream Team redagavimas SP + ŠR išliko: PRAĖJO
-- Python kompiliacija: PRAĖJO
-- pytest V2.5.134: 8/8 PRAĖJO
-- Failų skaičius pakete: 32
-- Nauja migracija: SUPABASE_MIGRATION_V2_5_134_GROUPED_PEOPLE_WISHES.sql
+V2.5.135 leidimo patikra
+- „Seniūnės vadovas“ tabas pašalintas iš navigacijos.
+- Vadovo renderinimo blokas pašalintas iš app.py.
+- Word vadovas paliktas ZIP pakete.
+- Grupiniai pageidavimai ir Dream Team logika nepakeista.

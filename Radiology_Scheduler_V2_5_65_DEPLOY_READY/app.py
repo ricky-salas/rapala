@@ -51,7 +51,7 @@ import db
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.134 GRUPINIAI PAGEIDAVIMAI"
+APP_VERSION = "2.5.135 BE SENIŪNĖS VADOVO LANGO"
 EXPECTED_ENGINE_API_VERSION = "2.5.121"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "SP"
@@ -4747,8 +4747,6 @@ names.append(tr("credits_debts"))
 names += [tr("backups"),tr("swaps"),tr("calendar"),tr("research")]
 if advanced_mode:
     names.append(tr("proof"))
-if senior_mode:
-    names.append(tr("senior_guide"))
 names.append(tr("rules"))
 
 # ŠR keeps the isolated research-shadow generator, but it is a tab inside the
@@ -12004,119 +12002,6 @@ if advanced_mode:
                      if lang=="LT" else
                      "Detailed criterion tables and component progress are shown in Advanced mode.")
                 )
-    pos+=1
-
-# --- Senior usability / audit guide ---
-if senior_mode:
-    with tabs[pos]:
-        st.subheader(tr("senior_guide"))
-        if lang=="LT":
-            st.info(
-                "Tikslas nėra aklai pasitikėti algoritmu. Tikslas — vietoje viso grafiko konstravimo ranka gauti "
-                "stiprų juodraštį su įrodymais ir seniūnei palikti trumpą, kryptingą išimčių auditą."
-            )
-            st.markdown("### 5 minučių audito protokolas")
-            audit_rows=[
-                {"Žingsnis":"1","Kur žiūrėti":"Privalomos taisyklės / diagnostika","Ką patikrinti":"0 privalomų saugos klaidų ir 0 „Dirbti negaliu“ pažeidimų.","Jei blogai":"Nepublikuoti."},
-                {"Žingsnis":"2","Kur žiūrėti":"Darbo vietų matrica","Ką patikrinti":"SPS UG, SPS RO, savaitgaliai ir kitos darbo vietos paskirstytos kuo tolygiau; jei skirtumas didesnis, turi būti aiški matematinė priežastis.","Jei blogai":"Nepublikuoti arba aiškiai patikrinti, ar nukrypimas matematiškai neišvengiamas."},
-                {"Žingsnis":"3","Kur žiūrėti":"Rezidentų rodikliai","Ką patikrinti":"Nėra vieno žmogaus su neproporcingu savaitiniu krūviu; 7 dienų darbo krūvio, dublių ir poilsio rodikliai logiški.","Jei blogai":"Regeneruoti / taisyti prieš publikavimą."},
-                {"Žingsnis":"4","Kur žiūrėti":"Išplėstinis / Patikra","Ką patikrinti":"Pasirinkti 3–5 rezidentus, ypač mažiausio ir didžiausio pageidavimų išpildymo, ir ranka patikrinti 1–2 konkrečius įrankio teiginius kiekvienam.","Jei blogai":"Jei teiginys nesutampa su pradiniu grafiku, laikyti tai rodiklio / programos klaida ir nepublikuoti, kol ištaisyta."},
-                {"Žingsnis":"5","Kur žiūrėti":"Grafikas + patikra","Ką patikrinti":"Privalomas padengimas, nepaaiškintos skylės, akivaizdūs persidengimai ir ar galutinis grafikas atitinka tai, ką rodo suvestinės.","Jei blogai":"Nepublikuoti."},
-            ]
-            st.dataframe(pd.DataFrame(audit_rows),use_container_width=True,hide_index=True)
-            st.markdown("### Įrankio teiginių patikra — paprastai, be žargono")
-            st.info(
-                "**Teiginys** = vienas konkretus sakinys, kurį įrankis sako apie grafiką. Pvz.: "
-                "„ŠR 18 d. popietę prašė laisvos, bet pradiniame grafike paskirtas SPS UG, todėl pageidavimas neįvykdytas.“ "
-                "Patikra reiškia tik viena: atsidaryti 18 d. ir pažiūrėti, ar tas SPS UG PM tikrai yra. "
-                "Nereikia iš naujo perskaičiuoti viso mėnesio."
-            )
-            st.markdown(
-                "**Ką tikrinti:** 1) ko žmogus prašė; 2) ką pradinis grafikas jam realiai paskyrė; "
-                "3) ar iš to logiškai seka „įvykdyta / neįvykdyta“; 4) ar darbo vietų matricos skaičiai sutampa su grafiku."
-            )
-
-            # V2.5.60: interactive senior verification card. Load its own schedule
-            # state so this tab is safe even when other tabs did not define base/current.
-            _guide_currentp=db.load_schedule(year,month,"current")
-            _guide_basep=db.load_schedule(year,month,"baseline")
-            if _guide_currentp:
-                _guide_system=refresh_result_payload(_guide_basep or _guide_currentp,year,month,use_actual_backups=False)
-                _guide_people=[p["initials"] for p in DEFAULT_PEOPLE]
-                _guide_person=st.selectbox("Pasirink rezidentą teiginių patikrai",_guide_people,key=f"senior_verify_person_{year}_{month}")
-                _guide_pd=(_guide_system.stats.get("people",{}).get(_guide_person,{}) or {})
-                _gh,_gs,_go,_gw=st.columns(4)
-                _gh.metric("Dirbti negaliu",tr("not_applicable") if _guide_pd.get("resident_hard_score") is None else f"{_guide_pd.get('resident_hard_score')}%")
-                _gs.metric("Pageidavimai",tr("not_applicable") if _guide_pd.get("soft_preference_score") is None else f"{_guide_pd.get('soft_preference_score')}%")
-                _go.metric("Visi prašymai",tr("not_applicable") if _guide_pd.get("overall_request_score") is None else f"{_guide_pd.get('overall_request_score')}%")
-                _gw.metric("SPS UG",int((_guide_pd.get("rotation_counts") or {}).get("SPS UG",0) or 0))
-                _guide_rows=(_guide_pd.get("resident_hard_conflicts") or [])+(_guide_pd.get("soft_request_misses") or [])
-                if _guide_rows:
-                    st.markdown("#### Ką konkrečiai įrankis teigia apie šį rezidentą")
-                    st.dataframe(request_details_df(_guide_rows,_guide_person),use_container_width=True,hide_index=True)
-                else:
-                    st.success("Šiam rezidentui neįvykdytų struktūruotų negalėjimų ar pageidavimų nėra.")
-                with st.expander("Rodyti ir įvykdytus prašymus — atrankinei patikrai",expanded=False):
-                    _guide_honored=_guide_pd.get("honored_request_details") or []
-                    if _guide_honored:
-                        st.dataframe(request_details_df(_guide_honored,_guide_person),use_container_width=True,hide_index=True)
-                    else:
-                        st.caption("Nėra į rodiklį įtrauktų struktūruotų prašymų.")
-                st.caption("Darbo vietų skaičių tikrink darbo vietų matricoje ir pradiniame grafike. Pvz., jei rodoma SPS UG = 2, turi rasti lygiai du SPS UG paskyrimus šiam rezidentui.")
-            else:
-                st.caption("Interaktyvi teiginių patikros kortelė atsiras, kai šiam mėnesiui bus paskelbtas grafikas.")
-
-            st.success(
-                "Principas: **ne skaityti visą grafiką nuo nulio, o tikrinti konkrečius įrankio teiginius ir išimtis.** "
-                "Jei sakinys nesutampa su pačiu pradiniu grafiku, tai ne „nuomonės skirtumas“, o aiški rodiklio / programos klaida."
-            )
-            st.markdown("### Kada grafiko NEPUBLIKUOTI")
-            st.dataframe(pd.DataFrame([
-                {"Raudona vėliava":"Privaloma saugos klaida","Veiksmas":"Blokuoti publikavimą."},
-                {"Raudona vėliava":"Trūksta privalomo SPS RO / SPS UG / savaitgalio padengimo","Veiksmas":"Blokuoti publikavimą."},
-                {"Raudona vėliava":"Kritinis SPS RO / SPS UG / savaitgalių paskirstymo skirtumas >1 be aiškaus paaiškinimo","Veiksmas":"Regeneruoti / tirti."},
-                {"Raudona vėliava":"Bet koks „Dirbti negaliu“ pažeidimas pradiniame juodraštyje","Veiksmas":"Regeneruoti / tirti."},
-                {"Raudona vėliava":"Teiginys apie pageidavimą / darbo vietą / krūvį nesutampa su pačiu pradiniu grafiku","Veiksmas":"Laikyti metrikos klaida; nepublikuoti, kol išspręsta."},
-                {"Raudona vėliava":"Importuoti pageidavimai akivaizdžiai nepilni / rodo N/A, nors žmogus pateikė prašymus","Veiksmas":"Taisyti importą prieš generuojant."},
-            ]),use_container_width=True,hide_index=True)
-            st.markdown("### Kas po publikavimo yra normalu")
-            st.markdown(
-                "- **Apsikeitimai** keičia faktinį grafiką; pradinis grafikas auditui lieka užfiksuotas.\n"
-                "- **Liga / neatvykimas** gali perkelti jau dirbantį žmogų iš neprivalomos darbo vietos į SPS; pradinis grafikas dėl to nesikeičia, o faktinio darbo statistika perskaičiuojama pagal realybę.\n"
-                "- **Neįvykdytas pageidavimas** savaime nėra klaida, jei jį aiškiai paaiškina svarbesnės taisyklės arba neišvengiamas konfliktas.\n"
-                "- **Didesnis darbo vietos paskirstymo skirtumas** priimtinas tik tada, kai tolygesnis variantas matematiškai neįmanomas dėl svarbesnių apribojimų."
-            )
-            st.markdown("### Seniūnės darbo eiga — nuo nulio iki mėnesio uždarymo")
-            workflow=pd.DataFrame([
-                {"Etapas":"1. Paruošti mėnesį","Seniūnės veiksmas":"Patikrinti aktyvų taisyklių profilį, šventes, etatus, tikslinius krūvius ir administracinius uždarymus.","Įrankio darbas":"Sukuria aktualų darbo vietų ir taisyklių rinkinį."},
-                {"Etapas":"2. Surinkti pageidavimus","Seniūnės veiksmas":"Stebėti, kas nepateikė; peržiūrėti tik neaiškius / konfliktinius įrašus.","Įrankio darbas":"Sutvarko negalėjimus, pageidavimus ir ilgalaikius nustatymus į vienodą įvesties formatą."},
-                {"Etapas":"3. Sugeneruoti","Seniūnės veiksmas":"Spausti Generate; nebandyti iš anksto ranka konstruoti viso grafiko.","Įrankio darbas":"Sprendžia privalomą padengimą, tolygų krūvį, „Dirbti negaliu“, darbo vietas ir pageidavimus."},
-                {"Etapas":"4. Audituoti","Seniūnės veiksmas":"5 min. raudonų vėliavų ir konkrečių teiginių atrankinė patikra; tikrinti išimtis, ne kiekvieną langelį.","Įrankio darbas":"Rodo diagnostiką, darbo vietų matricą, rezidentų rodiklius, pageidavimų išpildymą ir neįvykdytų pageidavimų priežastis."},
-                {"Etapas":"5. Koreguoti","Seniūnės veiksmas":"Tik jei auditas randa realią klaidą arba administracinę išimtį.","Įrankio darbas":"Pakartotinis generavimas arba rankinė korekcija su pakartotine patikra."},
-                {"Etapas":"6. Publikuoti","Seniūnės veiksmas":"Publikuoti tik po galutinės patikros.","Įrankio darbas":"Užfiksuoja pradinį grafiką auditui ir paskelbia grafiką."},
-                {"Etapas":"7. Eksploatuoti","Seniūnės veiksmas":"Apsikeitimams ir nenumatytiems pakeitimams naudoti platformos srautą, o ne asmenines žinutes.","Įrankio darbas":"Faktinis grafikas keičiasi, o pradinis grafikas lieka auditui ir tyrimui."},
-                {"Etapas":"8. Uždaryti mėnesį","Seniūnės veiksmas":"Peržiūrėti pradinį ir faktinį grafiką bei eksportuoti tyrimo duomenis.","Įrankio darbas":"Palieka audito, pageidavimų išpildymo, darbo vietų ir pakeitimų istoriją."},
-            ])
-            st.dataframe(workflow,use_container_width=True,hide_index=True)
-            with st.expander("Pilnas seniūnės naudojimo ir audito vadovas"):
-                st.markdown(SENIOR_GUIDE_LT)
-        else:
-            st.info(
-                "The aim is not blind trust in an algorithm. The aim is to replace full manual construction with a strong draft, "
-                "explicit evidence and a short exception-focused human audit."
-            )
-            st.markdown("### Five-minute audit protocol")
-            audit_rows=[
-                {"Step":"1","Where":"Privalomos taisyklės / diagnostika","Verify":"Zero TRUE ABSOLUTE HARD errors and zero Resident-HARD / Unavailable violations.","If failed":"Do not publish."},
-                {"Step":"2","Where":"Darbo vietų matrica","Verify":"SPS RO, SPS UG and weekend spread 0–1; other posts remain within the current-month structural water-fill guardrails.","If failed":"Do not publish unless the deviation is explicitly proven unavoidable."},
-                {"Step":"3","Where":"Rezidentų rodikliai","Verify":"No disproportionate weekly load; rolling-7 and double/recovery metrics are plausible.","If failed":"Regenerate / correct before publication."},
-                {"Step":"4","Where":"Advanced / Proof","Verify":"Spot-check 3–5 residents, including the lowest and highest satisfaction, against the actual grid.","If failed":"Treat the tool statement as a metric defect until corrected."},
-                {"Step":"5","Where":"Schedule + Proof","Verify":"Coverage, gaps, overlaps and that summary claims match the schedule.","If failed":"Do not publish."},
-            ]
-            st.dataframe(pd.DataFrame(audit_rows),use_container_width=True,hide_index=True)
-            st.success("Principle: verify concrete tool statements against the grid instead of rebuilding the entire month by hand.")
-            with st.expander("Full senior usability and audit guide"):
-                st.markdown(SENIOR_GUIDE_EN)
     pos+=1
 
 def explanatory_manual_only(content: str) -> str:
