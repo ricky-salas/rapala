@@ -1,0 +1,9 @@
+V2.5.124 SCHEDULE REFINEMENT
+LOCKED CHECKPOINT
+
+- Public HARD / fairness / ordinary request outcomes remain the primary schedule result.
+- SP private rows remain SP-only and excluded from public/shared statistics and exports.
+- Private refinement cannot trade away an already-resolved visible request outcome.
+- Post refinement preserves per-person workplace-category counts.
+- Improve/Rebuild compares public quality first and uses private SP results only on a public-quality tie.
+- No DB migration required.

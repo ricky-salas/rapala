@@ -1,0 +1,10 @@
+V2.5.123 SP PRIVATE PAIR WISHES
+LOCKED CHECKPOINT
+
+- SP-only private colored wish editor.
+- Green=together at least once in scope; red=avoid together throughout scope.
+- Scope month/week/day; time ANY/AM/PM; workplace filter.
+- Private planning inputs remain isolated from shared statistics and exports.
+- Private details excluded from public preferences/transparency/Excel/research/frozen request snapshot.
+- SP-only private fulfillment stats.
+- Live Supabase RLS/migrations applied.

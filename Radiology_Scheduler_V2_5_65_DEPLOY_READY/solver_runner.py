@@ -23,6 +23,13 @@ def main(argv):
         people=se.people_from_request_snapshot(payload.get("people_snapshot") or {})
         if not people:
             raise RuntimeError("empty/invalid frozen people snapshot")
+        # V2.5.123: inject the private SP generation-only layer from the ephemeral
+        # worker payload. It is deliberately absent from the frozen/public snapshot.
+        private_rows=[dict(x) for x in (payload.get("sp_private_pair_preferences") or [])]
+        for person in people:
+            if person.initials=="SP":
+                person.privileged_pair_preferences=private_rows
+                break
         result=se.solve_schedule(
             int(payload["year"]),
             int(payload["month"]),

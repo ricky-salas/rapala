@@ -1,0 +1,33 @@
+Radiology Scheduler V2.5.124 — SCHEDULE REFINEMENT
+
+PASS
+
+Checks completed:
+1. Python compilation
+   - app.py
+   - scheduler_engine.py
+   - db.py
+   - solver_runner.py
+
+2. Regression: V2.5.115 theoretical backup isolation
+   - PASS
+   - planned/activated theoretical backup remains outside normal work/request scoring;
+   - COMPLETED cover alone becomes ACTUAL work.
+
+3. V2.5.124 private/public isolation contract
+   - PASS
+   - private rows remain absent from public frozen request snapshots;
+   - private variables have no weight in the ordinary group solve;
+   - exact visible request outcomes are locked before private schedule refinement;
+   - post-label refinement preserves per-person workplace-category exposure counts;
+   - Improve/Rebuild compares public quality before any private SP comparison;
+   - general/public manuals contain no private priority-rule documentation.
+
+4. Full September baseline regression without private SP inputs
+   - PASS through V2.5.115 regression harness;
+   - 0 HARD errors;
+   - Dream Team 5/5;
+   - admin weekend spread cap 4;
+   - 77 active requests / 71 honored / 6 missed.
+
+Database migration: NOT REQUIRED for V2.5.124.

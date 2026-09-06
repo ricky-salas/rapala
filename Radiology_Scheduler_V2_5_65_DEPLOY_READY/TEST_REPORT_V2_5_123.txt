@@ -1,0 +1,45 @@
+Radiology Scheduler V2.5.123 — SP PRIVATE PAIR WISHES
+TEST REPORT
+
+RESULT: PASS
+
+1. Python syntax / import compilation
+   PASS: app.py
+   PASS: scheduler_engine.py
+   PASS: db.py
+   PASS: solver_runner.py
+
+2. Targeted V2.5.123 regression
+   Command: python test_v25123_sp_private_pair_wishes.py
+   PASS
+
+   Verified:
+   - whole-month / whole-week / one-day scope expansion;
+   - ANY/AM/PM block handling;
+   - private SP rows are NOT serialized into the public request snapshot;
+   - private pair field defaults to empty and remains isolated from public request statistics;
+   - green/red colored SP-only UI contract exists;
+   - DB/API names for the private preference store are present.
+
+3. Full solver checks performed during V2.5.123 implementation
+   PASS: October 2026 + green whole-month ANY pair wish; hard_errors=0, Dream Team preserved.
+   PASS: October 2026 + red one-day ANY separation wish; zero overlap on requested day, hard_errors=0, Dream Team preserved.
+   PASS: October 2026 + green week-specific CENTRO RO wish; requested pair opportunity achieved, hard_errors=0, Dream Team preserved.
+   PASS: isolated solver_runner ephemeral private wish; output schedule did not serialize the private preference details.
+
+4. Supabase privacy/schema
+   PASS: migrations applied to live project.
+   PASS: SP-only RLS policies created for private row details.
+   PASS: authenticated SELECT grant still constrained by RLS.
+   PASS: exact duplicate private wishes blocked by unique index.
+
+5. Privacy contract
+   Private details are intentionally excluded from:
+   - shared preference statistics;
+   - resident transparency;
+   - Excel schedule export;
+   - research comparison/export;
+   - frozen public request snapshot.
+
+NOTE
+Legacy version-specific regression scripts that assert earlier APP_VERSION strings were not counted as V2.5.123 failures. Their APP_VERSION assertions are stale by design; the targeted V2.5.123 regression is the release gate for this feature.

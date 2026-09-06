@@ -190,6 +190,10 @@ class Person:
     # V2.5.118: first-submission priority for this schedule month.
     preference_priority_points: int = 0
     preference_priority_rank: int = 0
+    # V2.5.123: SP-only privileged pair wishes. These are intentionally NOT
+    # serialized into the public/frozen request snapshot. They are a private
+    # generation-only objective supplied only when the authenticated SP runs the solver.
+    privileged_pair_preferences: List[dict] = field(default_factory=list)
     rest_credit_am_to_use: int = 0
     rest_credit_pm_to_use: int = 0
 
@@ -778,6 +782,41 @@ def backup_best_effort_slot(slot: Slot) -> bool:
         and slot.department.startswith("CENTRO RO")
         and rule_value("backup_centro_ro_best_effort")
     )
+
+
+def private_pair_scope_days(pref: dict, year: int, month: int) -> List[int]:
+    """Resolve one private SP pair wish into calendar days inside the month."""
+    ndays=calendar.monthrange(int(year),int(month))[1]
+    scope=str((pref or {}).get("scope_type") or "month")
+    if scope=="month":
+        return list(range(1,ndays+1))
+    raw=(pref or {}).get("scope_start_date")
+    try:
+        d0=date.fromisoformat(str(raw)[:10])
+    except Exception:
+        return []
+    if scope=="day":
+        return [d0.day] if d0.year==int(year) and d0.month==int(month) else []
+    if scope=="week":
+        # UI stores the Monday (or first in-month day for a boundary week).
+        start=d0-timedelta(days=d0.weekday())
+        out=[]
+        for k in range(7):
+            dd=start+timedelta(days=k)
+            if dd.year==int(year) and dd.month==int(month): out.append(dd.day)
+        return out
+    return []
+
+
+def private_pair_scope_blocks(pref: dict) -> Tuple[str,...]:
+    b=str((pref or {}).get("block") or "ANY").upper()
+    return ("AM","PM") if b=="ANY" else ((b,) if b in ("AM","PM") else ("AM","PM"))
+
+
+def private_pair_workplace(pref: dict) -> str:
+    w=str((pref or {}).get("workplace") or "ANY")
+    allowed={"ANY","CENTRO RO","Onko RO","SPS RO","Centro UG","SPS UG","ADC 144","ADC 145","Vaikų UG","Mamografijos"}
+    return w if w in allowed else "ANY"
 
 
 def rotation_category(slot: Slot) -> str:
@@ -2006,6 +2045,75 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             if date(year,month,d).weekday()<5: add_hit(pi,d,"AM",-pref_w)
         for d in p.preferred_pm:
             if date(year,month,d).weekday()<5: add_hit(pi,d,"PM",-pref_w)
+    # Private SP pair wishes are represented in the model but deliberately carry
+    # ZERO weight during the group solve.  They are used only in a final refinement
+    # pass after the ordinary schedule quality and every visible request outcome
+    # have been locked.  They never enter the public request/fairness ledger.
+    sp_private_pair_success_vars=[]
+    sp_private_pair_overlap_vars=[]
+    _private_ini_to_pi={p.initials:pi for pi,p in enumerate(people)}
+    _sp_pi=_private_ini_to_pi.get("SP")
+    if _sp_pi is not None:
+        _sp_person=people[_sp_pi]
+        for _pref in list(getattr(_sp_person,"privileged_pair_preferences",[]) or []):
+            _target_pi=_private_ini_to_pi.get(str(_pref.get("target_initials") or ""))
+            if _target_pi is None or _target_pi==_sp_pi:
+                continue
+            _ptype=str(_pref.get("preference_type") or "").lower()
+            _workplace=private_pair_workplace(_pref)
+            _days=private_pair_scope_days(_pref,year,month)
+            _blocks=private_pair_scope_blocks(_pref)
+            if _ptype=="together":
+                _cvars=[]
+                for _d in _days:
+                    for _b in _blocks:
+                        _a=[am[(_sp_pi,_d)],full[(_sp_pi,_d)]] if _b=="AM" else [pm[(_sp_pi,_d)],full[(_sp_pi,_d)]]
+                        _t=[am[(_target_pi,_d)],full[(_target_pi,_d)]] if _b=="AM" else [pm[(_target_pi,_d)],full[(_target_pi,_d)]]
+                        _cv=mb.var(0.0,1.0,True,cost=0.0)
+                        _co={_cv:1.0}
+                        for _v in _a: _co[_v]=_co.get(_v,0.0)-1.0
+                        mb.constraint(_co,-np.inf,0.0)
+                        _co={_cv:1.0}
+                        for _v in _t: _co[_v]=_co.get(_v,0.0)-1.0
+                        mb.constraint(_co,-np.inf,0.0)
+                        _co={_cv:1.0}
+                        for _v in _a: _co[_v]=_co.get(_v,0.0)-1.0
+                        for _v in _t: _co[_v]=_co.get(_v,0.0)-1.0
+                        mb.constraint(_co,-1.0,np.inf)
+                        _cvars.append(_cv)
+                if _cvars:
+                    _hit=mb.var(0.0,1.0,True,cost=0.0)
+                    _co={_hit:1.0}
+                    for _cv in _cvars: _co[_cv]=_co.get(_cv,0.0)-1.0
+                    mb.constraint(_co,-np.inf,0.0)
+                    sp_private_pair_success_vars.append(_hit)
+            elif _ptype=="apart" and _workplace=="ANY":
+                _ovs=[]
+                for _d in _days:
+                    for _b in _blocks:
+                        _a=[am[(_sp_pi,_d)],full[(_sp_pi,_d)]] if _b=="AM" else [pm[(_sp_pi,_d)],full[(_sp_pi,_d)]]
+                        _t=[am[(_target_pi,_d)],full[(_target_pi,_d)]] if _b=="AM" else [pm[(_target_pi,_d)],full[(_target_pi,_d)]]
+                        _ov=mb.var(0.0,1.0,True,cost=0.0)
+                        _co={_ov:1.0}
+                        for _v in _a: _co[_v]=_co.get(_v,0.0)-1.0
+                        mb.constraint(_co,-np.inf,0.0)
+                        _co={_ov:1.0}
+                        for _v in _t: _co[_v]=_co.get(_v,0.0)-1.0
+                        mb.constraint(_co,-np.inf,0.0)
+                        _co={_ov:1.0}
+                        for _v in _a: _co[_v]=_co.get(_v,0.0)-1.0
+                        for _v in _t: _co[_v]=_co.get(_v,0.0)-1.0
+                        mb.constraint(_co,-1.0,np.inf)
+                        _ovs.append(_ov); sp_private_pair_overlap_vars.append(_ov)
+                if _ovs:
+                    _clean=mb.var(0.0,1.0,True,cost=0.0)
+                    for _ov in _ovs:
+                        mb.constraint({_clean:1.0,_ov:1.0},-np.inf,1.0)
+                    _co={_clean:1.0}
+                    for _ov in _ovs: _co[_ov]=_co.get(_ov,0.0)+1.0
+                    mb.constraint(_co,1.0,np.inf)
+                    sp_private_pair_success_vars.append(_clean)
+
     # Internal high-priority co-location target: maximize distinct calendar weeks
     # with one shared CENTRO RO AM/PM block, capped monthly. This is deliberately
     # outside resident request/satisfaction accounting.
@@ -2216,6 +2324,68 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             _fallback_mode="PRIORITY_WEIGHTED_SOFT_CONFLICT_RESOLUTION"
     if res.x is None:
         return None
+
+    # Final private refinement.  Freeze the outcomes of every ordinary resident
+    # request (including weekend wishes), plus the meaningful schedule-shape
+    # quantities already optimized above.  The second pass may rearrange only
+    # among schedules that are no worse for the group.
+    if sp_private_pair_success_vars or sp_private_pair_overlap_vars:
+        _base_x=np.asarray(res.x,dtype=float)
+
+        def _lock_binary_expr(_co):
+            _value=sum(float(_base_x[_v])*float(_c) for _v,_c in _co.items())
+            _value=float(round(_value))
+            mb.constraint(dict(_co),_value,_value)
+
+        # Freeze exact visible request outcomes for all residents.  This is stronger
+        # than locking only the aggregate percentage: nobody else's fulfilled wish
+        # can be traded away in the private refinement pass.
+        for _pi,_p in enumerate(people):
+            for _d in sorted(set(_p.soft_free)|set(_p.preferred)):
+                _lock_binary_expr({work[(_pi,_d)]:1.0})
+            for _d in sorted(set(_p.soft_free_am)|set(_p.preferred_am)):
+                _lock_binary_expr({am[(_pi,_d)]:1.0,full[(_pi,_d)]:1.0})
+            for _d in sorted(set(_p.soft_free_pm)|set(_p.preferred_pm)):
+                _lock_binary_expr({pm[(_pi,_d)]:1.0,full[(_pi,_d)]:1.0})
+
+        # Preserve weekend-waterfill fulfillment and the already-earned Dream Team
+        # count while allowing equivalent dates/blocks to move.
+        if weekend_volunteer_waterfill is not None:
+            for _pi in weekend_volunteer_waterfill["active"]:
+                _v=weekend_vol_count[_pi]
+                _z=float(round(float(_base_x[_v])))
+                mb.constraint({_v:1.0},_z,_z)
+        if priority_colocation_week_vars:
+            _z=float(round(sum(float(_base_x[_v]) for _v in priority_colocation_week_vars)))
+            mb.constraint({_v:1.0 for _v in priority_colocation_week_vars},_z,_z)
+
+        # Work-style preferences are also resolved before this final pass.
+        for _pi,_p in enumerate(people):
+            _dbl_expr={dbl[(_pi,_d)]:1.0 for _d in range(1,ndays+1)}
+            _z=float(round(sum(float(_base_x[_v]) for _v in _dbl_expr)))
+            mb.constraint(_dbl_expr,_z,_z)
+            _wd=max(-2,min(2,int(getattr(_p,"weekday_preference",0) or 0)))
+            if _wd:
+                _wd_expr={work[(_pi,_d)]:1.0 for _d in range(1,ndays+1) if date(year,month,_d).weekday()<5}
+                _wz=float(round(sum(float(_base_x[_v]) for _v in _wd_expr)))
+                mb.constraint(_wd_expr,_wz,_wz)
+            if _pi in mixed_dev_vars:
+                for _v in mixed_dev_vars[_pi]:
+                    _z=float(_base_x[_v])
+                    mb.constraint({_v:1.0},_z,_z)
+
+        # Pure private objective: maximize the number of private wishes satisfied;
+        # among equal counts, minimize residual overlap on missed keep-apart wishes.
+        mb.c=[0.0 for _ in mb.c]
+        for _v in sp_private_pair_success_vars:
+            mb.c[_v]-=1000.0
+        for _v in sp_private_pair_overlap_vars:
+            mb.c[_v]+=1.0
+        _private_seconds=max(3.0,min(12.0,float(seconds)*0.18))
+        _private_res=mb.solve(_private_seconds,mip_gap=0.0)
+        if _private_res.x is not None:
+            res=_private_res
+
     _rh_minimum_proven=True
     _rh_min_total_cap=0
 
@@ -2597,6 +2767,13 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
                 rows=[sl for sl in normal if sl.day==d and sl.block==block and sl.department.startswith("CENTRO RO ")]
                 if len(rows)>=len(_priority_idx): _priority_candidates_by_week.setdefault(wk,[]).append((d,block))
 
+    # Private SP pair wishes are loaded only in the authenticated SP generation
+    # process. They are deliberately absent from frozen/public request snapshots.
+    _sp_private_prefs=[]
+    _sp_private_pi=_ini_to_pi.get("SP")
+    if _sp_private_pi is not None:
+        _sp_private_prefs=list(getattr(people[_sp_private_pi],"privileged_pair_preferences",[]) or [])
+
     cats=[c for c in ROTATION_CATEGORIES if c!="Onko RO"]
     cat_slot_counts={cat:sum(1 for sl in normal if rotation_category(sl)==cat) for cat in cats}
     # V2.5.107: post fairness is below mandatory cannot-work blocks. Tight
@@ -2660,6 +2837,57 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
                             shift=float(offsets[i]-offsets[j])
                             mb.constraint(co,-float(cap)+shift,float(cap)+shift)
 
+            # Location-specific private SP pair wishes are represented with zero
+            # public objective weight. They are considered only after the ordinary
+            # post allocation has been solved and its per-person category counts are
+            # locked, so the refinement cannot worsen group exposure fairness.
+            _sp_pair_success=[]
+            _sp_pair_overlap=[]
+            if _sp_private_pi is not None and _sp_private_prefs:
+                for _pref in _sp_private_prefs:
+                    _wp=private_pair_workplace(_pref)
+                    if _wp=="ANY" or _wp=="Onko RO":
+                        continue
+                    _tpi=_ini_to_pi.get(str(_pref.get("target_initials") or ""))
+                    if _tpi is None or _tpi==_sp_private_pi:
+                        continue
+                    _ptype=str(_pref.get("preference_type") or "").lower()
+                    _events=[]
+                    for _d in private_pair_scope_days(_pref,year,month):
+                        for _b in private_pair_scope_blocks(_pref):
+                            if not bool(pattern[_b.lower()][(_sp_private_pi,_d)]) or not bool(pattern[_b.lower()][(_tpi,_d)]):
+                                continue
+                            _a={v:1.0 for (ppi,sid),v in x.items() if ppi==_sp_private_pi and byid[sid].day==_d and byid[sid].block==_b and rotation_category(byid[sid])==_wp}
+                            _t={v:1.0 for (ppi,sid),v in x.items() if ppi==_tpi and byid[sid].day==_d and byid[sid].block==_b and rotation_category(byid[sid])==_wp}
+                            if not _a or not _t:
+                                continue
+                            _ov=mb.var(0.0,1.0,True,cost=0.0)
+                            _co={_ov:1.0}
+                            for _v in _a: _co[_v]=_co.get(_v,0.0)-1.0
+                            mb.constraint(_co,-np.inf,0.0)
+                            _co={_ov:1.0}
+                            for _v in _t: _co[_v]=_co.get(_v,0.0)-1.0
+                            mb.constraint(_co,-np.inf,0.0)
+                            _co={_ov:1.0}
+                            for _v in _a: _co[_v]=_co.get(_v,0.0)-1.0
+                            for _v in _t: _co[_v]=_co.get(_v,0.0)-1.0
+                            mb.constraint(_co,-1.0,np.inf)
+                            _events.append(_ov); _sp_pair_overlap.append(_ov)
+                    if _ptype=="together" and _events:
+                        _hit=mb.var(0.0,1.0,True,cost=0.0)
+                        _co={_hit:1.0}
+                        for _v in _events: _co[_v]=_co.get(_v,0.0)-1.0
+                        mb.constraint(_co,-np.inf,0.0)
+                        _sp_pair_success.append(_hit)
+                    elif _ptype=="apart" and _events:
+                        _clean=mb.var(0.0,1.0,True,cost=0.0)
+                        for _ov in _events:
+                            mb.constraint({_clean:1.0,_ov:1.0},-np.inf,1.0)
+                        _co={_clean:1.0}
+                        for _ov in _events: _co[_ov]=_co.get(_ov,0.0)+1.0
+                        mb.constraint(_co,1.0,np.inf)
+                        _sp_pair_success.append(_clean)
+
             # High-priority co-location: maximize feasible distinct weeks across the month.
             coloc_week_vars=[]
             for wk,cands in sorted(_priority_candidates_by_week.items()):
@@ -2697,6 +2925,32 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
                     mb.constraint(co,-np.inf,0.0)
 
             res=mb.solve(per_trial,mip_gap=0.0)
+
+            # Final post-label refinement. First preserve every resident's already
+            # solved category exposure count and the Dream Team count; only then
+            # optimize the private location-specific pair wishes.
+            if res.x is not None and (_sp_pair_success or _sp_pair_overlap):
+                _base_x=np.asarray(res.x,dtype=float)
+                for _pi in range(n):
+                    for _cat in cats:
+                        _co=expr.get((_pi,_cat),{})
+                        if not _co:
+                            continue
+                        _z=float(round(sum(float(_base_x[_v])*float(_c) for _v,_c in _co.items())))
+                        mb.constraint(dict(_co),_z,_z)
+                if coloc_week_vars:
+                    _z=float(round(sum(float(_base_x[_v]) for _v in coloc_week_vars)))
+                    mb.constraint({_v:1.0 for _v in coloc_week_vars},_z,_z)
+                mb.c=[0.0 for _ in mb.c]
+                for _v in _sp_pair_success:
+                    mb.c[_v]-=1000.0
+                for _v in _sp_pair_overlap:
+                    mb.c[_v]+=1.0
+                _private_post_seconds=max(2.5,min(8.0,float(per_trial)*0.80))
+                _private_res=mb.solve(_private_post_seconds,mip_gap=0.0)
+                if _private_res.x is not None:
+                    res=_private_res
+
             status=int(getattr(res,"status",99)); has=bool(res.x is not None)
             dream_count=(int(round(sum(float(res.x[v]) for v in coloc_week_vars))) if has and coloc_week_vars else 0)
             logs.append({"critical_cap":critical_cap,"noncritical_cap":noncritical_cap,"status":status,"incumbent":has,"solver":"V25105_RESILIENT_POST","dream_team_weeks":dream_count,"dream_team_target":dream_target})

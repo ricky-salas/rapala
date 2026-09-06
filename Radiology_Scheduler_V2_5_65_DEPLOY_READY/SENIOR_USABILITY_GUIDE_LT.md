@@ -249,3 +249,9 @@ Po GENERUOTI neik tiesiai į paskelbimą. Tame pačiame Sudarymas lange peržiū
 Nuo lapkričio ciklo Pageidavimų lange tikrinkite du atskirus progresus: anketos pateiktos /16 ir savaitgalio dubliai užpildyti /16. Lentelėje matoma pirmo pateikimo vieta (#1–#16), taškai (16–1) ir konkretus pasirinktas 6 h savaitgalio dublis. Redagavimas nepakeičia pirmo pateikimo vietos. Dubliai yra tik teorinis standby ir neturi būti interpretuojami kaip darbo pamainos ar pageidavimų pažeidimai.
 
 Prioriteto taškai veikia tik kaip SOFT konflikto sprendėjas po visų HARD ir struktūrinių SYSTEM taisyklių bei po SOFT water-fill užrakinimo. Jie nėra leidimas iškreipti savaitgalių ar postų pasiskirstymą. Jei po termino trūksta dublių, SYSTEM juodraštį galima matyti ir tikrinti, tačiau publikavimo kontrolė turi aiškiai rodyti, kad FCFS sluoksnis nėra 16/16.
+
+## Privatūs SP planavimo pageidavimai
+
+Tik SP paskyroje, skiltyje **Pageidavimai**, yra privatus spalvinis blokas. Žalia kortelė reiškia **Skirti kartu**, raudona — **Neskirti kartu**. Galima pasirinkti žmogų, visą mėnesį / savaitę / dieną, bet kurį laiką / rytą / popietę ir, kai prasminga, konkrečią darbo vietos kategoriją.
+
+Šios eilutės yra privačios: jos nerodomos bendroje pageidavimų lentelėje, rezidentų skaidrumo lange, Excel ar tyrimo eksporte. SP savo lange turi atskirą privačią statistiką.

@@ -162,3 +162,9 @@ After GENERATE, do not go straight to publication. In the same Generation window
 From the November cycle, review two separate completion measures in Preferences: forms submitted /16 and weekend backups filled /16. The table shows immutable first-submission rank (#1–#16), points (16–1), and the selected 6-hour weekend backup. Editing a form does not reset first-submission rank. Backups are theoretical standby only and must never be interpreted as work shifts or preference violations.
 
 Priority points resolve only SOFT conflicts after every HARD/structural SYSTEM rule and the SOFT water-fill result are locked. They are not permission to distort weekend or workplace allocation. If backups are still missing after the deadline, the SYSTEM draft may still be reviewed, but publication control must clearly show that the FCFS layer is not 16/16.
+
+## Private SP planning preferences
+
+Only the SP account sees the colored private preference box in Preferences. Green means **Work together** and red means **Keep apart**. SP can choose a person, whole month / week / day, any time / morning / afternoon, and a workplace category when meaningful.
+
+These rows are private: they are excluded from shared preference statistics, resident transparency, Excel and research exports. SP gets a separate private dashboard.
