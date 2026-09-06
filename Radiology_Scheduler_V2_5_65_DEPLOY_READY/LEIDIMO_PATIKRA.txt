@@ -1,5 +1,7 @@
-SHIFT HAPPENS V2.5.131 — leidimo patikra
-- Atskiro „Privatūs pageidavimai“ lango nėra.
-- SP/ŠR papildomi blokai integruoti į „Pageidavimai“.
-- Rodomi Paprastame ir Išplėstiniame režime.
-- AttributeError suderinamumo apsauga palikta.
+SHIFT HAPPENS V2.5.132 — leidimo patikra
+
+- Diskretiški Pageidavimų blokų pavadinimai: TAIP
+- Dream Team / CENTRO RO / ADC 144/145: TAIP
+- Dirbti su / Dirbti be be papildomos sekcijos antraštės: TAIP
+- Python kompiliacija: tikrinama leidimo metu
+- ZIP vientisumas: tikrinamas leidimo metu

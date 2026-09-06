@@ -51,7 +51,7 @@ import db
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.131 PAPILDOMI BLOKAI PAGEIDAVIMUOSE"
+APP_VERSION = "2.5.132 DISKRETIŠKI PAGEIDAVIMŲ BLOKAI"
 EXPECTED_ENGINE_API_VERSION = "2.5.121"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "SP"
@@ -919,23 +919,22 @@ def render_sp_dream_team_settings_v25125(y: int, m: int):
     all_ini=[p["initials"] for p in DEFAULT_PEOPLE]
     centro_default=[x for x in (cfg.get("centro_members") or ["SP","ŠR","GE"]) if x in all_ini]
     adc_default=[x for x in (cfg.get("adc_members") or ["SP","ŠR"]) if x in all_ini]
-    st.markdown("### Nuolatinė komanda")
+    st.markdown("### Dream Team")
     c1,c2=st.columns(2)
     with c1:
-        st.markdown("#### CENTRO RO komanda")
-        centro=st.multiselect("Komandos nariai (2–4)",all_ini,default=centro_default,key=f"dream_centro_members_{y}_{m}",disabled=(frozen or not can_edit))
+        st.markdown("#### CENTRO RO")
+        centro=st.multiselect("Nariai (2–4)",all_ini,default=centro_default,key=f"dream_centro_members_{y}_{m}",disabled=(frozen or not can_edit))
         ct=int(st.number_input("Kiek kartų šį mėnesį norėtum šią komandą turėti kartu?",0,6,int(mon.get("centro_target",4) or 0),1,key=f"dream_centro_target_{y}_{m}",disabled=(frozen or not can_edit)))
     with c2:
-        st.markdown("#### ADC 144/145 komanda")
-        adc=st.multiselect("Komandos nariai (tiksliai 2)",all_ini,default=adc_default,key=f"dream_adc_members_{y}_{m}",disabled=(frozen or not can_edit))
+        st.markdown("#### ADC 144/145")
+        adc=st.multiselect("Nariai (tiksliai 2)",all_ini,default=adc_default,key=f"dream_adc_members_{y}_{m}",disabled=(frozen or not can_edit))
         at=int(st.number_input("Kiek kartų šį mėnesį norėtum šią porą turėti kartu?",0,12,int(mon.get("adc_target",0) or 0),1,key=f"dream_adc_target_{y}_{m}",disabled=(frozen or not can_edit)))
     if not can_edit:
-        st.caption("ŠR paskyroje šis blokas rodomas peržiūrai; komandos nustatymus keičia seniūnė.")
         return
     if frozen:
         st.info("Šio mėnesio pradinis grafikas jau užfiksuotas, todėl komandos nustatymai šiam mėnesiui neberedaguojami.")
         return
-    if st.button("IŠSAUGOTI KOMANDOS NUSTATYMUS",type="primary",use_container_width=True,key=f"save_dream_team_{y}_{m}"):
+    if st.button("IŠSAUGOTI",type="primary",use_container_width=True,key=f"save_dream_team_{y}_{m}"):
         if not (2<=len(centro)<=4):
             st.error("CENTRO RO komandą turi sudaryti 2–4 žmonės.")
         elif len(adc)!=2:
@@ -943,7 +942,7 @@ def render_sp_dream_team_settings_v25125(y: int, m: int):
         else:
             try:
                 _save_sp_dream_team_v25130(y,m,centro,adc,ct,at)
-                st.success("Komandos nustatymai išsaugoti.")
+                st.success("Išsaugota.")
                 st.rerun()
             except Exception as exc:
                 st.error(str(exc))
@@ -995,7 +994,7 @@ def _create_operator_private_pair_preference_v25130(y: int, m: int, owner: str, 
             legacy=getattr(db,"create_sp_private_pair_preference_v25123",None)
             if callable(legacy):
                 return dict(legacy(y,m,preference_type,target_initials,scope_type,scope_start_date,block,workplace) or {})
-        raise RuntimeError("Darbo su žmonėmis pageidavimams reikia paleisti V2.5.128 duomenų bazės migraciją.") from exc
+        raise RuntimeError("Šiems nustatymams reikia paleisti V2.5.128 duomenų bazės migraciją.") from exc
 
 
 def _delete_operator_private_pair_preference_v25130(pref_id: int, owner: str) -> bool:
@@ -1011,7 +1010,7 @@ def _delete_operator_private_pair_preference_v25130(pref_id: int, owner: str) ->
             legacy=getattr(db,"delete_sp_private_pair_preference_v25123",None)
             if callable(legacy):
                 return bool(legacy(int(pref_id)))
-        raise RuntimeError("Darbo su žmonėmis pageidavimams reikia paleisti V2.5.128 duomenų bazės migraciją.") from exc
+        raise RuntimeError("Šiems nustatymams reikia paleisti V2.5.128 duomenų bazės migraciją.") from exc
 
 
 def operator_private_pair_preference_summary(owner_initials: str, y: int, m: int, result: SolveResult, prefs=None) -> dict:
@@ -1054,7 +1053,7 @@ def operator_private_pair_preference_summary(owner_initials: str, y: int, m: int
                         matches.append((d,b,workplace))
         ok=(len(matches)>0) if ptype=="together" else (len(matches)==0)
         honored+=int(ok)
-        type_label="Skirti kartu" if ptype=="together" else "Neskirti kartu"
+        type_label="Dirbti su" if ptype=="together" else "Dirbti be"
         result_label="Įvykdyta" if ok else "Neįvykdyta"
         match_txt="; ".join(f"{d:02d} {block_label(b)}" for d,b,_ in matches[:4])
         if len(matches)>4:
@@ -1083,13 +1082,12 @@ def render_operator_private_pair_preferences(y: int, m: int, owner_initials: str
     lifecycle=db.get_schedule_lifecycle(y,m)
     frozen=bool(state.get("has_published")) or str(lifecycle.get("state") or "") in ("working","swap_open","swap_closed","final")
 
-    st.markdown("### Darbas su konkrečiais žmonėmis")
     name_map={p["initials"]:p["name"] for p in DEFAULT_PEOPLE}
     for pref in prefs:
         together=str(pref.get("preference_type"))=="together"
         border="#22c55e" if together else "#ef4444"
         bg="rgba(34,197,94,.10)" if together else "rgba(239,68,68,.10)"
-        title="SKIRTI KARTU" if together else "NESKIRTI KARTU"
+        title="Dirbti su" if together else "Dirbti be"
         target=str(pref.get("target_initials") or "")
         st.markdown(
             f'<div style="border-left:6px solid {border};border-top:1px solid {border}55;border-right:1px solid {border}55;border-bottom:1px solid {border}55;'
@@ -1106,15 +1104,14 @@ def render_operator_private_pair_preferences(y: int, m: int, owner_initials: str
                 st.error(str(exc))
 
     if frozen:
-        st.caption("Pradinis grafikas jau užfiksuotas. Šio mėnesio darbo su žmonėmis pageidavimai neberedaguojami; faktinį grafiką keiskite tik per įprastus koregavimo / apsikeitimo veiksmus.")
+        st.caption("Šio mėnesio nustatymai jau užfiksuoti.")
         return
 
-    st.markdown("#### Naujas pageidavimas")
     targets=[p["initials"] for p in DEFAULT_PEOPLE if p["initials"]!=owner]
     c1,c2=st.columns(2)
     with c1:
-        ptype_label=st.radio("",["Noriu dirbti su","Nenoriu dirbti su"],horizontal=True,label_visibility="collapsed",key=f"op_priv_type_{owner}_{y}_{m}")
-        ptype="together" if ptype_label=="Noriu dirbti su" else "apart"
+        ptype_label=st.radio("",["Dirbti su","Dirbti be"],horizontal=True,label_visibility="collapsed",key=f"op_priv_type_{owner}_{y}_{m}")
+        ptype="together" if ptype_label=="Dirbti su" else "apart"
         target=st.selectbox("Asmuo",targets,format_func=lambda i:f"{i} — {name_map.get(i,i)}",key=f"op_priv_target_{owner}_{y}_{m}")
     with c2:
         scope_label=st.selectbox("Laikotarpis",["Visas mėnuo","Visa savaitė","Viena diena"],key=f"op_priv_scope_{owner}_{y}_{m}")
