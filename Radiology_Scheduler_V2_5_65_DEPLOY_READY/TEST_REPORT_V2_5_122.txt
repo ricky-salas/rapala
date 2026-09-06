@@ -1,0 +1,11 @@
+V2.5.122 WEEKEND BACKUP SOURCE FIX — TEST REPORT
+
+PASS: app.py, db.py, scheduler_engine.py, solver_runner.py compile.
+PASS: migration contains legacy provenance values: self, auto, senior.
+PASS: migration contains current provenance values: self_fcfs, auto_random, operator_manual, operator_manual_swap.
+PASS: application has a readable fallback message for PostgreSQL 23514 / weekend_backup_claims_source_check mismatch.
+PASS LIVE DB: migration v2_5_122_weekend_backup_source_constraint_fix applied successfully to Supabase project gqdlwhjgwqmuoolybusy.
+PASS LIVE DB: transaction-only insert using source=self_fcfs succeeded and was rolled back.
+PASS LIVE DB: October claim count remained unchanged after rollback.
+
+Root cause fixed: V2.5.118+ RPC provenance strings were newer than the legacy CHECK constraint.

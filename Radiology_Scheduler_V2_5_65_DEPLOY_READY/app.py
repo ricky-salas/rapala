@@ -51,7 +51,7 @@ import db
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.121 LT PHASE NAMES + MONTHLY PRIORITY RESET"
+APP_VERSION = "2.5.122 WEEKEND BACKUP SOURCE FIX"
 EXPECTED_ENGINE_API_VERSION = "2.5.121"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "SP"
@@ -760,10 +760,10 @@ def render_fcfs_weekend_backup_selector(y,m,initials):
 
     st.markdown("### DUBLIS — savaitgalio 6 h" if lang=="LT" else "### BACKUP — weekend 6h")
     st.caption(
-        ("V2.5.119: tik 16 teorinių savaitgalio dublių visai grupei, po 1 žmogui. "
+        ("Tik 16 teorinių savaitgalio dublių visai grupei, po 1 žmogui. "
          "Pasirinkimas first come, first served iki 16 d. 00:00. Jei nepasirinksi, po lango uždarymo likęs dublis bus priskirtas atsitiktinai. Dublis NĖRA darbo pamaina ir neturi jokios įtakos tavo pageidavimams ar normalaus grafiko sudarymui."
          if lang=="LT" else
-         "V2.5.119: exactly 16 theoretical weekend backups for the group, one per resident. "
+         "Exactly 16 theoretical weekend backups for the group, one per resident. "
          "First come, first served until day 16 00:00. If you do not choose one, a remaining mandatory backup is assigned at random after the window closes. A backup is NOT a work shift and never affects preferences or normal schedule generation.")
     )
     c1,c2=st.columns(2)
@@ -815,6 +815,8 @@ def render_fcfs_weekend_backup_selector(y,m,initials):
                     st.error("Šį slotą ką tik paėmė kitas žmogus. Pasirink kitą." if lang=="LT" else "Someone just took this slot. Choose another.")
                 elif "BACKUP_FCFS_FULL" in msg:
                     st.error("Visi 16 dubliai jau užpildyti." if lang=="LT" else "All 16 backups are already filled.")
+                elif "weekend_backup_claims_source_check" in msg or "23514" in msg:
+                    st.error("Dublių duomenų bazės schema neatnaujinta. Įdiek V2.5.122 migraciją ir bandyk dar kartą." if lang=="LT" else "Backup database schema is out of date. Apply the V2.5.122 migration and try again.")
                 else:
                     st.error(msg)
     with b2:
