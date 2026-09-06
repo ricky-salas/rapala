@@ -1,4 +1,4 @@
-# SHIFT HAPPENS — V2.5.127
+# SHIFT HAPPENS — V2.5.128
 
 Šis paketas yra lietuviška radiologijos rezidentų grafikų sistemos versija.
 
@@ -16,7 +16,7 @@
 
 Pagrindinis pristatymui ir kasdieniam darbui skirtas dokumentas:
 
-`SHIFT_HAPPENS_SENIUNES_VADOVAS_V2_5_127.docx`
+`SHIFT_HAPPENS_SENIUNES_VADOVAS_V2_5_128.docx`
 
 Trumpa tekstinė versija:
 
@@ -34,5 +34,5 @@ Jei naudojama ankstesnė Supabase duomenų bazė, prieš paleidžiant šį leidi
 ## Leidimo patikra
 
 ```bash
-pytest -q test_v25127_release.py
+pytest -q test_v25128_release.py
 ```

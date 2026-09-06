@@ -1,6 +1,6 @@
 # SHIFT HAPPENS — SENIŪNĖS DARBO IR SISTEMOS VADOVAS
 
-**Versija:** V2.5.127  
+**Versija:** V2.5.128  
 **Paskirtis:** kasdieniam darbui, naujų naudotojų mokymui ir sistemos pristatymui komandai.
 
 > **Pagrindinė mintis:** sistema kiekvieną mėnesį siekia 100 % pageidavimų išpildymo. Sudėtingame mėnesyje realus rezultatas gali būti mažesnis, pavyzdžiui, 93 %, jeigu dalies pageidavimų vienu metu įvykdyti neleidžia saugos, padengimo, darbo krūvio ar tarpusavio konfliktai. Sistema vis tiek ieško geriausio įmanomo sprendinio.

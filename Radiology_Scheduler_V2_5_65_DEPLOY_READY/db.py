@@ -378,6 +378,72 @@ def delete_sp_private_pair_preference_v25123(pref_id: int) -> bool:
     return False
 
 
+
+def list_operator_private_pair_preferences_v25128(year: int, month: int, owner_initials: str | None = None) -> List[dict]:
+    """Return the private SP/ŠR pair-wish layer for a month.
+
+    RLS allows details only to the approved SP and ŠR accounts.  The optional
+    owner filter is used by each account's private editor; generation deliberately
+    loads both owners so either operator gets the same private refinement input.
+    """
+    try:
+        q=(client().table("operator_private_pair_preferences_v25128")
+           .select("id,owner_initials,year,month,preference_type,target_initials,scope_type,scope_start_date,block,workplace,created_at,updated_at")
+           .eq("year",int(year)).eq("month",int(month)))
+        if owner_initials:
+            q=q.eq("owner_initials",str(owner_initials))
+        rows=_data(_retry_db(lambda: q.order("created_at").execute()))
+    except Exception:
+        return []
+    return [dict(r) for r in rows]
+
+
+def operator_private_pair_preferences_exist_v25128(year: int, month: int) -> bool:
+    """Privacy-preserving existence check; exposes no owner/target/scope details."""
+    try:
+        rows=_data(_retry_db(lambda: client().rpc("operator_private_pair_preferences_exist_v25128",{
+            "p_year":int(year),"p_month":int(month)
+        }).execute()))
+        if isinstance(rows,bool): return bool(rows)
+        if isinstance(rows,list) and rows:
+            first=rows[0]
+            if isinstance(first,bool): return bool(first)
+            if isinstance(first,dict): return bool(next(iter(first.values()))) if first else False
+        if isinstance(rows,dict): return bool(next(iter(rows.values()))) if rows else False
+    except Exception:
+        return False
+    return False
+
+
+def create_operator_private_pair_preference_v25128(year: int, month: int, preference_type: str, target_initials: str, scope_type: str, scope_start_date, block: str, workplace: str) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("operator_create_private_pair_preference_v25128",{
+        "p_year":int(year),
+        "p_month":int(month),
+        "p_preference_type":str(preference_type),
+        "p_target_initials":str(target_initials),
+        "p_scope_type":str(scope_type),
+        "p_scope_start_date":None if scope_start_date in (None,"") else str(scope_start_date),
+        "p_block":str(block or "ANY"),
+        "p_workplace":str(workplace or "ANY"),
+    }).execute()))
+    if isinstance(rows,dict): return dict(rows)
+    if isinstance(rows,list) and rows: return dict(rows[0]) if isinstance(rows[0],dict) else {"ok":True}
+    return {}
+
+
+def delete_operator_private_pair_preference_v25128(pref_id: int) -> bool:
+    rows=_data(_retry_db(lambda: client().rpc("operator_delete_private_pair_preference_v25128",{
+        "p_id":int(pref_id)
+    }).execute()))
+    if isinstance(rows,bool): return bool(rows)
+    if isinstance(rows,list) and rows:
+        v=rows[0]
+        if isinstance(v,bool): return v
+        if isinstance(v,dict): return bool(next(iter(v.values()))) if v else False
+    if isinstance(rows,dict): return bool(next(iter(rows.values()))) if rows else False
+    return False
+
+
 def auto_submit_zero_preferences_v2594(year: int, month: int, cutoff_iso: str) -> dict:
     """After the exact preference cutoff, create zero-request submissions for missing active residents.
 

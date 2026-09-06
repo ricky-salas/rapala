@@ -2073,19 +2073,20 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             if date(year,month,d).weekday()<5: add_hit(pi,d,"AM",-pref_w)
         for d in p.preferred_pm:
             if date(year,month,d).weekday()<5: add_hit(pi,d,"PM",-pref_w)
-    # Private SP pair wishes are represented in the model but deliberately carry
-    # ZERO weight during the group solve.  They are used only in a final refinement
-    # pass after the ordinary schedule quality and every visible request outcome
-    # have been locked.  They never enter the public request/fairness ledger.
-    sp_private_pair_success_vars=[]
+    # Privatūs SP + ŠR poriniai pageidavimai modelyje egzistuoja su NULINIU
+    # svoriu per viešą grupės optimizavimą. Jie naudojami tik paskutiniame
+    # refinemente, kai kiekvieno rezidento matomų pageidavimų rezultatas jau
+    # užrakintas, todėl negali nupirkti kito rezidento pageidavimo praradimo.
+    sp_private_pair_success_vars=[]  # backward-compatible variable name; includes SP + ŠR owners
     sp_private_pair_overlap_vars=[]
     _private_ini_to_pi={p.initials:pi for pi,p in enumerate(people)}
-    _sp_pi=_private_ini_to_pi.get("SP")
-    if _sp_pi is not None:
-        _sp_person=people[_sp_pi]
-        for _pref in list(getattr(_sp_person,"privileged_pair_preferences",[]) or []):
+    for _owner_pi,_owner_person in enumerate(people):
+        _owner_prefs=list(getattr(_owner_person,"privileged_pair_preferences",[]) or [])
+        if not _owner_prefs:
+            continue
+        for _pref in _owner_prefs:
             _target_pi=_private_ini_to_pi.get(str(_pref.get("target_initials") or ""))
-            if _target_pi is None or _target_pi==_sp_pi:
+            if _target_pi is None or _target_pi==_owner_pi:
                 continue
             _ptype=str(_pref.get("preference_type") or "").lower()
             _workplace=private_pair_workplace(_pref)
@@ -2095,7 +2096,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
                 _cvars=[]
                 for _d in _days:
                     for _b in _blocks:
-                        _a=[am[(_sp_pi,_d)],full[(_sp_pi,_d)]] if _b=="AM" else [pm[(_sp_pi,_d)],full[(_sp_pi,_d)]]
+                        _a=[am[(_owner_pi,_d)],full[(_owner_pi,_d)]] if _b=="AM" else [pm[(_owner_pi,_d)],full[(_owner_pi,_d)]]
                         _t=[am[(_target_pi,_d)],full[(_target_pi,_d)]] if _b=="AM" else [pm[(_target_pi,_d)],full[(_target_pi,_d)]]
                         _cv=mb.var(0.0,1.0,True,cost=0.0)
                         _co={_cv:1.0}
@@ -2119,7 +2120,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
                 _ovs=[]
                 for _d in _days:
                     for _b in _blocks:
-                        _a=[am[(_sp_pi,_d)],full[(_sp_pi,_d)]] if _b=="AM" else [pm[(_sp_pi,_d)],full[(_sp_pi,_d)]]
+                        _a=[am[(_owner_pi,_d)],full[(_owner_pi,_d)]] if _b=="AM" else [pm[(_owner_pi,_d)],full[(_owner_pi,_d)]]
                         _t=[am[(_target_pi,_d)],full[(_target_pi,_d)]] if _b=="AM" else [pm[(_target_pi,_d)],full[(_target_pi,_d)]]
                         _ov=mb.var(0.0,1.0,True,cost=0.0)
                         _co={_ov:1.0}
@@ -2766,12 +2767,13 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
                 rows=[sl for sl in normal if sl.day==d and sl.block==block and sl.department.startswith("CENTRO RO ")]
                 if len(rows)>=len(_priority_idx): _priority_candidates.append((d,block))
 
-    # Private SP pair wishes are loaded only in the authenticated SP generation
-    # process. They are deliberately absent from frozen/public request snapshots.
-    _sp_private_prefs=[]
-    _sp_private_pi=_ini_to_pi.get("SP")
-    if _sp_private_pi is not None:
-        _sp_private_prefs=list(getattr(people[_sp_private_pi],"privileged_pair_preferences",[]) or [])
+    # Privatūs SP + ŠR pageidavimai į šį etapą ateina tik per ephemeral worker
+    # payload ir sąmoningai nepatenka į viešą / frozen pageidavimų snapshotą.
+    _operator_private_sets=[]
+    for _owner_pi,_owner_person in enumerate(people):
+        _prefs=list(getattr(_owner_person,"privileged_pair_preferences",[]) or [])
+        if _prefs:
+            _operator_private_sets.append((_owner_pi,_prefs))
 
     cats=[c for c in ROTATION_CATEGORIES if c!="Onko RO"]
     cat_slot_counts={cat:sum(1 for sl in normal if rotation_category(sl)==cat) for cat in cats}
@@ -2836,27 +2838,26 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
                             shift=float(offsets[i]-offsets[j])
                             mb.constraint(co,-float(cap)+shift,float(cap)+shift)
 
-            # Location-specific private SP pair wishes are represented with zero
-            # public objective weight. They are considered only after the ordinary
-            # post allocation has been solved and its per-person category counts are
-            # locked, so the refinement cannot worsen group exposure fairness.
-            _sp_pair_success=[]
+            # Vietai specifiniai privatūs SP + ŠR poriniai pageidavimai čia irgi
+            # turi nulinį viešo tikslo svorį. Jie optimizuojami tik po to, kai
+            # užrakinamas įprastas darbo vietų paskirstymas kiekvienam rezidentui.
+            _sp_pair_success=[]  # backward-compatible variable name; contains both operator owners
             _sp_pair_overlap=[]
-            if _sp_private_pi is not None and _sp_private_prefs:
-                for _pref in _sp_private_prefs:
+            for _owner_pi,_owner_prefs in _operator_private_sets:
+                for _pref in _owner_prefs:
                     _wp=private_pair_workplace(_pref)
                     if _wp=="ANY" or _wp=="Onko RO":
                         continue
                     _tpi=_ini_to_pi.get(str(_pref.get("target_initials") or ""))
-                    if _tpi is None or _tpi==_sp_private_pi:
+                    if _tpi is None or _tpi==_owner_pi:
                         continue
                     _ptype=str(_pref.get("preference_type") or "").lower()
                     _events=[]
                     for _d in private_pair_scope_days(_pref,year,month):
                         for _b in private_pair_scope_blocks(_pref):
-                            if not bool(pattern[_b.lower()][(_sp_private_pi,_d)]) or not bool(pattern[_b.lower()][(_tpi,_d)]):
+                            if not bool(pattern[_b.lower()][(_owner_pi,_d)]) or not bool(pattern[_b.lower()][(_tpi,_d)]):
                                 continue
-                            _a={v:1.0 for (ppi,sid),v in x.items() if ppi==_sp_private_pi and byid[sid].day==_d and byid[sid].block==_b and rotation_category(byid[sid])==_wp}
+                            _a={v:1.0 for (ppi,sid),v in x.items() if ppi==_owner_pi and byid[sid].day==_d and byid[sid].block==_b and rotation_category(byid[sid])==_wp}
                             _t={v:1.0 for (ppi,sid),v in x.items() if ppi==_tpi and byid[sid].day==_d and byid[sid].block==_b and rotation_category(byid[sid])==_wp}
                             if not _a or not _t:
                                 continue
