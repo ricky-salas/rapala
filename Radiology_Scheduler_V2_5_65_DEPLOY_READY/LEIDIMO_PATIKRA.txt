@@ -1,0 +1,11 @@
+SHIFT HAPPENS V2.5.127 — leidimo patikra
+
+- Pagrindinė vartotojo sąsaja: lietuvių kalba.
+- Paprastas režimas: be HARD / SOFT / SYSTEM / ACTUAL žargono rezidento įvedimo laukuose.
+- Vieša hierarchija: sauga → 0 „Dirbti negaliu“ → tolygus privalomas paskirstymas → maksimalus visų pageidavimų išpildymas → pateikimo eilė tik likusiam konfliktui.
+- Variklio tikslas: 100 % pageidavimų; sudėtingo mėnesio pavyzdys gali būti 93 %.
+- Pateikimo vieta: tam pačiam grafikui, tik po maksimalaus bendro rezultato užrakinimo.
+- Ciklas: 14 d. 00:00 → preliminarus iki 15 d. 00:00 → apsikeitimai iki 16 d. 00:00 → galutinė seniūnės patikra ir paskelbimas.
+- Metodų palyginimas: „Tyrimas“ lange.
+- Automatiniai leidimo testai: 10 / 10 praėjo.
+- ZIP: mažiau nei 100 failų.

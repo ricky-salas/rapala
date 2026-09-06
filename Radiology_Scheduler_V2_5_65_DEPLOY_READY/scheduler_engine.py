@@ -194,6 +194,13 @@ class Person:
     # serialized into the public/frozen request snapshot. They are a private
     # generation-only objective supplied only when the authenticated SP runs the solver.
     privileged_pair_preferences: List[dict] = field(default_factory=list)
+    # V2.5.125: SP-only configurable Dream Team targets. Like the private pair
+    # wishes, these are generation-only and never serialized into the public
+    # resident request snapshot.
+    dream_team_centro_members: Tuple[str, ...] = field(default_factory=tuple)
+    dream_team_centro_target: int = 0
+    dream_team_adc_members: Tuple[str, ...] = field(default_factory=tuple)
+    dream_team_adc_target: int = 0
     rest_credit_am_to_use: int = 0
     rest_credit_pm_to_use: int = 0
 
@@ -733,8 +740,32 @@ NONCRITICAL_SPREAD_LAST_RESORT_CEILING = 3
 DOUBLE_SPREAD_MAX = 2
 
 # Internal allocation priority. Not part of resident preference scoring/UI.
-_PRIORITY_COLOCATION_GROUP = ("SP", "GE", "ŠR")
+_PRIORITY_COLOCATION_GROUP = ("SP", "GE", "ŠR")  # legacy fallback only
 _PRIORITY_COLOCATION_MAX_PER_MONTH = 6
+
+def _configured_dream_teams(people):
+    """Return private SP Dream Team settings for this solve.
+
+    If the new V2.5.125 DB migration has not been applied yet, preserve the old
+    CENTRO RO trio behavior as a safe compatibility fallback. ADC has no legacy
+    implicit target.
+    """
+    sp=next((p for p in people if p.initials=="SP"),None)
+    if sp is None:
+        return tuple(),0,tuple(),0
+    centro=tuple(dict.fromkeys(str(x) for x in (getattr(sp,"dream_team_centro_members",()) or ()) if str(x)))
+    ctarget=max(0,min(6,int(getattr(sp,"dream_team_centro_target",0) or 0)))
+    adc=tuple(dict.fromkeys(str(x) for x in (getattr(sp,"dream_team_adc_members",()) or ()) if str(x)))
+    atarget=max(0,min(12,int(getattr(sp,"dream_team_adc_target",0) or 0)))
+    # A pre-migration SP Person has no configured members/targets. Preserve the
+    # prior once-per-week trio instead of silently deleting an established rule.
+    if not centro and ctarget==0 and not adc and atarget==0:
+        centro=tuple(_PRIORITY_COLOCATION_GROUP); ctarget=4
+    if not (2 <= len(centro) <= 4):
+        centro=tuple(); ctarget=0
+    if len(adc)!=2:
+        adc=tuple(); atarget=0
+    return centro,ctarget,adc,atarget
 
 # V2.5.53 WEEKLY LOAD / RECOVERY CONSTITUTION.
 # These are safety/fatigue guardrails, not user-selectable SOFT preferences.
@@ -2026,13 +2057,10 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     for pi,p in enumerate(people):
         nfree=len(p.soft_free)+len(p.soft_free_am)+len(p.soft_free_pm)
         npref=len(p.preferred)+len(p.preferred_am)+len(p.preferred_pm)
-        # V2.5.118: first-submission ranking modifies only the SOFT layer.
-        # 16 pts (first) => 2.6x, 1 pt => 1.1x, 0 => neutral 1.0x.
-        # The 0.10 slope is deliberately capped so SOFT1 time-off still outranks
-        # SOFT2 positive-work wishes while all ADMIN/HARD tiers remain above both.
-        _pp=max(0,min(16,int(getattr(p,"preference_priority_points",0) or 0)))
-        _pmult=1.0 + 0.10*_pp
-        free_w=(5000.0*_pmult)/max(1,nfree); pref_w=(2000.0*_pmult)/max(1,npref)
+        # Pateikimo eilė NEGALI paveikti pirminio pageidavimų maksimumo.
+        # Visi rezidentai šiame etape turi vienodą svorį; reitingas naudojamas tik
+        # vėlesniame Stage H, kai bendras maksimaliai įmanomas išpildymas jau užrakintas.
+        free_w=5000.0/max(1,nfree); pref_w=2000.0/max(1,npref)
         for d in p.soft_free:
             if date(year,month,d).weekday()<5: add_hit(pi,d,None,+free_w)
         for d in p.soft_free_am:
@@ -2114,40 +2142,31 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
                     mb.constraint(_co,1.0,np.inf)
                     sp_private_pair_success_vars.append(_clean)
 
-    # Internal high-priority co-location target: maximize distinct calendar weeks
-    # with one shared CENTRO RO AM/PM block, capped monthly. This is deliberately
-    # outside resident request/satisfaction accounting.
-    priority_colocation_week_vars=[]
+    # Private monthly co-location candidates are represented with ZERO weight in
+    # the ordinary resident solve.  They are optimized only in the final private
+    # refinement after every visible resident request outcome has been frozen.
+    # This guarantees that a private target can never trade away another resident's
+    # fulfilled request.  The monthly target counts occurrences, not weeks.
+    priority_colocation_week_vars=[]  # backward-compatible variable name; now stores monthly event vars
     priority_colocation_block_vars={}
     _priority_idx=[]
     _ini_to_pi={p.initials:pi for pi,p in enumerate(people)}
-    if all(ini in _ini_to_pi for ini in _PRIORITY_COLOCATION_GROUP):
-        _priority_idx=[_ini_to_pi[ini] for ini in _PRIORITY_COLOCATION_GROUP]
-        _by_week={}
+    _dream_centro_group,_dream_centro_target,_dream_adc_group,_dream_adc_target=_configured_dream_teams(people)
+    if _dream_centro_target>0 and all(ini in _ini_to_pi for ini in _dream_centro_group):
+        _priority_idx=[_ini_to_pi[ini] for ini in _dream_centro_group]
         for d in range(1,ndays+1):
-            dt=date(year,month,d)
-            wk=dt-timedelta(days=dt.weekday())
             for block in ("AM","PM"):
                 centro_rows=[sl for sl in slots if sl.day==d and sl.block==block and not sl.blocked and sl.idx not in fixed_gaps and sl.department.startswith("CENTRO RO ")]
                 if len(centro_rows)<len(_priority_idx):
                     continue
                 cv=mb.var(0.0,1.0,True,cost=0.0)
                 priority_colocation_block_vars[(d,block)]=cv
+                priority_colocation_week_vars.append(cv)
                 for pi in _priority_idx:
                     av=am[(pi,d)] if block=="AM" else pm[(pi,d)]
                     mb.constraint({cv:1.0,av:-1.0},-np.inf,0.0)
-                _by_week.setdefault(wk,[]).append(cv)
-        for wk,cvars in sorted(_by_week.items()):
-            wv=mb.var(0.0,1.0,True,cost=0.0)
-            priority_colocation_week_vars.append(wv)
-            co={wv:-1.0}
-            for cv in cvars:
-                co[cv]=co.get(cv,0.0)+1.0
-                mb.constraint({cv:1.0,wv:-1.0},-np.inf,0.0)
-            mb.constraint(co,0.0,np.inf)
-            mb.constraint({cv:1.0 for cv in cvars},-np.inf,1.0)
         if priority_colocation_week_vars:
-            mb.constraint({wv:1.0 for wv in priority_colocation_week_vars},-np.inf,float(_PRIORITY_COLOCATION_MAX_PER_MONTH))
+            mb.constraint({v:1.0 for v in priority_colocation_week_vars},-np.inf,float(_dream_centro_target))
 
     # V2.5.106 SINGLE-PASS WORK-PATTERN SOLVE.
     #
@@ -2179,9 +2198,6 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         single_costs[wv["min"]]-=1000000.0
         single_costs[wv["total"]]-=100000.0
         single_costs[wv["max"]]+=1000.0
-
-    for wv in priority_colocation_week_vars:
-        single_costs[wv]-=10000.0
 
     workstyle_applied=False
     pref12_indices=[]
@@ -2281,11 +2297,6 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         for (pi,d),v in am.items(): mb.c[v]+=(((pi+1)*31+d*7)%97)*1e-8
         for (pi,d),v in pm.items(): mb.c[v]+=(((pi+1)*29+d*11)%89)*1e-8
         for (pi,d),v in full.items(): mb.c[v]+=(((pi+1)*23+d*13)%83)*1e-8
-        # Dream Team is an administrator rule above ordinary SOFT. Maximize the
-        # number of represented weeks with a common SP+GE+ŠR work block inside
-        # the already-fixed weekend water-fill corridor.
-        for wv in priority_colocation_week_vars:
-            mb.c[wv]-=1000.0
     else:
         mb.c=single_costs
 
@@ -2329,7 +2340,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     # request (including weekend wishes), plus the meaningful schedule-shape
     # quantities already optimized above.  The second pass may rearrange only
     # among schedules that are no worse for the group.
-    if sp_private_pair_success_vars or sp_private_pair_overlap_vars:
+    if sp_private_pair_success_vars or sp_private_pair_overlap_vars or priority_colocation_week_vars:
         _base_x=np.asarray(res.x,dtype=float)
 
         def _lock_binary_expr(_co):
@@ -2348,17 +2359,14 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             for _d in sorted(set(_p.soft_free_pm)|set(_p.preferred_pm)):
                 _lock_binary_expr({pm[(_pi,_d)]:1.0,full[(_pi,_d)]:1.0})
 
-        # Preserve weekend-waterfill fulfillment and the already-earned Dream Team
-        # count while allowing equivalent dates/blocks to move.
+        # Preserve ordinary weekend-request fulfillment while allowing equivalent
+        # dates/blocks to move. Private targets are intentionally NOT frozen here;
+        # this pass is where they are optimized after resident outcomes are locked.
         if weekend_volunteer_waterfill is not None:
             for _pi in weekend_volunteer_waterfill["active"]:
                 _v=weekend_vol_count[_pi]
                 _z=float(round(float(_base_x[_v])))
                 mb.constraint({_v:1.0},_z,_z)
-        if priority_colocation_week_vars:
-            _z=float(round(sum(float(_base_x[_v]) for _v in priority_colocation_week_vars)))
-            mb.constraint({_v:1.0 for _v in priority_colocation_week_vars},_z,_z)
-
         # Work-style preferences are also resolved before this final pass.
         for _pi,_p in enumerate(people):
             _dbl_expr={dbl[(_pi,_d)]:1.0 for _d in range(1,ndays+1)}
@@ -2374,10 +2382,13 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
                     _z=float(_base_x[_v])
                     mb.constraint({_v:1.0},_z,_z)
 
-        # Pure private objective: maximize the number of private wishes satisfied;
-        # among equal counts, minimize residual overlap on missed keep-apart wishes.
+        # Pure private objective. All private goals are optimized only inside the
+        # already-frozen resident outcome space. No visible resident request can be
+        # lost in exchange for a private improvement.
         mb.c=[0.0 for _ in mb.c]
         for _v in sp_private_pair_success_vars:
+            mb.c[_v]-=1000.0
+        for _v in priority_colocation_week_vars:
             mb.c[_v]-=1000.0
         for _v in sp_private_pair_overlap_vars:
             mb.c[_v]+=1.0
@@ -2496,18 +2507,18 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
     ]
     _priority_idx=[]
     _ini_to_pi={p.initials:pi for pi,p in enumerate(people)}
-    if all(ini in _ini_to_pi for ini in _PRIORITY_COLOCATION_GROUP):
-        _priority_idx=[_ini_to_pi[ini] for ini in _PRIORITY_COLOCATION_GROUP]
-    _priority_candidates_by_week={}
+    _dream_centro_group,_dream_centro_target,_dream_adc_group,_dream_adc_target=_configured_dream_teams(people)
+    if _dream_centro_target>0 and all(ini in _ini_to_pi for ini in _dream_centro_group):
+        _priority_idx=[_ini_to_pi[ini] for ini in _dream_centro_group]
+    _priority_candidates=[]
     if _priority_idx:
         for d in range(1,ndays+1):
-            dt=date(year,month,d); wk=dt-timedelta(days=dt.weekday())
             for block in ("AM","PM"):
                 if not all(bool(pattern[block.lower()][(pi,d)]) for pi in _priority_idx):
                     continue
                 centro_rows=[sl for sl in normal if sl.day==d and sl.block==block and sl.department.startswith("CENTRO RO ")]
                 if len(centro_rows)>=len(_priority_idx):
-                    _priority_candidates_by_week.setdefault(wk,[]).append((d,block))
+                    _priority_candidates.append((d,block))
 
     volunteer_weekend_sps_const={}
     for pi,p in enumerate(people):
@@ -2564,41 +2575,30 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
                         co=dict(crit); co[hit]=-1.0
                         mb.constraint(co,0.0,np.inf)
 
-        # V2.5.105: the private high-priority co-location request is optimized
-        # JOINTLY with post feasibility instead of being hard-materialized before
-        # post water-fill. This implements the intended MAX 4 -> else 3 -> else 2
-        # semantics. A candidate week counts only when all three residents are
-        # actually placed in CENTRO RO in the same AM/PM block. Post water-fill and
-        # HARD feasibility remain constraints, so an impossible fourth co-location
-        # automatically falls back to the maximum feasible lower count instead of
-        # making the whole post model infeasible.
-        _coloc_week_vars=[]
-        for wk,cands in sorted(_priority_candidates_by_week.items()):
-            _cvars=[]
-            for d,block in sorted(cands,key=lambda z:(z[0],0 if z[1]=="AM" else 1)):
-                cv=mb.var(0.0,1.0,True,cost=0.0)
-                _cvars.append(cv)
-                for pi in _priority_idx:
-                    centro_vars={v:1.0 for (ppi,sid),v in x.items()
-                                 if ppi==pi and byid[sid].day==d and byid[sid].block==block
-                                 and byid[sid].department.startswith("CENTRO RO ")}
-                    if not centro_vars:
-                        mb.constraint({cv:1.0},0.0,0.0)
-                        continue
-                    co={cv:1.0}
-                    for v in centro_vars: co[v]=co.get(v,0.0)-1.0
-                    mb.constraint(co,-np.inf,0.0)
-            if _cvars:
-                wv=mb.var(0.0,1.0,True,cost=-1000000.0)
-                _coloc_week_vars.append(wv)
-                for cv in _cvars:
-                    mb.constraint({cv:1.0,wv:-1.0},-np.inf,0.0)
-                co={wv:1.0}
-                for cv in _cvars: co[cv]=co.get(cv,0.0)-1.0
+        # V2.5.126: SP sets a MONTHLY CENTRO RO Dream Team target. Every same-block
+        # co-location event can count; there is no artificial once-per-week limit.
+        # The objective maximizes the number achieved up to the requested monthly
+        # target while post fairness and all higher rules remain fixed constraints.
+        _coloc_event_vars=[]
+        for d,block in sorted(_priority_candidates,key=lambda z:(z[0],0 if z[1]=="AM" else 1)):
+            cv=mb.var(0.0,1.0,True,cost=0.0)
+            valid=True
+            for pi in _priority_idx:
+                centro_vars={v:1.0 for (ppi,sid),v in x.items()
+                             if ppi==pi and byid[sid].day==d and byid[sid].block==block
+                             and byid[sid].department.startswith("CENTRO RO ")}
+                if not centro_vars:
+                    valid=False
+                    break
+                co={cv:1.0}
+                for v in centro_vars: co[v]=co.get(v,0.0)-1.0
                 mb.constraint(co,-np.inf,0.0)
-                mb.constraint({cv:1.0 for cv in _cvars},-np.inf,1.0)
-        if _coloc_week_vars:
-            mb.constraint({wv:1.0 for wv in _coloc_week_vars},-np.inf,float(_PRIORITY_COLOCATION_MAX_PER_MONTH))
+            if valid:
+                _coloc_event_vars.append(cv)
+            else:
+                mb.constraint({cv:1.0},0.0,0.0)
+        if _coloc_event_vars:
+            mb.constraint({v:1.0 for v in _coloc_event_vars},-np.inf,float(_dream_centro_target))
 
         cats=[c for c in ROTATION_CATEGORIES if c!="Onko RO"]
         expr={}
@@ -2727,9 +2727,8 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
       * SPS RO/SPS UG and ordinary post water-fill are tried in the same ascending
         certified corridors;
       * weekend-volunteered SPS RO exposure is offset from the fairness burden;
-      * SP+GE+ŠR CENTRO RO co-location is maximized across every represented week;
-        if all weeks cannot coexist with higher HARD/critical fairness, the engine
-        returns the largest feasible weekly count and reports it explicitly;
+      * private co-location goals are optimized only after ordinary resident
+        outcomes and the selected structural fairness corridor are fixed;
       * Onko-zero residents are preferentially given at least one of the remaining
         Mammography assignments.
 
@@ -2756,16 +2755,16 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
 
     _onko_zero_indices=[pi for pi in range(n) if not any(bool(pattern["full"][(pi,d)]) for d in range(1,ndays+1))]
     _ini_to_pi={p.initials:pi for pi,p in enumerate(people)}
-    _priority_idx=[_ini_to_pi[i] for i in _PRIORITY_COLOCATION_GROUP if i in _ini_to_pi]
-    if len(_priority_idx)!=len(_PRIORITY_COLOCATION_GROUP): _priority_idx=[]
-    _priority_candidates_by_week={}
+    _dream_centro_group,_dream_centro_target,_dream_adc_group,_dream_adc_target=_configured_dream_teams(people)
+    _priority_idx=[_ini_to_pi[i] for i in _dream_centro_group if i in _ini_to_pi]
+    if _dream_centro_target<=0 or len(_priority_idx)!=len(_dream_centro_group): _priority_idx=[]
+    _priority_candidates=[]
     if _priority_idx:
         for d in range(1,ndays+1):
-            wk=date(year,month,d)-timedelta(days=date(year,month,d).weekday())
             for block in ("AM","PM"):
                 if not all(bool(pattern[block.lower()][(pi,d)]) for pi in _priority_idx): continue
                 rows=[sl for sl in normal if sl.day==d and sl.block==block and sl.department.startswith("CENTRO RO ")]
-                if len(rows)>=len(_priority_idx): _priority_candidates_by_week.setdefault(wk,[]).append((d,block))
+                if len(rows)>=len(_priority_idx): _priority_candidates.append((d,block))
 
     # Private SP pair wishes are loaded only in the authenticated SP generation
     # process. They are deliberately absent from frozen/public request snapshots.
@@ -2784,7 +2783,7 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
     total_seconds=max(12.0,float(seconds)); per_trial=max(3.0,total_seconds/max(1,len(trials)))
     logs=[]
     best=None  # (dream_count, -critical_cap, -noncritical_cap, assignments, cc, nc, obj)
-    dream_target=min(int(_PRIORITY_COLOCATION_MAX_PER_MONTH),len(_priority_candidates_by_week))
+    dream_target=min(int(_dream_centro_target),len(_priority_candidates))
 
     for critical_cap,noncritical_cap in trials:
         mb=_V2564FastMB(); x={}
@@ -2888,29 +2887,56 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
                         mb.constraint(_co,1.0,np.inf)
                         _sp_pair_success.append(_clean)
 
-            # High-priority co-location: maximize feasible distinct weeks across the month.
-            coloc_week_vars=[]
-            for wk,cands in sorted(_priority_candidates_by_week.items()):
-                cvars=[]
-                for d,block in sorted(cands,key=lambda z:(z[0],0 if z[1]=="AM" else 1)):
-                    cv=mb.var(0.0,1.0,True,cost=0.0); cvars.append(cv)
-                    for pi in _priority_idx:
-                        cvs={v:1.0 for (ppi,sid),v in x.items() if ppi==pi and byid[sid].day==d and byid[sid].block==block and byid[sid].department.startswith("CENTRO RO ")}
-                        if not cvs:
-                            mb.constraint({cv:1.0},0.0,0.0)
-                        else:
-                            co={cv:1.0}
-                            for v in cvs: co[v]=co.get(v,0.0)-1.0
-                            mb.constraint(co,-np.inf,0.0)
-                if cvars:
-                    wv=mb.var(0.0,1.0,True,cost=-10000.0); coloc_week_vars.append(wv)
-                    for cv in cvars: mb.constraint({cv:1.0,wv:-1.0},-np.inf,0.0)
-                    co={wv:1.0}
-                    for cv in cvars: co[cv]=co.get(cv,0.0)-1.0
+            # V2.5.126 CENTRO RO Dream Team is a monthly occurrence target, not
+            # a weekly rule. Each feasible day/block can contribute one occurrence.
+            coloc_event_vars=[]
+            for d,block in sorted(_priority_candidates,key=lambda z:(z[0],0 if z[1]=="AM" else 1)):
+                cv=mb.var(0.0,1.0,True,cost=0.0)
+                valid=True
+                for pi in _priority_idx:
+                    cvs={v:1.0 for (ppi,sid),v in x.items() if ppi==pi and byid[sid].day==d and byid[sid].block==block and byid[sid].department.startswith("CENTRO RO ")}
+                    if not cvs:
+                        valid=False
+                        break
+                    co={cv:1.0}
+                    for v in cvs: co[v]=co.get(v,0.0)-1.0
                     mb.constraint(co,-np.inf,0.0)
-                    mb.constraint({cv:1.0 for cv in cvars},-np.inf,1.0)
-            if coloc_week_vars:
-                mb.constraint({wv:1.0 for wv in coloc_week_vars},-np.inf,float(_PRIORITY_COLOCATION_MAX_PER_MONTH))
+                if valid:
+                    coloc_event_vars.append(cv)
+                else:
+                    mb.constraint({cv:1.0},0.0,0.0)
+            if coloc_event_vars:
+                mb.constraint({v:1.0 for v in coloc_event_vars},-np.inf,float(_dream_centro_target))
+
+            # V2.5.125 ADC 144/145 Dream Team: exactly two configured people.
+            # This private target is optimized only in the final post-label refinement
+            # after every resident's per-post exposure counts and CENTRO Dream Team
+            # count are locked. Therefore it cannot worsen ordinary post fairness.
+            _adc_dream_vars=[]
+            if _dream_adc_target>0 and len(_dream_adc_group)==2 and all(i in _ini_to_pi for i in _dream_adc_group):
+                _a_pi,_b_pi=[_ini_to_pi[i] for i in _dream_adc_group]
+                for _d in range(1,ndays+1):
+                    for _b in ("AM","PM"):
+                        if not bool(pattern[_b.lower()][(_a_pi,_d)]) or not bool(pattern[_b.lower()][(_b_pi,_d)]):
+                            continue
+                        _av={v:1.0 for (ppi,sid),v in x.items() if ppi==_a_pi and byid[sid].day==_d and byid[sid].block==_b and rotation_category(byid[sid]) in ("ADC 144","ADC 145")}
+                        _bv={v:1.0 for (ppi,sid),v in x.items() if ppi==_b_pi and byid[sid].day==_d and byid[sid].block==_b and rotation_category(byid[sid]) in ("ADC 144","ADC 145")}
+                        if not _av or not _bv:
+                            continue
+                        _hit=mb.var(0.0,1.0,True,cost=0.0)
+                        _co={_hit:1.0}
+                        for _v in _av: _co[_v]=_co.get(_v,0.0)-1.0
+                        mb.constraint(_co,-np.inf,0.0)
+                        _co={_hit:1.0}
+                        for _v in _bv: _co[_v]=_co.get(_v,0.0)-1.0
+                        mb.constraint(_co,-np.inf,0.0)
+                        _co={_hit:1.0}
+                        for _v in _av: _co[_v]=_co.get(_v,0.0)-1.0
+                        for _v in _bv: _co[_v]=_co.get(_v,0.0)-1.0
+                        mb.constraint(_co,-1.0,np.inf)
+                        _adc_dream_vars.append(_hit)
+                if _adc_dream_vars:
+                    mb.constraint({_v:1.0 for _v in _adc_dream_vars},-np.inf,float(_dream_adc_target))
 
             # Onko-zero -> Mammography first exposure, after structural corridor.
             mammo_seen=[]; mam_total=int(cat_slot_counts.get("Mamografijos",0) or 0)
@@ -2926,10 +2952,11 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
 
             res=mb.solve(per_trial,mip_gap=0.0)
 
-            # Final post-label refinement. First preserve every resident's already
-            # solved category exposure count and the Dream Team count; only then
-            # optimize the private location-specific pair wishes.
-            if res.x is not None and (_sp_pair_success or _sp_pair_overlap):
+            # Final private post-label refinement. First preserve every resident's
+            # already solved category exposure count. Only then optimize all private
+            # co-location / pair goals. This pass cannot worsen ordinary resident
+            # post fairness or any date/block wish fixed in phase 1.
+            if res.x is not None and (_sp_pair_success or _sp_pair_overlap or _adc_dream_vars or coloc_event_vars):
                 _base_x=np.asarray(res.x,dtype=float)
                 for _pi in range(n):
                     for _cat in cats:
@@ -2938,22 +2965,24 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
                             continue
                         _z=float(round(sum(float(_base_x[_v])*float(_c) for _v,_c in _co.items())))
                         mb.constraint(dict(_co),_z,_z)
-                if coloc_week_vars:
-                    _z=float(round(sum(float(_base_x[_v]) for _v in coloc_week_vars)))
-                    mb.constraint({_v:1.0 for _v in coloc_week_vars},_z,_z)
                 mb.c=[0.0 for _ in mb.c]
                 for _v in _sp_pair_success:
                     mb.c[_v]-=1000.0
                 for _v in _sp_pair_overlap:
                     mb.c[_v]+=1.0
+                for _v in _adc_dream_vars:
+                    mb.c[_v]-=1000.0
+                for _v in coloc_event_vars:
+                    mb.c[_v]-=1000.0
                 _private_post_seconds=max(2.5,min(8.0,float(per_trial)*0.80))
                 _private_res=mb.solve(_private_post_seconds,mip_gap=0.0)
                 if _private_res.x is not None:
                     res=_private_res
 
             status=int(getattr(res,"status",99)); has=bool(res.x is not None)
-            dream_count=(int(round(sum(float(res.x[v]) for v in coloc_week_vars))) if has and coloc_week_vars else 0)
-            logs.append({"critical_cap":critical_cap,"noncritical_cap":noncritical_cap,"status":status,"incumbent":has,"solver":"V25105_RESILIENT_POST","dream_team_weeks":dream_count,"dream_team_target":dream_target})
+            dream_count=(int(round(sum(float(res.x[v]) for v in coloc_event_vars))) if has and coloc_event_vars else 0)
+            adc_dream_count=(int(round(sum(float(res.x[v]) for v in _adc_dream_vars))) if has and _adc_dream_vars else 0)
+            logs.append({"critical_cap":critical_cap,"noncritical_cap":noncritical_cap,"status":status,"incumbent":has,"solver":"V25105_RESILIENT_POST","dream_team_centro_count":dream_count,"dream_team_centro_target":dream_target,"dream_team_adc_count":adc_dream_count,"dream_team_adc_target":int(_dream_adc_target)})
             if has:
                 assignments={}
                 onko_by_day={sl.day:sl for sl in slots if sl.department=="Onko RO centre" and not sl.blocked and sl.idx not in fixed_gaps}
@@ -2965,15 +2994,10 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
                             assignments[os.idx]=p.initials
                 for (pi,sid),v in x.items():
                     if float(res.x[v])>0.5: assignments[sid]=people[pi].initials
-                candidate=(dream_count,-int(critical_cap),-int(noncritical_cap),assignments,critical_cap,noncritical_cap,float(getattr(res,"fun",0.0) or 0.0))
-                if best is None or candidate[:3]>best[:3]:
-                    best=candidate
-                # Dream Team is above ordinary noncritical-post cosmetic spread.
-                # Once every phase-1 feasible represented week is achieved, stop.
-                if dream_count>=dream_target:
-                    return assignments,critical_cap,noncritical_cap,logs,float(getattr(res,"fun",0.0) or 0.0)
-                # Continue to wider post corridors to try to buy missing Dream-Team weeks.
-                continue
+                # Return the first feasible structural corridor. Private goals may
+                # improve only within this already-valid fairness corridor; they can
+                # never justify widening the corridor or worsening resident outcomes.
+                return assignments,critical_cap,noncritical_cap,logs,float(getattr(res,"fun",0.0) or 0.0)
             # A time-limit/no-incumbent does not prove infeasibility. If we already
             # have a valid tighter candidate, keep searching only when budget allows;
             # otherwise fail closed to the caller's clean-process retry.
@@ -3062,25 +3086,39 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
     if assigned is None: return None
     stats=validate_schedule(year,month,people,slots,assigned,targets)
     g=stats.setdefault("global",{})
-    # V2.5.112 Dream Team audit: count weeks with SP+GE+ŠR together on the same
-    # CENTRO RO AM or PM block in the final SYSTEM assignment.
-    _dream_weeks=[]
-    _dream_group=set(_PRIORITY_COLOCATION_GROUP)
-    _by_week={}
+    # V2.5.126 Dream Team audit follows SP's configured MONTHLY targets.
+    _centro_group,_centro_target,_adc_group,_adc_target=_configured_dream_teams(people)
+    _centro_set=set(_centro_group)
+    _centro_by_event={}
     for sl in slots:
         if sl.blocked or sl.department=="Onko RO centre" or not sl.department.startswith("CENTRO RO "):
             continue
         who=assigned.get(sl.idx)
-        if who not in _dream_group:
+        if who:
+            _centro_by_event.setdefault((sl.day,sl.block),set()).add(who)
+    _centro_events=[{"day":int(d),"block":b} for (d,b),who in sorted(_centro_by_event.items()) if _centro_set and _centro_set.issubset(who)]
+
+    _adc_set=set(_adc_group)
+    _adc_by_event={}
+    for sl in slots:
+        if sl.blocked or rotation_category(sl) not in ("ADC 144","ADC 145"):
             continue
-        wk=date(year,month,sl.day)-timedelta(days=date(year,month,sl.day).weekday())
-        _by_week.setdefault((wk,sl.day,sl.block),set()).add(who)
-    for (wk,d,block),who in sorted(_by_week.items()):
-        if who==_dream_group:
-            _dream_weeks.append({"week_start":wk.isoformat(),"day":int(d),"block":block})
-    g["dream_team_centro_weeks"]=len({x["week_start"] for x in _dream_weeks})
-    g["dream_team_centro_details"]=_dream_weeks
-    g["dream_team_centro_target_weeks"]=len({(date(year,month,d)-timedelta(days=date(year,month,d).weekday())).isoformat() for d in range(1,calendar.monthrange(year,month)[1]+1) if date(year,month,d).weekday()<5})
+        who=assigned.get(sl.idx)
+        if who:
+            _adc_by_event.setdefault((sl.day,sl.block),set()).add(who)
+    _adc_events=[{"day":int(d),"block":b} for (d,b),who in sorted(_adc_by_event.items()) if _adc_set and _adc_set.issubset(who)]
+
+    g["dream_team_centro_count"]=len(_centro_events)
+    g["dream_team_centro_target"]=int(_centro_target)
+    g["dream_team_centro_members"]=list(_centro_group)
+    g["dream_team_centro_details"]=_centro_events
+    g["dream_team_adc_count"]=len(_adc_events)
+    g["dream_team_adc_target"]=int(_adc_target)
+    g["dream_team_adc_members"]=list(_adc_group)
+    g["dream_team_adc_details"]=_adc_events
+    # Legacy keys retained for old dashboards, now mirroring monthly counts.
+    g["dream_team_centro_weeks"]=len(_centro_events)
+    g["dream_team_centro_target_weeks"]=int(_centro_target)
     g["admin_weekend_spread_cap_used"]=int(pattern.get("weekend_spread_cap",1) or 1)
     if int(g.get("hard_errors",9999) or 0)>0: return None
     rotation_spreads=g.get("rotation_monthly_spreads") or {}
@@ -3422,14 +3460,16 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
                     co[x[(pi, right.idx)]] = co.get(x[(pi, right.idx)], 0) - 1
                 mb.constraint(co, 0, np.inf, f"Centro occupancy order {d} {block} {left.idx}")
 
-    priority_colocation_week_vars=[]
+    # Private co-location targets are represented neutrally during the public solve.
+    # They are refined only after every resident's public shift pattern, request
+    # outcomes and per-category exposure counts have been frozen.
+    priority_colocation_week_vars=[]  # legacy name; stores monthly day/block events
     _priority_idx=[]
     _ini_to_pi={p.initials:pi for pi,p in enumerate(people)}
-    if all(ini in _ini_to_pi for ini in _PRIORITY_COLOCATION_GROUP):
-        _priority_idx=[_ini_to_pi[ini] for ini in _PRIORITY_COLOCATION_GROUP]
-        _by_week={}
+    _legacy_centro_group,_legacy_centro_target,_,_=_configured_dream_teams(people)
+    if _legacy_centro_target>0 and all(ini in _ini_to_pi for ini in _legacy_centro_group):
+        _priority_idx=[_ini_to_pi[ini] for ini in _legacy_centro_group]
         for d in range(1, calendar.monthrange(year,month)[1]+1):
-            dt=date(year,month,d); wk=dt-timedelta(days=dt.weekday())
             for block in ("AM","PM"):
                 centro=[sl for sl in slots if sl.day==d and sl.block==block and not sl.blocked and sl.idx not in fixed_gap_ids and sl.department.startswith("CENTRO RO ")]
                 if len(centro)<len(_priority_idx):
@@ -3440,18 +3480,9 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
                     for sl in centro:
                         co[x[(pi,sl.idx)]]=co.get(x[(pi,sl.idx)],0.0)-1.0
                     mb.constraint(co,-np.inf,0.0,f"priority coloc eligibility {people[pi].initials} {d} {block}")
-                _by_week.setdefault(wk,[]).append(cv)
-        for wk,cvars in sorted(_by_week.items()):
-            wv=mb.var(f"priority_coloc_week[{wk.isoformat()}]",cost=0.0,lb=0,ub=1,integer=True)
-            priority_colocation_week_vars.append(wv)
-            co={wv:-1.0}
-            for cv in cvars:
-                co[cv]=co.get(cv,0.0)+1.0
-                mb.constraint({cv:1.0,wv:-1.0},-np.inf,0.0,f"priority coloc block implies week {wk} {cv}")
-            mb.constraint(co,0.0,np.inf,f"priority coloc week hit {wk}")
-            mb.constraint({cv:1.0 for cv in cvars},-np.inf,1.0,f"priority coloc max one block week {wk}")
+                priority_colocation_week_vars.append(cv)
         if priority_colocation_week_vars:
-            mb.constraint({wv:1.0 for wv in priority_colocation_week_vars},-np.inf,float(_PRIORITY_COLOCATION_MAX_PER_MONTH),"priority coloc monthly cap")
+            mb.constraint({v:1.0 for v in priority_colocation_week_vars},-np.inf,float(_legacy_centro_target),"private monthly coloc cap")
 
     # Exact workload targets (x2 so 1.5 Onko remains integer).
     for pi, p in enumerate(people):
@@ -5040,17 +5071,9 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     resident_hard_cumulative_spread_lock=int(math.ceil(max(0.0,float(feasibility_res.x[rh_cumulative_max])-float(feasibility_res.x[rh_cumulative_min]))-1e-7))
     mb.constraint({rh_cumulative_max:1.0,rh_cumulative_min:-1.0},-np.inf,float(resident_hard_cumulative_spread_lock),"V2552 resident-hard historical spread lock")
 
-    if priority_colocation_week_vars:
-        _pc_costs=[0.0 for _ in mb.c]
-        for wv in priority_colocation_week_vars:
-            _pc_costs[wv]=-1.0
-        _assignment_tiebreak(_pc_costs,1000000000.0)
-        mb.c=_pc_costs
-        _pc_res=mb.solve(time_limit=priority_colocation_limit)
-        if _pc_res.x is not None:
-            feasibility_res=_pc_res
-            _pc_total=int(round(sum(float(_pc_res.x[wv]) for wv in priority_colocation_week_vars)))
-            mb.constraint({wv:1.0 for wv in priority_colocation_week_vars},float(_pc_total),float(_pc_total),"priority coloc optimum lock")
+    # Private co-location refinement is deliberately deferred until AFTER all
+    # public resident outcomes have been optimized and frozen. It must never buy
+    # a private improvement by reducing another resident's fulfilled request.
 
     # Stage C4 — BASELINE UNPOPULAR-WEEKEND VOLUNTEERS.
     # Safety/coverage and Resident-HARD are already protected. Now explicitly
@@ -5347,26 +5370,24 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
         mb.constraint({tv["total"]:1.0},total-1e-6,np.inf,f"V2552 {tier} total fulfilment lock")
         mb.constraint({tv["max"]:1.0},-np.inf,ceiling+1e-6,f"V2552 {tier} maximum entitlement lock")
 
-        # V2.5.121 MONTHLY FIRST-SUBMISSION PRIORITY — one-cycle conflict resolver, never cumulative and never a new
-        # structural/HARD tier.  We first lock the agreed horizontal water-fill
-        # result above (minimum entitlement, maximum feasible total, ceiling).
-        # Only then, inside that equally-fair frontier, maximize the immutable
-        # points earned by submitting preferences early: #1=16 ... #16=1.
-        # Consequently points cannot buy extra weekends, widen post fairness,
-        # break Dream Team, or override Cannot-work; they decide *which* SOFT
-        # requests survive when the already-locked fair frontier has alternatives.
+        # MĖNESIO PATEIKIMO EILĖ — tik likusio konflikto sprendiklis.
+        # Pirmiausia užrakinamas maksimaliai įmanomas bendras šio pageidavimų lygio
+        # išpildymas. Tik tada, vienodai gerų variantų ribose, ankstesnė pateikimo
+        # vieta gauna papildomą pirmenybę. Ji negali sumažinti užrakinto bendro
+        # išpildymo, apeiti saugos, darbo vietų teisingumo ar „Dirbti negaliu“.
         _priority_costs=[0.0 for _ in mb.c]
         _priority_expr={}
         _priority_const=0.0
         for pi in tv["active"]:
-            pts=max(0,min(16,int(getattr(people[pi],"preference_priority_points",0) or 0)))
-            if pts<=0:
+            rank=max(0,min(16,int(getattr(people[pi],"preference_priority_rank",0) or 0)))
+            if rank<=0:
                 continue
+            weight=float(17-rank)  # 1 vieta = didžiausias papildomas tie-break svoris
             rec=soft_tier_expr[tier][pi]
             for vidx,coef in rec["coeffs"].items():
-                _priority_expr[vidx]=_priority_expr.get(vidx,0.0)+float(pts)*float(coef)
-                _priority_costs[vidx]-=float(pts)*float(coef)
-            _priority_const += float(pts)*float(rec["const"])
+                _priority_expr[vidx]=_priority_expr.get(vidx,0.0)+weight*float(coef)
+                _priority_costs[vidx]-=weight*float(coef)
+            _priority_const += weight*float(rec["const"])
         _priority_score=None
         if _priority_expr:
             _assignment_tiebreak(_priority_costs,1000000000.0)
@@ -5408,6 +5429,39 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     else:
         res=tier_res
         solve_stage="V2553_TIER_FALLBACK"
+
+    # Final private-only refinement for the legacy single-pass solver. The public
+    # solution is already complete. Freeze every resident's exact AM/PM work
+    # pattern and every per-category exposure count before optimizing private
+    # co-location events. This leaves only equivalent post-label rearrangements,
+    # so no fulfilled resident request, workload pattern or exposure fairness can
+    # be traded away for a private target.
+    if res.x is not None and priority_colocation_week_vars:
+        _public_x=np.asarray(res.x,dtype=float)
+        _ndays=calendar.monthrange(year,month)[1]
+        for _pi in range(len(people)):
+            for _d in range(1,_ndays+1):
+                for _block in ("AM","PM"):
+                    _co={x[(_pi,_s.idx)]:1.0 for _s in slots if _s.day==_d and blocks_overlap(_s.block,_block)}
+                    if _co:
+                        _z=float(round(sum(float(_public_x[_v])*float(_c) for _v,_c in _co.items())))
+                        mb.constraint(_co,_z,_z,f"private refine public shift lock {_pi} {_d} {_block}")
+        for _pi in range(len(people)):
+            for _cat in ROTATION_CATEGORIES:
+                _rv=rotation_count.get((_pi,_cat))
+                if _rv is None:
+                    continue
+                _z=float(round(float(_public_x[_rv])))
+                mb.constraint({_rv:1.0},_z,_z,f"private refine exposure lock {_pi} {_cat}")
+        _pc_costs=[0.0 for _ in mb.c]
+        for _v in priority_colocation_week_vars:
+            _pc_costs[_v]-=1.0
+        _assignment_tiebreak(_pc_costs,1000000000.0)
+        mb.c=_pc_costs
+        _pc_res=mb.solve(time_limit=priority_colocation_limit)
+        if _pc_res.x is not None:
+            res=_pc_res
+            solve_stage += "_PRIVATE_EQUIVALENT_REFINEMENT"
 
     # Compatibility diagnostics used by existing UI/export code.
     post_fill_res=crit_fill_res

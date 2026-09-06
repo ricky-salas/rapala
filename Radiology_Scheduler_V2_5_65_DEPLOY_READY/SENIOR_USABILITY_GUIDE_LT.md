@@ -1,257 +1,191 @@
-# DABARTINĖ OPERACINĖ POLITIKA — V2.5.112
+# SHIFT HAPPENS — SENIŪNĖS DARBO IR SISTEMOS VADOVAS
 
-> Ši V2.5.112 politika yra viršesnė už žemiau likusias istorines versijų pastabas: `Negaliu dirbti` = 0 pažeidimų; savaitgaliai skirstomi ADMIN RAW water-fill principu ir jų negalima „nusipirkti“ pageidavimu; SP+ŠR+GE Dream Team siekiama kartu CENTRO RO kartą per savaitę; AUTO dubliai/pavadavimai water-fill'inami automatiškai; savanoriškas swapas keičia ACTUAL tik po abiejų rezidentų sutikimo ir SP galutinio APPROVE.
+**Versija:** V2.5.127  
+**Paskirtis:** kasdieniam darbui, naujų naudotojų mokymui ir sistemos pristatymui komandai.
 
-# V2.5.112 — ADMIN WATER-FILL + DREAM TEAM + AUTO DUBLIAI + SP GATE + WESTON
+> **Pagrindinė mintis:** sistema kiekvieną mėnesį siekia 100 % pageidavimų išpildymo. Sudėtingame mėnesyje realus rezultatas gali būti mažesnis, pavyzdžiui, 93 %, jeigu dalies pageidavimų vienu metu įvykdyti neleidžia saugos, padengimo, darbo krūvio ar tarpusavio konfliktai. Sistema vis tiek ieško geriausio įmanomo sprendinio.
 
-- **SYSTEM savaitgaliai nebėra rezidento pasirinkimas.** Konkretus „Pageidauju dirbti“ šeštadienį / sekmadienį ir senas savaitgalio krypties nustatymas negali nupirkti papildomo savaitgalio krūvio. Generatorius pirmiausia ieško **mažiausio matematiškai įmanomo RAW šeštadienių, sekmadienių ir bendro savaitgalio spread**, saugodamas 0 „Negaliu dirbti“ pažeidimų, saugą, coverage ir tikslų krūvį.
-- Jei 0–1 neįmanoma, engine **neapsimeta**, kad lygybė pasiekta: tikrina 1 → 2 → 3 → 4 ir užrakina pirmą įmanomą koridorių. Po publikavimo savanoriški swapai gali pakeisti ACTUAL balansą, bet SYSTEM baseline nekeičiamas.
-- **Dream Team SP + ŠR + GE** prioritetiškai statomi kartu į **CENTRO RO bent vieną AM arba PM bloką kiekvieną atstovaujamą kalendorinę savaitę**, jei tai nepažeidžia aukštesnių HARD taisyklių. Rodomas pasiektas savaičių skaičius.
-- **AUTO dubliai / pavadavimai sukuriami kartu su GENERUOTI paspaudimu**, todėl jie iš karto matomi juodraščio statistikoje, Excel „Dubliai“ lape ir asmeniniame grafike. Privalomi: SPS RO, SPS UG, Centro UG 120 rytas ir Onko RO. CENTRO RO naudojamas tik kaip best-effort fairness filler: keliami mažesnį backup krūvį turintys žmonės iki privalomų dublių viršutinio sluoksnio, bet optional dubliai negali sukurti naujos nelygybės.
-- Rezidento dublio claim yra tik tie-break lygiame sluoksnyje; jis negali aplenkti backup water-fill. Dublis niekada neplanuojamas per „Negaliu dirbti“ bloką.
-- **Swapas ACTUAL pritaikomas tik po 3 žingsnių:** iniciatorius → kitas rezidentas sutinka → **SP galutinai APPROVE / DECLINE**. SP mato visus normalius ir dublių swapus. Swapai gali sąmoningai pralaužti SYSTEM fairness; tai lieka matoma kaip ACTUAL pokytis.
-- **WESTON:** kiekvienas SP paspaudimas `GENERUOTI / PERKURTI` = +1 WESTON beer. Skaitiklis saugomas DB ir rodomas SP statistikoje.
+## 1. Kaip sistemą paaiškinti vienu sakiniu
 
-# V2.5.100 — EMAIL LIFECYCLE + DURABLE OUTBOX
+Sistema pirmiausia sudaro **saugų, pilnai padengtą ir kuo tolygiau paskirstytą grafiką**, tada siekia maksimaliai įvykdyti visų rezidentų pageidavimus, o pateikimo eilę naudoja tik tada, kai lieka keli vienodai geri, bet tarpusavyje nesuderinami variantai.
 
-- Vienas sistemos siuntėjas siunčia operacinius grafiko pranešimus visiems aktyviems rezidentams.
-- Etapai: **pageidavimai atidaryti → trūkstamų pageidavimų priminimai → preliminarus grafikas / apsikeitimų etapas → FINAL / baigta**.
-- `preferences_open`, `swap_open` ir `final` yra operaciniai etapo pranešimai; individualus `notifications_on` toliau valdo tik periodinius trūkstamų pageidavimų priminimus.
-- Kiekvienas lifecycle laiškas prieš SMTP siuntimą įrašomas į `notification_outbox`. Unikalus `event_key + initials` neleidžia Streamlit rerun ar cron jobui netyčia išsiųsti dublikato.
-- Nepavykę laiškai lieka retry eilėje. Seniūnė gali pakartoti **tik nepavykusiems**, o background worker gali juos bandyti dar kartą automatiškai.
-- Preliminaraus etapo laiškas prisega asmeninį preliminarų `.ics`; FINAL laiškas prisega galutinį `.ics`.
-- Automatinis workeris pageidavimų etapą pradeda ankstesnio mėnesio 1 d. 08:00 Lietuvos laiku. Trūkstamų anketų priminimai nuo rezidento pasirinktos `reminder_start_day` dienos siunčiami daugiausia kartą per dieną iki termino.
-- Senas atskiras `backup_claim_reminder` lifecycle kelyje nebegeneruojamas, kad žmogus negautų dviejų panašių priminimų tą pačią dieną.
-- Seniūnės Simple UI rodo vieną kompaktišką el. pašto paruošimo būseną, kanalo testą ir etapų pristatymo lentelę. SMTP techninė lentelė rodoma tik Išplėstiniame režime.
-- Solverio logika V2.5.100 nekeista; `scheduler_engine.py` yra identiškas V2.5.99.
+## 2. Penki sprendimo lygiai
 
-# V2.5.98 dubliai ir kreditai
+| Lygis | Kas saugoma | Praktinė reikšmė |
+|---|---|---|
+| 1 | Saugumas, įmanomumas ir privalomas padengimas | Negali būti persidengimų, fiziškai neįmanomų paskyrimų ar nepadengtų privalomų vietų. |
+| 2 | „Dirbti negaliu“ | Tikslas — 0 pažeidimų. |
+| 3 | Tolygus privalomo krūvio ir darbo vietų paskirstymas | Savaitgaliai, SPS RO, SPS UG, penktadieniai ir kitos vietos paskirstomos kuo lygiau. |
+| 4 | Visų rezidentų pageidavimai | Sistema siekia didžiausio įmanomo išpildymo; tikslas visada 100 %. |
+| 5 | Pateikimo vieta 1–16 | Naudojama tik likusiam konfliktui tarp vienodai gerų sprendinių. |
 
-Privalomas dublio dengimas yra pozicijomis paremtas: SPS RO ir SPS UG visada, Centro UG 120 rytas, Onko RO visa 9 val. pamaina; CENTRO RO best-effort. Realiai pavadavęs rezidentas gauna poilsio kreditą. Pavaduotam žmogui skola nesukuriama.
+**Svarbu:** pateikimo vieta nevaldo viso grafiko ir nemažina bendro pageidavimų rezultato vien tam, kad ankstesnis pateikėjas laimėtų. Pirmiausia randamas geriausias įmanomas bendras rezultatas.
 
-# V2.5.97 — NAUDOTOJŲ PASTABŲ ATNAUJINIMAS
+## 3. Pageidavimų logika be techninio žargono
 
-> **Šis skyrius papildo ir, jei prieštarauja, yra viršesnis už ankstesnius šio dokumento teiginius. V2.5.96 principas „be kito mėnesio fairness catch-up“ lieka galioti.**
+Rezidentui pakanka keturių paprastų sąvokų:
 
-- **Centro UG 120 kab. dabar turi RYTĄ ir POPIETĘ.** Naujos PM vietos pridėtos append-only būdu po senų slotų ID, kad ankstesnių paskelbtų grafikų skaitmeniniai slotų ID nepasikeistų.
-- **Dengimai / dubliai:** privalomas vardinis dengimas taikomas savaitgalio SPS RO, Centro UG 120 RYTUI, Onko RO pilnai 9 val. dienai, darbo dienos SPS RO RYTUI ir šiuo metu išlaikytam SPS UG dengimui. **CENTRO RO** dengiama kuo plačiau pagal likusią saugią talpą, tačiau jos nepadengimas publikavimo neblokuoja.
-- **Mamografija yra paskutinio prioriteto neprivalomas kabinetas.** Kai dėl tikslaus grupės krūvio dalį neprivalomų vietų reikia palikti tuščių, solveris pirmiausia renkasi Mamografijos vietas; kitų kabinetų skylės naudojamos tik kai reikia.
-- **Šeštadieniai ir sekmadieniai nuo šiol yra dvi atskiros teisingumo kategorijos.** SYSTEM generavimo metu kiekviena jų water-fill'inama atskirai iki raw spread 0–1. Po publikavimo leidžiami abipusiai swapai / operaciniai pakeitimai gali ACTUAL balansą pakeisti; SYSTEM baseline auditui lieka nekintamas.
-- **Darbo dienos trukmės pageidavimas yra tikras aktyvus SOFT signalas.** Sistema pirmiausia nustato neutralų bendrą matematiškai reikalingų AM+PM dvigubų dienų kiekį. Tada, nekeisdama šio bendro kiekio, perskirsto jas pagal aktyvius 6 val. / 12 val. darbo pobūdžio pasirinkimus. Neutralus N/A žmogus nekonkuruoja su aiškiu pageidavimu. Todėl jei tik vienas rezidentas renkasi „dažniausiai 12 val.“, jis turi gauti kuo daugiau jau reikalingų 12 val. dienų, kiek leidžia ABSOLUTE/HARD, poilsis, tikslus mėnesio krūvis ir kritiniai SPS / šeštadienio / sekmadienio guardrailai.
-- **Vienodas pageidavimas visai grupei yra atskiras scarcity klausimas.** Galutinė taisyklė, kam pirmiau tenkinti ribotą vienodą pageidavimą, dar neužrakinama V2.5.97 ir bus apibrėžta atskirai.
-- **Operacinės nedarbo dienos:** SP (ir ŠR contingency operatorius Išplėstiniame režime) Grafiko lange gali pažymėti `Nedarbingumas`, `Kvalifikacijos kėlimas` arba `Sveikatinimosi diena`. Žyma spalvinama to rezidento spalva, išima jo tos dienos ACTUAL pamainas ir nekeičia SYSTEM baseline. Tiksli priežastis / pastaba rodoma tik lifecycle operatoriui.
+- **Dirbti negaliu** — visa diena, rytas arba popietė, kai žmogus iš tikrųjų negali dirbti.
+- **Noriu laisvos** — noras turėti laisvą konkrečią dieną ar jos dalį.
+- **Pageidauju dirbti** — noras dirbti konkrečią dieną ar jos dalį.
+- **Pateikimo vieta** — 1–16 vieta tam pačiam grafikui; tai tik paskutinis konflikto sprendimo kriterijus.
 
-# V2.5.96 dabartinė taisyklė
+Sistema visada pradeda nuo tikslo įvykdyti **visus** pageidavimus. Jeigu tai įmanoma, pateikimo vieta nieko nekeičia.
 
-Kiekvienas mėnuo generuojamas nuo švaraus SYSTEM water-fill baseline. Po publikavimo leidžiami override'ai / swapai / repair gali jį pralaužti, o ACTUAL fairness perskaičiuojamas pagal realybę. Istorija yra tik auditui — jokio kito mėnesio catch-up. Completed backup cover fairness ekspoziciją perkelia tik tada, kai realus pavadavimas pažymėtas completed.
+### Pavyzdys
 
-# Seniūnės naudojimo ir audito vadovas
+Tarkime, sudėtingą mėnesį geriausias įmanomas rezultatas yra **93 %**, nes keli pageidavimai tarpusavyje kertasi arba juos riboja svarbesnės saugos, padengimo ir darbo krūvio taisyklės. Sistema pirmiausia išsaugo tą geriausią bendrą rezultatą. Tik likusioje konfliktų dalyje, kai yra keli vienodai geri variantai, gali būti naudojama pateikimo vieta.
 
-## 1. Kam skirtas šis įrankis
+## 4. Mėnesio ciklas: 1–14–15–16
 
-Įrankio paskirtis nėra pakeisti seniūnės sprendimą ar reikalauti aklai pasitikėti algoritmu. Jo paskirtis – didžiąją dalį pasikartojančio skaičiavimo, taisyklių derinimo ir fairness kontrolės atlikti automatiškai, o seniūnei palikti **trumpą, kryptingą išimčių auditą**.
+| Laikas | Etapas | Kas vyksta |
+|---|---|---|
+| 1 d. 00:00 – 14 d. 00:00 | Pageidavimų teikimas | Rezidentai pildo ir koreguoja pageidavimus. |
+| 14 d. 00:00 – 15 d. 00:00 | Seniūnės parengimo langas | Generuojamas, tikrinamas ir prireikus koreguojamas preliminarus grafikas. |
+| Iki 15 d. 00:00 | Preliminarus paskelbimas | Preliminarus grafikas paskelbiamas rezidentams. |
+| 15 d. 00:00 – 16 d. 00:00 | 24 val. apsikeitimų langas | Rezidentai gali siūlyti apsikeitimus; jie įsigalioja tik po reikalingų sutikimų ir seniūnės patvirtinimo. |
+| Nuo 16 d. 00:00 | Galutinė patikra | Rezidentų savitarna užrakinama; seniūnė sutikrina išimtis, prireikus atlieka rankines korekcijas ir paskelbia galutinį grafiką. |
 
-Pagrindinis darbo principas:
+Visi laikai — Lietuvos laiku.
 
-**Generate → Patikrinti konkrečius teiginius → Taisyti tik išimtis → Publish → Valdyti ACTUAL pakeitimus.**
+## 5. Seniūnės darbo eiga
 
-Seniūnei nereikia dar kartą perskaičiuoti viso mėnesio. Reikia patikrinti, ar keli konkretūs įrankio teiginiai sutampa su pačiu SYSTEM grafiku. **Teiginys** čia reiškia paprastą patikrinamą sakinį, pvz. „18 d. PM prašė laisvos, bet paskirtas SPS UG PM, todėl pageidavimas neįvykdytas.“
+### Iki 14 d. 00:00
+1. Patikrinti, ar visi pateikė pageidavimus.
+2. Peržiūrėti tik neaiškius ar akivaizdžiai prieštaringus įrašus.
+3. Nereikia iš anksto ranka konstruoti viso grafiko.
 
-## 2. Ką verta patikrinti prieš publikavimą
+### 14–15 d.
+1. Paleisti generatorių.
+2. Patikrinti, ar privalomų klaidų skaičius yra 0.
+3. Patikrinti „Dirbti negaliu“ pažeidimus — turi būti 0.
+4. Peržiūrėti darbo vietų ir privalomo krūvio pasiskirstymą.
+5. Peržiūrėti pageidavimų išpildymą ir neįvykdytų pageidavimų priežastis.
+6. Jei yra reali problema, pakartoti generavimą arba atlikti pagrįstą rankinę korekciją.
+7. Iki 15 d. 00:00 paskelbti preliminarų grafiką.
 
-### A. HARD / diagnostics
-- TRUE ABSOLUTE HARD klaidų turi būti 0.
-- RESIDENT HARD „Negaliu dirbti“ SYSTEM juodraštyje turi būti **0/0 pažeidimų**. Jei 0-loss grafiko rasti nepavyksta, sistema negrąžina juodraščio, o ne paskiria žmogų jo užblokuotu laiku.
-- Mandatory SPS RO, SPS UG ir savaitgalio coverage turi būti užpildytas.
+### 15–16 d.
+1. Stebėti apsikeitimų prašymus.
+2. Apsikeitimas įsigalioja tik po abiejų rezidentų sutikimo ir seniūnės patvirtinimo.
+3. Saugos patikros išlieka aktyvios.
 
-### B. Critical exposure
-- SPS RO spread: 0–1.
-- SPS UG spread: 0–1.
-- Savaitgalių spread: 0–1.
-- Turi būti vengiama bereikalingo kritinių pamainų suspaudimo tam pačiam žmogui.
+### Nuo 16 d. 00:00
+1. Rezidentų savitarna užrakinta.
+2. Patikrinti laukiančius sprendimus ir išimtis.
+3. Prireikus atlikti rankinę korekciją.
+4. Paspausti **„Paskelbti galutinį grafiką“**.
 
-### C. Krūvis ir poilsis
-- Patikrinti blogiausią rolling-7 valandų rodiklį.
-- Patikrinti, ar nėra akivaizdžiai neproporcingų 12 val. pamainų sekų.
-- Patikrinti, ar vienas rezidentas negavo neproporcingai sunkesnės savaitės nei kiti, kai buvo alternatyvų.
+## 6. Saugos ir darbo laiko apsaugos
 
-### D. Preference / request satisfaction
-Nereikia ranka tikrinti visų 16 rezidentų. Spot-check principu pasirinkti 3–5:
-1. mažiausio satisfaction rezidentą;
-2. didžiausio satisfaction rezidentą;
-3. bent vieną su RESIDENT HARD;
-4. 1–2 atsitiktinius / vidutinius rezidentus.
+| Apsauga | Generavimo principas |
+|---|---|
+| Darbo trukmė per dieną | Iki 12 val. |
+| Poilsis tarp atskirų darbo dienų | Bent 11 val. |
+| Darbo dienos per slenkantį 7 d. langą | Iki 6 |
+| Žinomos darbo valandos per slenkantį 7 d. langą | Iki 48 val. generuojant |
+| Po ilgo / naktinio budėjimo | Konservatyvi poilsio apsauga |
+| Persidengiančios pamainos | Neleidžiamos |
+| Privalomas padengimas | Negali būti aukojamas dėl gražesnio pageidavimų procento |
 
-Kiekvienam pakanka patikrinti kelis konkrečius **teiginius**, pvz.:
-- `RESIDENT HARD 5/5`;
-- `SOFT-1 3/4`;
-- `SPS RO = 2`;
-- `SPS UG = 2`;
-- `weekends = 1`;
-- `18 d. PM: „Noriu laisvos“ — NEĮVYKDYTA, nes SYSTEM grafike paskirta SPS UG PM`.
+Po paskelbimo savanoriškam apsikeitimui gali būti rodoma pasekmių ir papildomo patvirtinimo lentelė. Kritinės poilsio, persidengimo ir privalomo padengimo apsaugos išlieka.
 
-### Kaip perskaityti vieną eilutę
+## 7. Darbo vietų ir privalomo krūvio paskirstymas
 
-Įrankis turi rodyti ne kodą ar trumpą žymą, o visą logiką:
+Pagrindinės kategorijos: **CENTRO RO, Onko RO, SPS RO, Centro UG, SPS UG, ADC 144, ADC 145, Vaikų UG, Mamografijos**.
 
-**Ko prašė → ką grafikas paskyrė → rezultatas → kodėl → kaip patikrinti → ką būtų galima swapinti.**
+### Kritinės ekspozicijos
 
-Pavyzdys:
+- SPS RO;
+- SPS UG;
+- savaitgalių darbas.
 
-**Ko prašė:** Noriu laisvos · 2026-08-18 · PM  
-**Ką rodo SYSTEM grafikas:** SPS UG (PM)  
-**Rezultatas:** NEĮVYKDYTA  
-**Kodėl:** pageidautame laisvame PM bloke yra persidengianti darbo pamaina.  
-**Kaip patikrinti:** atverk rugpjūčio 18 d., rask rezidentą ir PM bloką. Jei SPS UG PM ten nėra, įrankio teiginys klaidingas.  
-**Jei nori taisyti:** ieškok tinkamo swapo, kuris nuimtų šį SPS UG PM paskyrimą.
+Kai matematiškai įmanoma, sistema siekia, kad šių ekspozicijų skirtumas tarp rezidentų būtų **0–1**. Platesnis skirtumas leidžiamas tik tada, kai siauresnis paskirstymas neįmanomas dėl svarbesnių apribojimų.
 
-Jei įrankis rašo `SPS UG = 2`, SYSTEM grafike / Post Matrix turi būti lygiai du SPS UG priskyrimai tam žmogui. Tai yra toks pats konkretus teiginys, tik apie postų skaičių.
+### Kitos darbo vietos
 
-## 3. 5 minučių auditavimo seka
+Sistema pirmiausia stengiasi suteikti visiems panašią ekspoziciją konkrečiai darbo vietai prieš skirdama perteklinius pakartojimus tam pačiam žmogui, kai tai suderinama su aukštesnėmis taisyklėmis ir pageidavimais.
 
-1. **HARD / diagnostics:** ar nėra ABSOLUTE klaidų?
-2. **Post Matrix:** ar SPS RO, SPS UG ir savaitgaliai yra 0–1?
-3. **Resident Stats:** kas turi didžiausią weekly load, doubles ir consecutive burden?
-4. **Teiginių spot-check:** 3–5 rezidentai, keli konkretūs teiginiai kiekvienam.
-5. **Grafikas / Proof:** ar suvestinės ir pats grafikas sutampa?
+### Onko RO
 
-Jeigu šie penki punktai geri, seniūnė gauna daug stipresnį pagrindą publikuoti nei vien iš vizualinio Excel peržiūrėjimo.
+- kiekvieno rezidento Onko paskyrimų skaičius turi būti lyginis: 0, 2, 4 ir t. t.;
+- tas pats rezidentas negali dirbti Onko dvi kalendorines dienas iš eilės;
+- vertinama ir mėnesio riba, jei ankstesnio mėnesio paskutinę dieną žmogus dirbo Onko.
 
-## 4. Kada NEPUBLIKUOTI
+### Nėra automatinės „skolos“ kitam mėnesiui
 
-Nepublikuoti, jei:
-- yra TRUE ABSOLUTE HARD pažeidimas;
-- trūksta privalomo SPS RO / SPS UG / savaitgalio coverage;
-- kritinis spread >1 ir nėra aiškios diagnostikos, kodėl tai neišvengiama;
-- bet koks RESIDENT HARD pažeidimas atsiranda SYSTEM juodraštyje (tai V2.5.107 kritinė klaida);
-- preference, post ar workload statistika nesutampa su pačiu grafiku;
-- pageidavimų importas akivaizdžiai nepilnas;
-- yra akivaizdus overlap ar kitas feasibility konfliktas.
+Po savanoriškų apsikeitimų ar rankinių pakeitimų sistema nepriverčia kitą mėnesį „atsigriebti“. Ankstesni mėnesiai lieka istorijai ir auditui, o naujas mėnuo pradedamas nuo naujo bazinio paskirstymo.
 
-## 5. Kas nėra automatiškai klaida
+## 8. Dubliai
 
-- SOFT pageidavimas gali būti neįvykdytas, jei aukštesnio prioriteto fairness / HARD reikalavimai to neleidžia.
-- Neprivalomo posto skirtumas gali laikinai nukrypti po leidžiamo ACTUAL pakeitimo; tai rodoma gyvoje ACTUAL statistikoje ir nesukuria ateities skolos.
-- Po publikavimo voluntary swapas keičia ACTUAL grafiką, bet neperrašo SYSTEM fairness baseline.
-- Ligos / neatvykimo atveju jau dirbantis žmogus gali būti perkeltas iš optional posto į SPS; SYSTEM baseline nekinta, tačiau ACTUAL postų/fairness statistika perskaičiuojama pagal realų darbą.
+- Dublis yra atskiras parengties sluoksnis, o ne automatiškai papildoma darbo pamaina.
+- Savaitgalio dublių vietos rezervuojamos pagal nustatytą mėnesio ciklą.
+- Jei dalis rezidentų nepasirenka dublio patys iki užrakinimo, likusios privalomos vietos paskirstomos automatiškai tarp tinkamų rezidentų.
+- Dublio paskyrimas savaime nekeičia normalaus darbo grafiko.
+- Tik realiai įvykęs pavadavimas tampa faktiniu darbu ir registruojamas audite.
 
-## 6. Rekomenduojamas visas mėnesio workflow
+## 9. Apsikeitimai ir rankinės korekcijos
 
-### 1. Paruošti mėnesį
-Patikrinti aktyvų Rule Profile, šventes, etatus / targetus, pozicijų darbo dienas ir administracinius uždarymus.
+### Savanoriškas apsikeitimas
+1. Vienas rezidentas pasiūlo apsikeitimą.
+2. Kitas rezidentas sutinka.
+3. Sistema patikrina saugos ir darbo laiko pasekmes.
+4. Seniūnė patvirtina arba atmeta.
+5. Tik po patvirtinimo pakeitimas tampa faktinio grafiko dalimi.
 
-### 2. Surinkti pageidavimus
-Stebėti pateikimo terminą. Seniūnei nereikia ranka perrašyti visų pageidavimų – tik peržiūrėti konfliktinius / neaiškius įrašus.
+### Liga / nenumatytas įvykis / kritinis padengimas
 
-### 3. Sugeneruoti juodraštį
-Pirmiausia leisti solveriui padaryti visą darbą. Nedaryti pusės grafiko ranka prieš generatorių, nes tada prarandamas laiko taupymo tikslas.
+Tokie pakeitimai registruojami kaip faktinio darbo realybė. Jie nekeičia to, kaip buvo vertinamas pradinis algoritmo sudarytas grafikas, ir nesukuria automatinės skolos kitam mėnesiui.
 
-### 4. Atlikti trumpą auditą
-Naudoti HARD diagnostics, Post Matrix, Resident Stats, Proof ir Išplėstinį preference ledger.
+## 10. Pradinis ir faktinis grafikas
 
-### 5. Taisyti tik išimtis
-Jei reali klaida – regeneruoti arba atlikti aiškiai dokumentuojamą korekciją. Jei toolas tik parodo teisėtą SOFT miss, to nereikia „taisyti“ vien dėl 100% skaičiaus.
+| Sąvoka | Reikšmė |
+|---|---|
+| Pradinis grafikas | Paskelbtas bazinis variantas, pagal kurį vertinamas algoritmo rezultatas. |
+| Faktinis grafikas | Dabartinė reali versija po apsikeitimų, ligų, pavadavimų ir rankinių korekcijų. |
 
-### 6. Publikuoti
-Publikavimas užšaldo SYSTEM fairness baseline. Tai yra oficialus algoritmo sprendinys, su kuriuo vėliau lyginamas ACTUAL grafikas.
+Rezidentui kasdien svarbiausias faktinis grafikas. Tyrimui ir sistemos kokybės auditui išsaugomas ir pradinis variantas.
 
-### 7. Po publikavimo
-Rezidentų swapai turėtų vykti decentralizuotai per platformą. Seniūnė nebeturi būti kiekvieno privataus susitarimo tarpininkė. Liga / neatvykimas tvarkomas repair mechanizmu.
+## 11. Penkių minučių patikra prieš paskelbimą
 
-### 8. Mėnesio pabaiga
-Peržiūrėti SYSTEM vs ACTUAL, satisfaction pokytį, swapus, repairs ir eksportuoti research datasetą.
+1. Privalomų klaidų skaičius = 0.
+2. „Dirbti negaliu“ pažeidimų = 0.
+3. Nėra trūkstamų privalomų SPS / savaitgalio vietų.
+4. Kritinis krūvis ir savaitgaliai nėra akivaizdžiai sukrauti vienam žmogui.
+5. Darbo vietų pasiskirstymas atitinka sistemos nurodytą geriausią įmanomą lygumą.
+6. Neįvykdyti pageidavimai turi suprantamą ir patikrinamą priežastį.
+7. Prieš galutinį paskelbimą nėra likusių neaiškių apsikeitimų ar korekcijų.
 
-## 7. Kaip išmatuoti, ar toolsas iš tikrųjų taupo laiką
+### Kada nepaskelbti
 
-Fiksuoti:
-- aktyvų generavimo laukimo laiką atskirai nuo aktyvaus žmogaus darbo;
-- seniūnės aktyvaus audito laiką;
-- kiek konkrečių įrankio teiginių patikrinta;
-- kiek patikrintų įrankio teiginių buvo teisingi;
-- kiek realių manual corrections prireikė;
-- kiek atskirų prisėdimų reikėjo iki publikavimo;
-- kiek kontaktų su rezidentais reikėjo;
-- kiek post-publication pakeitimų seniūnei teko administruoti pačiai.
+- yra privaloma saugos klaida;
+- yra „Dirbti negaliu“ pažeidimas;
+- trūksta privalomo padengimo;
+- sistemos suvestinė nesutampa su pačiu grafiku;
+- importuoti pageidavimai akivaizdžiai nepilni;
+- liko konfliktas, kurio priežasties negalima paaiškinti.
 
-Svarbiausias palyginimas nėra „ar teko kažką patikrinti“. Žmogaus kontrolė ir turi likti. Svarbiausias palyginimas:
+## 12. Paprastas ir Išplėstinis režimai
 
-**rankinis konstravimas + tikrinimas** vs **automatinis konstravimas + kryptingas auditas + išimčių korekcija**.
+| Režimas | Kam skirtas | Kas rodoma |
+|---|---|---|
+| Paprastas | Kasdieniam rezidento naudojimui | Pageidavimai, grafikas, apsikeitimai, dubliai, kalendorius, tyrimo anketa. |
+| Išplėstinis | Seniūnės / tyrėjo / techninei patikrai | Detalesnė diagnostika, teisingumo rodikliai, audito informacija ir tyrimo funkcijos. |
 
-## 8. Paprastas accountability rodiklis
+## 13. Tyrimo langas
 
-Galima registruoti:
+Grafikų sudarymo metodų palyginimas yra perkeltas į **Tyrimo** langą ir nėra atskiras pagrindinės navigacijos langas. Jis skirtas tyrimo darbui ir neturi keisti realaus grafiko sudarymo taisyklių.
 
-**Įrankio teiginių tikslumas (claim verification accuracy) = teisingai patvirtintų įrankio teiginių skaičius / visų patikrintų teiginių skaičius.**
+## 14. 60 sekundžių pristatymo tekstas
 
-Pvz., jei seniūnė patikrino 30 konkrečių HARD / preference / post / weekend teiginių ir 29 sutapo su grafiku, verification accuracy = 96,7%.
+> „Mūsų sistema kiekvieną mėnesį siekia 100 procentų pageidavimų išpildymo. Pirmiausia ji saugo saugumą, privalomą padengimą ir tikrą negalėjimą dirbti. Tada kuo tolygiau paskirsto privalomą krūvį ir darbo vietas, o po to ieško geriausio įmanomo visų pageidavimų rezultato. Sudėtingame mėnesyje rezultatas gali būti mažesnis, pavyzdžiui, 93 procentai, jeigu dalies norų vienu metu įvykdyti neįmanoma. Pateikimo vieta įsijungia tik pačiame gale — kai lieka keli vienodai geri, bet tarpusavyje konfliktuojantys variantai. Po preliminaraus paskelbimo turime 24 valandų apsikeitimų langą, o tada seniūnė atlieka galutinę patikrą ir paskelbia galutinį grafiką.“
 
-Klaida nėra slepiama – ji tampa konkrečiu sistemos kokybės rezultatu ir pataisymo tašku.
+## 15. Atmintinė viename ekrane
 
-## 9. Ką reiškia SYSTEM ir ACTUAL
-
-- **SYSTEM** – tai, ką paskirstė ir publikavo algoritmas. Iš jo skaičiuojama fairness ir mokslinis baseline.
-- **ACTUAL** – reali situacija po savanoriškų swapų, ligos, neatvykimų ir operacinių repairs.
-
-Šis atskyrimas leidžia sąžiningai vertinti ir algoritmo kokybę, ir realaus mėnesio dinamiką.
-
-## 10. Esminė taisyklė seniūnei
-
-**Neperdaryti grafiko ranka vien todėl, kad jis atrodo neįprastai. Pirmiausia patikrinti, ką toolas teigia ir kodėl. Jei konkretūs teiginiai teisingi ir guardrailai tenkinami, skirtumas nuo įprasto rankinio grafiko nebūtinai yra klaida.**
-
-## Savanoriškas dublio perėmimas
-
-Jei dublį reikia aktyvuoti žmogui, kuriam tai sukurtų didesnį savaitės krūvį ar 12 val. darbo dieną, Seniūnės lange pirmiausia rodoma pasekmių lentelė: **dabar → po dublio → taikoma riba → būsena**. Jei tai tik perspėjimas, galima atšaukti arba patvirtinti gavus aiškų rezidento sutikimą. Jei lentelė rodo ABSOLUTE / teisinį blokatorių, patvirtinimo mygtukas išjungiamas.
-
-## V2.5.75 — Suvestinė prieš publikavimą
-
-Po `GENERUOTI` seniūnė gali iš karto atverti `Suvestinė`. Kol kandidatas nepaskelbtas, viršuje aiškiai rodoma `JUODRAŠČIO SUVESTINĖ — DAR NEPASKELBTA`. Joje matomi visų rezidentų RESIDENT HARD, `Noriu laisvos`, `Pageidauju dirbti`, bendro išpildymo, workstyle, krūvio, doubles, savaitgalių ir kritinių postų rodikliai bei konkretūs neįvykdyti prašymai. Jei rezultatas netenkina, grįžtama į `Sudarymas` ir kandidatas gerinamas / generuojamas iš naujo. Publikuotas grafikas nesikeičia, kol aiškiai nepaspaudžiama `PASKELBTI / PATVIRTINTI`.
-
-
-### V2.5.79 ONE-WAY EMERGENCY RESCUE
- EMERGENCY RESCUE
-
-
-Senas pavadinimas „Emergency swap“ buvo misnomer. Naujas modelis yra vienpusis operational rescue:
-
-1. Pats realiai perkeltas rezidentas savo paskyroje pasirenka `CURRENT LOCATION`.
-2. Pasirenka to paties laiko kritinį `MOVING TO` postą (SPS RO / SPS UG).
-3. Sistema spalvotai parodo `RESCUED PERSON` — žmogų, kuris tuo metu buvo kritiniame poste.
-4. Patvirtinus:
-   - mover pašalinamas iš seno žemesnio prioriteto optional posto;
-   - jo `CURRENT LOCATION` lieka **tuščias**;
-   - mover įrašomas į `MOVING TO` kritinį postą;
-   - `RESCUED PERSON` atleidžiamas nuo target posto;
-   - rescued person **nėra** perkeliamas į mover seną vietą.
-
-Tai keičia ACTUAL operational grafiką ir ACTUAL fairness statistiką. SYSTEM publication baseline lieka užšaldytas auditui; post debt / future catch-up V2.5.96 nebenaudojamas. Nauji rescue įrašai žurnale rodomi `CURRENT LOCATION → MOVING TO` formatu, su spalvotais mover / rescued inicialais. Seni `emergency_actual` bilateraliniai įrašai paliekami tik kaip aiškiai pažymėtas LEGACY auditas.
-
-## V2.5.107 greita patikra po GENERUOTI
-
-Po generavimo `Sudarymas` turi rodyti keturis skaičius: **Aktyvūs pageidavimai**, **Įvykdyta**, **Neįvykdyta**, **Negaliu dirbti pažeidimai**. Paskutinis skaičius SYSTEM juodraštyje privalo būti **0**. Jei `Neįvykdyta = 0`, turi būti matoma žalia žinutė **„VISI AKTYVŪS PAGEIDAVIMAI ĮVYKDYTI“**. Jei `Neįvykdyta > 0`, prieš publikavimą peržiūrėkite šalia esančią **NEĮVYKDYTI PAGEIDAVIMAI** lentelę.
-
-### V2.5.109 — grafiko eksportas
-Sudaryme ir Grafiko tvirtinime nebereikia naudotis vien tik lentelės viršuje esančiu CSV eksportu. Po grafiku visada yra atskiri **Excel (.xlsx)** ir **CSV (.csv)** mygtukai. Excel galima atsisiųsti iš karto po generavimo, prieš FINAL, iš ACTUAL būsenos ir po FINAL patvirtinimo.
-
-
-## V2.5.114 — WESTON skolos veidrodis
-
-SP paspaudus **GENERUOTI / PERKURTI**, esamas persistent WESTON ledgeris padidėja +1. Tas pats skaičius SP statistikoje rodomas kaip **skola ŠR**, o ŠR statistikoje — kaip **WESTON, kuriuos SP jam skolinga**. Tai nėra du atskiri skaitikliai: abi pusės visada mato tą patį lifetime ir pasirinkto mėnesio ledgerį.
-
-### V2.5.115 dublių sluoksnio patikra
-
-Pageidavimų audite planinių dublių ignoruokite kaip darbo pamainas — sistema juos dabar techniškai atskiria. Jei „Noriu laisvos“ dieną žmogus turi tik teorinį dublį ir neturi normalios darbo pamainos, pageidavimas turi būti rodomas kaip ĮVYKDYTAS. Dublio layerio problemos rodomos atskirai ir negali keisti normalaus grafiko HARD ar SOFT score.
-
-### V2.5.116 — Dublių oversight prieš paskelbimą
-Po GENERUOTI neik tiesiai į paskelbimą. Tame pačiame Sudarymas lange peržiūrėk **TEORINIS DUBLIŲ PLANAS — SENIŪNĖS PATIKRA**: ar visi privalomi standby postai uždengti, ar nėra keistų koncentracijų vienam žmogui ir ar konkrečios datos / pozicijos atrodo logiškai. Tai teorinis sluoksnis ir normalaus grafiko pageidavimų nekeičia.
-
-## V2.5.118 — SP patikra: FCFS dubliai + pageidavimų prioritetas
-
-Nuo lapkričio ciklo Pageidavimų lange tikrinkite du atskirus progresus: anketos pateiktos /16 ir savaitgalio dubliai užpildyti /16. Lentelėje matoma pirmo pateikimo vieta (#1–#16), taškai (16–1) ir konkretus pasirinktas 6 h savaitgalio dublis. Redagavimas nepakeičia pirmo pateikimo vietos. Dubliai yra tik teorinis standby ir neturi būti interpretuojami kaip darbo pamainos ar pageidavimų pažeidimai.
-
-Prioriteto taškai veikia tik kaip SOFT konflikto sprendėjas po visų HARD ir struktūrinių SYSTEM taisyklių bei po SOFT water-fill užrakinimo. Jie nėra leidimas iškreipti savaitgalių ar postų pasiskirstymą. Jei po termino trūksta dublių, SYSTEM juodraštį galima matyti ir tikrinti, tačiau publikavimo kontrolė turi aiškiai rodyti, kad FCFS sluoksnis nėra 16/16.
-
-## Privatūs SP planavimo pageidavimai
-
-Tik SP paskyroje, skiltyje **Pageidavimai**, yra privatus spalvinis blokas. Žalia kortelė reiškia **Skirti kartu**, raudona — **Neskirti kartu**. Galima pasirinkti žmogų, visą mėnesį / savaitę / dieną, bet kurį laiką / rytą / popietę ir, kai prasminga, konkrečią darbo vietos kategoriją.
-
-Šios eilutės yra privačios: jos nerodomos bendroje pageidavimų lentelėje, rezidentų skaidrumo lange, Excel ar tyrimo eksporte. SP savo lange turi atskirą privačią statistiką.
+| Kada | Ką daryti |
+|---|---|
+| 1–14 d. | Rezidentai pildo pageidavimus. |
+| 14–15 d. | Generuoti, tikrinti, taisyti; iki 15 d. 00:00 paskelbti preliminarų grafiką. |
+| 15–16 d. | 24 val. apsikeitimų langas. |
+| Nuo 16 d. | Rezidentų savitarna užrakinta; galutinė rankinė patikra; paskelbiamas galutinis grafikas. |
+| Visada | Tikslas 100 % pageidavimų, 0 „Dirbti negaliu“ pažeidimų, saugus ir kuo lygesnis privalomas krūvis. |
+| Pateikimo vieta | Tik paskutinis vienodai gero neišsprendžiamo konflikto kriterijus. |

@@ -255,14 +255,12 @@ def get_preference_priority(year: int, month: int, initials: str) -> dict:
 
 
 def preference_priority_source_month(year: int, month: int) -> tuple[int,int]:
-    """Return the single previous schedule cycle whose rank applies now.
+    """Pateikimo vieta taikoma tam pačiam grafikui, kuriam pateikti pageidavimai.
 
-    V2.5.121: priority is intentionally monthly and non-cumulative. A resident's
-    rank earned while submitting preferences for one schedule month is used only
-    for the immediately following schedule month, then it expires from solver use.
+    Reitingas kas mėnesį prasideda iš naujo ir naudojamas tik kaip papildomas
+    konflikto sprendimo kriterijus po bendro pageidavimų išpildymo užfiksavimo.
     """
-    year=int(year); month=int(month)
-    return (year-1,12) if month==1 else (year,month-1)
+    return int(year),int(month)
 
 
 def all_applied_preference_priorities(year: int, month: int) -> Dict[str, dict]:
@@ -273,6 +271,42 @@ def all_applied_preference_priorities(year: int, month: int) -> Dict[str, dict]:
 def get_applied_preference_priority(year: int, month: int, initials: str) -> dict:
     return all_applied_preference_priorities(year,month).get(str(initials),{})
 
+
+
+def get_sp_dream_team_config_v25125() -> dict:
+    """SP-only long-term Dream Team composition. RLS hides details from everyone else."""
+    try:
+        rows=_data(_retry_db(lambda: client().table("sp_dream_team_config_v25125").select("*").eq("id",1).limit(1).execute()))
+    except Exception:
+        return {}
+    return dict(rows[0]) if rows else {}
+
+def save_sp_dream_team_config_v25125(centro_members, adc_members) -> dict:
+    row={"id":1,"centro_members":list(centro_members or []),"adc_members":list(adc_members or []),"updated_at":_now()}
+    rows=_data(_retry_db(lambda: client().table("sp_dream_team_config_v25125").upsert(row,on_conflict="id").execute()))
+    return dict(rows[0]) if isinstance(rows,list) and rows else row
+
+def get_sp_dream_team_month_v25125(year: int, month: int) -> dict:
+    try:
+        rows=_data(_retry_db(lambda: client().table("sp_dream_team_monthly_v25125").select("*").eq("year",int(year)).eq("month",int(month)).limit(1).execute()))
+    except Exception:
+        return {}
+    return dict(rows[0]) if rows else {}
+
+def save_sp_dream_team_month_v25125(year: int, month: int, centro_target: int, adc_target: int) -> dict:
+    row={"year":int(year),"month":int(month),"centro_target":max(0,min(6,int(centro_target))),"adc_target":max(0,min(12,int(adc_target))),"updated_at":_now()}
+    rows=_data(_retry_db(lambda: client().table("sp_dream_team_monthly_v25125").upsert(row,on_conflict="year,month").execute()))
+    return dict(rows[0]) if isinstance(rows,list) and rows else row
+
+def sp_dream_team_active_v25125(year: int, month: int) -> bool:
+    try:
+        rows=_data(_retry_db(lambda: client().rpc("sp_dream_team_active_v25125",{"p_year":int(year),"p_month":int(month)}).execute()))
+    except Exception:
+        return False
+    if isinstance(rows,bool): return rows
+    if isinstance(rows,list) and rows: return bool(rows[0])
+    if isinstance(rows,dict): return bool(rows.get("sp_dream_team_active_v25125") or rows.get("active"))
+    return False
 
 def list_sp_private_pair_preferences_v25123(year: int, month: int) -> List[dict]:
     """Return SP's private pair wishes for the selected month.
