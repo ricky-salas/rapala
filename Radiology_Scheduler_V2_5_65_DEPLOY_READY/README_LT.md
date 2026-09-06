@@ -1,38 +1,17 @@
-# SHIFT HAPPENS — V2.5.128
+# SHIFT HAPPENS — V2.5.131
 
-Šis paketas yra lietuviška radiologijos rezidentų grafikų sistemos versija.
+## Kas pakeista
 
-## Kas svarbiausia šiame leidime
+Papildomos SP / ŠR planavimo funkcijos dabar yra ten, kur jų natūraliai ieškoma — „Pageidavimai“ lange.
+Atskiro „Privatūs pageidavimai“ lango nėra.
 
-- Visa rezidentams ir seniūnei rodoma pagrindinė sąsaja yra lietuvių kalba.
-- Paprastame režime pašalintas programuotojų žargonas: rezidentas mato aiškius laukus, pvz., **„Dirbti negaliu“**, **„Noriu laisvos“**, **„Pageidauju dirbti“**.
-- Sistemos tikslas kiekvieną mėnesį — **100 % pageidavimų išpildymas**. Sudėtingame mėnesyje geriausias įmanomas rezultatas gali būti mažesnis, pavyzdžiui, 93 %, jei dalis norų tarpusavyje nesuderinami arba juos riboja svarbesnės saugos, padengimo ir darbo krūvio taisyklės.
-- Pateikimo vieta 1–16 taikoma **tam pačiam grafikui** ir naudojama tik likusiam konfliktui tarp vienodai gerų sprendinių — ji nesumažina jau pasiekto bendro pageidavimų išpildymo.
-- Vieša sprendimų seka: **sauga ir padengimas → 0 „Dirbti negaliu“ pažeidimų → kuo tolygesnis privalomas krūvis ir darbo vietos → maksimalus visų rezidentų pageidavimų išpildymas → pateikimo eilė tik likusiam vienodai geram konfliktui**.
-- Mėnesio ciklas: pageidavimai iki 14 d. 00:00; preliminaraus grafiko parengimas iki 15 d. 00:00; apsikeitimų langas 15 d. 00:00–16 d. 00:00; nuo 16 d. 00:00 — seniūnės galutinė patikra ir galutinio grafiko paskelbimas.
-- Grafikų sudarymo metodų palyginimas perkeltas į **„Tyrimas“** langą ir nebėra atskiras pagrindinės navigacijos langas.
+SP ir ŠR savo „Pageidavimai“ lange mato:
+- „Nuolatinė komanda“;
+- „Noriu dirbti su / Nenoriu dirbti su“.
 
-## Seniūnės vadovas
+Blokai rodomi tiek Paprastame, tiek Išplėstiniame režime. Paprastiems rezidentams jie nerodomi.
 
-Pagrindinis pristatymui ir kasdieniam darbui skirtas dokumentas:
+Jei V2.5.128 duomenų bazės migracija dar nepaleista, paleiskite:
+`SUPABASE_MIGRATION_V2_5_128_OPERATOR_PRIVATE_WISHES.sql`.
 
-`SHIFT_HAPPENS_SENIUNES_VADOVAS_V2_5_128.docx`
-
-Trumpa tekstinė versija:
-
-`SENIOR_USABILITY_GUIDE_LT.md`
-
-## Paleidimas
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-Jei naudojama ankstesnė Supabase duomenų bazė, prieš paleidžiant šį leidimą turi būti pritaikytos pakete esančios aktualios migracijos.
-
-## Leidimo patikra
-
-```bash
-pytest -q test_v25128_release.py
-```
+Diegiant pakeiskite visą paketą, kad `app.py` ir `db.py` būtų tos pačios versijos.
