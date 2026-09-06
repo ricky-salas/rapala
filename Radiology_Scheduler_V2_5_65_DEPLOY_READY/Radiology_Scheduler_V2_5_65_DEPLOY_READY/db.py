@@ -179,7 +179,7 @@ def save_preference(year: int, month: int, initials: str, payload: dict):
 def save_preference_for_resident_v2595(year: int, month: int, target_initials: str, payload: dict, reason: str):
     """Lifecycle-operator manual entry for another resident (or a late self-entry).
 
-    The backend authorizes SR/ŠR, preserves account identity, and writes an audit row.
+    The backend authorizes SP/ŠR, preserves account identity, and writes an audit row.
     """
     rows=_data(_retry_db(lambda: client().rpc("save_preferences_for_resident_v2595", {
         "p_year": int(year),
@@ -233,6 +233,215 @@ def get_preference(year: int, month: int, initials: str) -> Optional[dict]:
 def all_preferences(year: int, month: int) -> Dict[str, dict]:
     rows = _data(_retry_db(lambda: client().table("preferences").select("*").eq("year", int(year)).eq("month", int(month)).execute()))
     return {r["initials"]: _pref_from_row(r) for r in rows}
+
+
+def all_preference_priorities(year: int, month: int) -> Dict[str, dict]:
+    """First-submission ranking for this schedule month (V2.5.118+)."""
+    try:
+        rows=_data(_retry_db(lambda:
+            client().table("preference_priority_points_v25118")
+            .select("year,month,initials,first_submitted_at,submission_order,points_awarded,source")
+            .eq("year",int(year)).eq("month",int(month))
+            .order("submission_order")
+            .execute()
+        ))
+    except Exception:
+        return {}
+    return {str(r.get("initials")):dict(r) for r in rows}
+
+
+def get_preference_priority(year: int, month: int, initials: str) -> dict:
+    return all_preference_priorities(year,month).get(str(initials),{})
+
+
+def preference_priority_source_month(year: int, month: int) -> tuple[int,int]:
+    """Pateikimo vieta taikoma tam pačiam grafikui, kuriam pateikti pageidavimai.
+
+    Reitingas kas mėnesį prasideda iš naujo ir naudojamas tik kaip papildomas
+    konflikto sprendimo kriterijus po bendro pageidavimų išpildymo užfiksavimo.
+    """
+    return int(year),int(month)
+
+
+def all_applied_preference_priorities(year: int, month: int) -> Dict[str, dict]:
+    py,pm=preference_priority_source_month(year,month)
+    return all_preference_priorities(py,pm)
+
+
+def get_applied_preference_priority(year: int, month: int, initials: str) -> dict:
+    return all_applied_preference_priorities(year,month).get(str(initials),{})
+
+
+
+def get_sp_dream_team_config_v25125() -> dict:
+    """SP-only long-term Dream Team composition. RLS hides details from everyone else."""
+    try:
+        rows=_data(_retry_db(lambda: client().table("sp_dream_team_config_v25125").select("*").eq("id",1).limit(1).execute()))
+    except Exception:
+        return {}
+    return dict(rows[0]) if rows else {}
+
+def save_sp_dream_team_config_v25125(centro_members, adc_members) -> dict:
+    row={"id":1,"centro_members":list(centro_members or []),"adc_members":list(adc_members or []),"updated_at":_now()}
+    rows=_data(_retry_db(lambda: client().table("sp_dream_team_config_v25125").upsert(row,on_conflict="id").execute()))
+    return dict(rows[0]) if isinstance(rows,list) and rows else row
+
+def get_sp_dream_team_month_v25125(year: int, month: int) -> dict:
+    try:
+        rows=_data(_retry_db(lambda: client().table("sp_dream_team_monthly_v25125").select("*").eq("year",int(year)).eq("month",int(month)).limit(1).execute()))
+    except Exception:
+        return {}
+    return dict(rows[0]) if rows else {}
+
+def save_sp_dream_team_month_v25125(year: int, month: int, centro_target: int, adc_target: int) -> dict:
+    row={"year":int(year),"month":int(month),"centro_target":max(0,min(6,int(centro_target))),"adc_target":max(0,min(12,int(adc_target))),"updated_at":_now()}
+    rows=_data(_retry_db(lambda: client().table("sp_dream_team_monthly_v25125").upsert(row,on_conflict="year,month").execute()))
+    return dict(rows[0]) if isinstance(rows,list) and rows else row
+
+def sp_dream_team_active_v25125(year: int, month: int) -> bool:
+    try:
+        rows=_data(_retry_db(lambda: client().rpc("sp_dream_team_active_v25125",{"p_year":int(year),"p_month":int(month)}).execute()))
+    except Exception:
+        return False
+    if isinstance(rows,bool): return rows
+    if isinstance(rows,list) and rows: return bool(rows[0])
+    if isinstance(rows,dict): return bool(rows.get("sp_dream_team_active_v25125") or rows.get("active"))
+    return False
+
+def list_sp_private_pair_preferences_v25123(year: int, month: int) -> List[dict]:
+    """Return SP's private pair wishes for the selected month.
+
+    RLS intentionally returns rows only to the authenticated SP account. Other
+    resident/operator accounts receive an empty list rather than any private detail.
+    """
+    try:
+        rows=_data(_retry_db(lambda:
+            client().table("sp_private_pair_preferences_v25123")
+            .select("id,year,month,preference_type,target_initials,scope_type,scope_start_date,block,workplace,created_at,updated_at")
+            .eq("year",int(year)).eq("month",int(month))
+            .order("created_at")
+            .execute()
+        ))
+    except Exception:
+        return []
+    return [dict(r) for r in rows]
+
+
+def sp_private_pair_preferences_exist_v25123(year: int, month: int) -> bool:
+    """Privacy-preserving existence check for lifecycle operators.
+
+    This RPC intentionally reveals no target, scope, location, or direction.
+    """
+    try:
+        rows=_data(_retry_db(lambda: client().rpc("sp_private_pair_preferences_exist_v25123",{
+            "p_year":int(year),"p_month":int(month)
+        }).execute()))
+        if isinstance(rows,bool): return bool(rows)
+        if isinstance(rows,list) and rows:
+            first=rows[0]
+            if isinstance(first,bool): return bool(first)
+            if isinstance(first,dict):
+                return bool(next(iter(first.values()))) if first else False
+        if isinstance(rows,dict):
+            return bool(next(iter(rows.values()))) if rows else False
+    except Exception:
+        return False
+    return False
+
+
+def create_sp_private_pair_preference_v25123(year: int, month: int, preference_type: str, target_initials: str, scope_type: str, scope_start_date, block: str, workplace: str) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("sp_create_private_pair_preference_v25123",{
+        "p_year":int(year),
+        "p_month":int(month),
+        "p_preference_type":str(preference_type),
+        "p_target_initials":str(target_initials),
+        "p_scope_type":str(scope_type),
+        "p_scope_start_date":None if scope_start_date in (None,"") else str(scope_start_date),
+        "p_block":str(block or "ANY"),
+        "p_workplace":str(workplace or "ANY"),
+    }).execute()))
+    if isinstance(rows,dict): return dict(rows)
+    if isinstance(rows,list) and rows: return dict(rows[0]) if isinstance(rows[0],dict) else {"ok":True}
+    return {}
+
+
+def delete_sp_private_pair_preference_v25123(pref_id: int) -> bool:
+    rows=_data(_retry_db(lambda: client().rpc("sp_delete_private_pair_preference_v25123",{
+        "p_id":int(pref_id)
+    }).execute()))
+    if isinstance(rows,bool): return bool(rows)
+    if isinstance(rows,list) and rows:
+        v=rows[0]
+        if isinstance(v,bool): return v
+        if isinstance(v,dict): return bool(next(iter(v.values()))) if v else False
+    if isinstance(rows,dict): return bool(next(iter(rows.values()))) if rows else False
+    return False
+
+
+
+def list_operator_private_pair_preferences_v25128(year: int, month: int, owner_initials: str | None = None) -> List[dict]:
+    """Return the private SP/ŠR pair-wish layer for a month.
+
+    RLS allows details only to the approved SP and ŠR accounts.  The optional
+    owner filter is used by each account's private editor; generation deliberately
+    loads both owners so either operator gets the same private refinement input.
+    """
+    try:
+        q=(client().table("operator_private_pair_preferences_v25128")
+           .select("id,owner_initials,year,month,preference_type,target_initials,scope_type,scope_start_date,block,workplace,created_at,updated_at")
+           .eq("year",int(year)).eq("month",int(month)))
+        if owner_initials:
+            q=q.eq("owner_initials",str(owner_initials))
+        rows=_data(_retry_db(lambda: q.order("created_at").execute()))
+    except Exception:
+        return []
+    return [dict(r) for r in rows]
+
+
+def operator_private_pair_preferences_exist_v25128(year: int, month: int) -> bool:
+    """Privacy-preserving existence check; exposes no owner/target/scope details."""
+    try:
+        rows=_data(_retry_db(lambda: client().rpc("operator_private_pair_preferences_exist_v25128",{
+            "p_year":int(year),"p_month":int(month)
+        }).execute()))
+        if isinstance(rows,bool): return bool(rows)
+        if isinstance(rows,list) and rows:
+            first=rows[0]
+            if isinstance(first,bool): return bool(first)
+            if isinstance(first,dict): return bool(next(iter(first.values()))) if first else False
+        if isinstance(rows,dict): return bool(next(iter(rows.values()))) if rows else False
+    except Exception:
+        return False
+    return False
+
+
+def create_operator_private_pair_preference_v25128(year: int, month: int, preference_type: str, target_initials: str, scope_type: str, scope_start_date, block: str, workplace: str) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("operator_create_private_pair_preference_v25128",{
+        "p_year":int(year),
+        "p_month":int(month),
+        "p_preference_type":str(preference_type),
+        "p_target_initials":str(target_initials),
+        "p_scope_type":str(scope_type),
+        "p_scope_start_date":None if scope_start_date in (None,"") else str(scope_start_date),
+        "p_block":str(block or "ANY"),
+        "p_workplace":str(workplace or "ANY"),
+    }).execute()))
+    if isinstance(rows,dict): return dict(rows)
+    if isinstance(rows,list) and rows: return dict(rows[0]) if isinstance(rows[0],dict) else {"ok":True}
+    return {}
+
+
+def delete_operator_private_pair_preference_v25128(pref_id: int) -> bool:
+    rows=_data(_retry_db(lambda: client().rpc("operator_delete_private_pair_preference_v25128",{
+        "p_id":int(pref_id)
+    }).execute()))
+    if isinstance(rows,bool): return bool(rows)
+    if isinstance(rows,list) and rows:
+        v=rows[0]
+        if isinstance(v,bool): return v
+        if isinstance(v,dict): return bool(next(iter(v.values()))) if v else False
+    if isinstance(rows,dict): return bool(next(iter(rows.values()))) if rows else False
+    return False
 
 
 def auto_submit_zero_preferences_v2594(year: int, month: int, cutoff_iso: str) -> dict:
@@ -777,6 +986,59 @@ def get_backup_claims(year: int, month: int, initials: str) -> List[dict]:
 def get_weekend_backup_claim(year: int, month: int, initials: str) -> Optional[dict]:
     rows=get_backup_claims(year,month,initials)
     return rows[0] if rows else None
+
+
+def scheduler_cycle_phase_v25119(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("scheduler_cycle_phase_v25119",{
+        "p_year":int(year),"p_month":int(month),
+    }).execute()))
+    if isinstance(rows,dict): return rows
+    if isinstance(rows,list) and rows: return rows[0] if isinstance(rows[0],dict) else {}
+    return {}
+
+def sync_schedule_cycle_v25119(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("sync_schedule_cycle_v25119",{
+        "p_year":int(year),"p_month":int(month),
+    }).execute()))
+    if isinstance(rows,dict): return rows
+    if isinstance(rows,list) and rows: return rows[0] if isinstance(rows[0],dict) else {}
+    return {}
+
+def auto_fill_weekend_backups_v25119(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("auto_fill_weekend_backups_v25119",{
+        "p_year":int(year),"p_month":int(month),
+    }).execute()))
+    if isinstance(rows,dict): return rows
+    if isinstance(rows,list) and rows: return rows[0] if isinstance(rows[0],dict) else {}
+    return {}
+
+
+def operator_set_weekend_backup_v25119(year: int, month: int, target_initials: str, covered_slot: int, reason: str) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("operator_set_weekend_backup_v25119",{
+        "p_year":int(year),"p_month":int(month),"p_target_initials":str(target_initials),
+        "p_covered_slot":int(covered_slot),"p_reason":str(reason),
+    }).execute()))
+    if isinstance(rows,dict): return rows
+    if isinstance(rows,list) and rows: return rows[0] if isinstance(rows[0],dict) else {}
+    return {}
+
+
+def claim_weekend_backup_fcfs_v25118(year: int, month: int, covered_slot: int, day: int, block: str):
+    """Atomic authenticated FCFS claim. Identity is resolved server-side."""
+    rows=_data(_retry_db(lambda: client().rpc("claim_weekend_backup_fcfs_v25118",{
+        "p_year":int(year),"p_month":int(month),"p_covered_slot":int(covered_slot),
+        "p_day":int(day),"p_block":str(block),
+    }).execute()))
+    return rows[0] if isinstance(rows,list) and rows else (rows if isinstance(rows,dict) else {})
+
+
+def release_weekend_backup_fcfs_v25118(year: int, month: int) -> bool:
+    rows=_data(_retry_db(lambda: client().rpc("release_weekend_backup_fcfs_v25118",{
+        "p_year":int(year),"p_month":int(month),
+    }).execute()))
+    if isinstance(rows,bool): return rows
+    if isinstance(rows,list) and rows: return bool(rows[0])
+    return bool(rows)
 
 
 def claim_backup_slot(year: int, month: int, initials: str, covered_slot: int):
@@ -1623,4 +1885,58 @@ def record_research_shadow_run_v2545(
         "p_full_stats":result_stats or {},
         "p_assignments":{str(k):v for k,v in (assignments or {}).items()},
     }).execute())
+    return rows[0] if rows else {}
+
+# ---------------------------------------------------------------------------
+# V2.5.110 — SP WESTON beer ledger
+# ---------------------------------------------------------------------------
+def record_weston_beer_click_v25110(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("record_weston_beer_click_v25110",{
+        "p_cycle_year":int(year),"p_cycle_month":int(month),
+    }).execute()))
+    row=rows[0] if rows else {}
+    return {"total_beers":int(row.get("total_beers",0) or 0),"month_beers":int(row.get("month_beers",0) or 0)}
+
+
+def weston_beer_stats_v25110(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("weston_beer_stats_v25110",{
+        "p_cycle_year":int(year),"p_cycle_month":int(month),
+    }).execute()))
+    row=rows[0] if rows else {}
+    return {"total_beers":int(row.get("total_beers",0) or 0),"month_beers":int(row.get("month_beers",0) or 0)}
+
+# ---------------------------------------------------------------------------
+# V2.5.111 — SP leader gate for all voluntary swaps
+# ---------------------------------------------------------------------------
+def accept_backup_swap_participant_v25111(request_id: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc(
+        "accept_backup_swap_participant_v25111",{"p_request_id":int(request_id)}
+    ).execute()))
+    if isinstance(rows,dict): return rows
+    return rows[0] if rows else {}
+
+
+def approve_backup_swap_by_sr_v25111(request_id: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc(
+        "approve_backup_swap_by_sr_v25111",{"p_request_id":int(request_id)}
+    ).execute()))
+    if isinstance(rows,dict): return rows
+    return rows[0] if rows else {}
+
+
+def reject_backup_swap_by_sr_v25111(request_id: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc(
+        "reject_backup_swap_by_sr_v25111",{"p_request_id":int(request_id)}
+    ).execute()))
+    if isinstance(rows,dict): return rows
+    return rows[0] if rows else {}
+
+
+def mark_normal_swap_sr_decision_v25111(request_id: int, decision: str) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc(
+        "mark_normal_swap_sr_decision_v25111",{
+            "p_request_id":int(request_id),"p_decision":str(decision)
+        }
+    ).execute()))
+    if isinstance(rows,dict): return rows
     return rows[0] if rows else {}

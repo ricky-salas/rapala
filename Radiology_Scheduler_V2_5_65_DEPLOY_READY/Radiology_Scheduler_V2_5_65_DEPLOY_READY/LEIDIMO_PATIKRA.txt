@@ -1,0 +1,9 @@
+SHIFT HAPPENS V2.5.130 — leidimo patikra
+
+- „Seniūnės skydas“: pašalintas.
+- „Privatūs pageidavimai“: SP ir ŠR tik Išplėstiniame režime.
+- Nuolatinė komanda: matoma SP ir ŠR; redaguoja SP.
+- „Noriu dirbti su / Nenoriu dirbti su“: matoma ir redaguojama kiekvieno operatoriaus savo privačiame lange.
+- Senesnio db.py suderinamumas: nėra tiesioginio AttributeError kelio per operator_private_pair_preferences_v25128.
+- Python kompiliacija: tikrinama testais.
+- ZIP: mažiau nei 100 failų.
