@@ -1,19 +1,20 @@
-# SHIFT HAPPENS — V2.5.134
+# SHIFT HAPPENS — V2.5.136
 
-SP ir ŠR papildomi planavimo blokai yra tiesiai **„Pageidavimai“** lange ir matomi tiek Paprastame, tiek Išplėstiniame režime. Atskiro „Privatūs pageidavimai“ lango nėra.
+Streamlit radiologijos rezidentų grafiko sistema.
 
-Ši versija prideda grupinius **„Dirbti su / Dirbti be“** pageidavimus:
-- viename pageidavime galima pasirinkti kelis žmones;
-- kiekviena grupė gali turėti kitą dieną / savaitę / laiką;
-- vietos tik **CENTRO RO** ir **ADC 144/145**;
-- galima kurti tiek atskirų grupių, kiek reikia.
+## Šio leidimo pagrindas
+- koeficientinis kreditų bankas;
+- dublio pasirinkimas visą tikslinį mėnesį, nepriklausomai nuo grafiko statuso;
+- pateikimo eilė skaičiuojama pagal paskutinį reikšmingą pakeitimą ir rodoma tik po termino;
+- atnaujintas lietuviškas seniūnės Word vadovas.
 
-Dream Team redagavimas paliktas abiem — SP ir ŠR.
+## Diegimas
+1. Diegti visą ZIP turinį kartu (`app.py`, `db.py`, `scheduler_engine.py`).
+2. Supabase SQL Editor paleisti `SUPABASE_MIGRATION_V2_5_136_CREDIT_ENGINE_GUARD.sql`.
+3. Perkrauti Streamlit aplikaciją.
 
-## Prieš naudojimą
+Ankstesnių migracijų failai palikti pakete naujos aplinkos atkūrimui.
 
-Jei dar nepaleistos ankstesnės migracijos, paleiskite jas eilės tvarka. Šiai versijai papildomai būtina:
+## V2.5.137 — Pageidavimų Excel eksportas
 
-`SUPABASE_MIGRATION_V2_5_134_GROUPED_PEOPLE_WISHES.sql`
-
-Diegiant pakeiskite visą paketą, kad `app.py`, `db.py`, `scheduler_engine.py` ir `solver_runner.py` būtų iš tos pačios versijos.
+„Pageidavimai“ lange SP / ŠR gali bet kuriuo metu atsisiųsti aktualų spalvotą `.xlsx` failą. Eksportas nepriklauso nuo to, ar pageidavimų langas dar atidarytas, ar jau uždarytas. Iki 14 d. 00:00 prioritetinė eilė faile nerodoma; po termino ji įtraukiama automatiškai.

@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.121"
+ENGINE_API_VERSION = "2.5.137"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -346,6 +346,46 @@ def public_holiday_days_in_month(year: int, month: int) -> Set[int]:
 
 def is_public_holiday(year: int, month: int, day: int) -> bool:
     return date(year,month,day) in lithuanian_public_holidays(year)
+
+
+def reward_credit_units_for_shift(year: int, month: int, day: int, block: str) -> int:
+    """V2.5.136 coefficient wallet.
+
+    One displayed credit equals 12 ordinary daytime tariff-hours.  The ledger stores
+    integer weighted-hours, so repeating decimals never accumulate rounding error.
+
+    LSMU tariff profile supplied for this project:
+      * ordinary daytime hour = 1x
+      * 22:00-06:00 = 2x
+      * public-holiday daytime hour = 2x
+      * public-holiday 22:00-06:00 hour = 3x
+
+    AM/PM are 6h blocks. NIGHT is 20:00-08:00 and is valued across midnight,
+    therefore a holiday boundary is handled correctly instead of treating the whole
+    12h duty as one multiplier. FULL is the current 08:00-20:00 12h daytime duty.
+    """
+    b=str(block or '').upper()
+    d0=date(int(year),int(month),int(day))
+    d1=d0+timedelta(days=1)
+    h0=is_public_holiday(d0.year,d0.month,d0.day)
+    h1=is_public_holiday(d1.year,d1.month,d1.day)
+    day_mult0=2 if h0 else 1
+    day_mult1=2 if h1 else 1
+    night_mult0=3 if h0 else 2
+    night_mult1=3 if h1 else 2
+    if b in ('AM','PM'):
+        return 6*day_mult0
+    if b=='FULL':
+        return 12*day_mult0
+    if b=='NIGHT':
+        # 20-22 day tariff + 22-24 night tariff + 00-06 next-day night + 06-08 next-day day
+        return 2*day_mult0 + 2*night_mult0 + 6*night_mult1 + 2*day_mult1
+    raise ValueError(f'Unsupported reward-credit shift block: {block}')
+
+
+def reward_credit_value(units: int) -> float:
+    """Convert integer weighted tariff-hours to the user-facing credit value."""
+    return float(units)/12.0
 
 
 def weekday_count(year: int, month: int) -> int:

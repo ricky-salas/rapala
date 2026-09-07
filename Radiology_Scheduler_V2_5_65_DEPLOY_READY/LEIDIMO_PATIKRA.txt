@@ -1,5 +1,10 @@
-V2.5.135 leidimo patikra
-- „Seniūnės vadovas“ tabas pašalintas iš navigacijos.
-- Vadovo renderinimo blokas pašalintas iš app.py.
-- Word vadovas paliktas ZIP pakete.
-- Grupiniai pageidavimai ir Dream Team logika nepakeista.
+V2.5.137 PAGEIDAVIMŲ EXCEL — LEIDIMO PATIKRA
+
+PASS — app.py / scheduler_engine.py versijos sutampa: 2.5.137
+PASS — Python kompiliacija
+PASS — 6/6 V2.5.137 leidimo testų
+PASS — Pageidavimų Excel eksportas pasiekiamas nepriklausomai nuo termino būsenos
+PASS — CSV eksportas paliktas šalia
+PASS — prioritetinė vieta iki 14 d. 00:00 neeksportuojama
+PASS — Excel turi Pageidavimai + Suvestinė lapus, spalvas, filtrus ir fiksuotas antraštes
+PASS — bandomasis .xlsx sugeneruotas ir patikrintas

@@ -236,17 +236,26 @@ def all_preferences(year: int, month: int) -> Dict[str, dict]:
 
 
 def all_preference_priorities(year: int, month: int) -> Dict[str, dict]:
-    """First-submission ranking for this schedule month (V2.5.118+)."""
+    """Current submission ranking; V2.5.136 also exposes material-edit metadata."""
     try:
         rows=_data(_retry_db(lambda:
             client().table("preference_priority_points_v25118")
-            .select("year,month,initials,first_submitted_at,submission_order,points_awarded,source")
+            .select("year,month,initials,first_submitted_at,submission_order,points_awarded,source,last_material_change_at,revision_count")
             .eq("year",int(year)).eq("month",int(month))
             .order("submission_order")
             .execute()
         ))
     except Exception:
-        return {}
+        try:
+            rows=_data(_retry_db(lambda:
+                client().table("preference_priority_points_v25118")
+                .select("year,month,initials,first_submitted_at,submission_order,points_awarded,source")
+                .eq("year",int(year)).eq("month",int(month))
+                .order("submission_order")
+                .execute()
+            ))
+        except Exception:
+            return {}
     return {str(r.get("initials")):dict(r) for r in rows}
 
 
@@ -1201,6 +1210,135 @@ def award_backup_credit(backup_id: int, *args, **kwargs) -> dict:
 
 def undo_backup_credit(backup_id: int):
     client().rpc("undo_backup_credit", {"p_backup_id":int(backup_id)}).execute()
+
+
+# ---------------------------------------------------------------------------
+# V2.5.136 coefficient reward-credit wallet
+# Internal unit = one weighted tariff-hour; 12 units = 1.00 displayed credit.
+# ---------------------------------------------------------------------------
+
+def complete_backup_cover_v25136(backup_id: int, credit_units: int, shift_kind: str, event_date: str) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("complete_backup_cover_v25136", {
+        "p_backup_id":int(backup_id),
+        "p_credit_units":int(credit_units),
+        "p_shift_kind":str(shift_kind or ""),
+        "p_event_date":str(event_date),
+    }).execute()))
+    return rows[0] if isinstance(rows,list) and rows else (rows if isinstance(rows,dict) else {})
+
+
+def undo_backup_credit_v25136(backup_id: int):
+    return _retry_db(lambda: client().rpc("undo_backup_credit_v25136", {"p_backup_id":int(backup_id)}).execute())
+
+
+def reward_credit_ledger(initials: str) -> List[dict]:
+    try:
+        return _data(_retry_db(lambda: client().table("reward_credit_ledger_v25136")
+            .select("id,initials,units,source,source_backup_id,event_date,shift_kind,detail,created_at")
+            .eq("initials",str(initials)).order("created_at",desc=True).execute()))
+    except Exception:
+        return []
+
+
+def reward_credit_earned_units(initials: str) -> int:
+    return sum(int(r.get("units",0) or 0) for r in reward_credit_ledger(initials))
+
+
+def reward_credit_redemption_units(initials: str, year: int, month: int) -> int:
+    try:
+        rows=_data(_retry_db(lambda: client().table("reward_credit_redemptions_v25136")
+            .select("units,status").eq("initials",str(initials)).eq("year",int(year)).eq("month",int(month)).limit(1).execute()))
+    except Exception:
+        return 0
+    return int(rows[0].get("units",0) or 0) if rows else 0
+
+
+def reward_credit_reserved_units(initials: str, exclude_year: Optional[int]=None, exclude_month: Optional[int]=None) -> int:
+    try:
+        rows=_data(_retry_db(lambda: client().table("reward_credit_redemptions_v25136")
+            .select("year,month,units,status").eq("initials",str(initials)).execute()))
+    except Exception:
+        return 0
+    total=0
+    for r in rows:
+        if exclude_year is not None and exclude_month is not None and int(r.get("year") or 0)==int(exclude_year) and int(r.get("month") or 0)==int(exclude_month):
+            continue
+        if str(r.get("status") or "reserved") in ("reserved","consumed"):
+            total+=int(r.get("units",0) or 0)
+    return total
+
+
+def reward_credit_eligible_units_for_month(initials: str, year: int, month: int) -> int:
+    """Credits earned before the target month; same-month earnings start next month."""
+    target_start=f"{int(year):04d}-{int(month):02d}-01"
+    try:
+        rows=reward_credit_ledger(initials)
+    except Exception:
+        return 0
+    total=0
+    for r in rows:
+        event=str(r.get("event_date") or "").strip()
+        created=str(r.get("created_at") or "").strip()[:10]
+        effective_date=event or created
+        # Legacy rows without a usable date are treated as pre-existing wallet value.
+        if not effective_date or effective_date < target_start:
+            total += int(r.get("units",0) or 0)
+    return total
+
+
+def reward_credit_available_for_month(initials: str, year: int, month: int) -> int:
+    eligible=reward_credit_eligible_units_for_month(initials,year,month)
+    other=reward_credit_reserved_units(initials,year,month)
+    return max(0,eligible-other)
+
+
+def set_my_reward_credit_redemption_v25136(year: int, month: int, units: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("set_my_reward_credit_redemption_v25136", {
+        "p_year":int(year),"p_month":int(month),"p_units":int(units),
+    }).execute()))
+    return rows[0] if isinstance(rows,list) and rows else (rows if isinstance(rows,dict) else {})
+
+
+def all_reward_credit_redemptions_v25136(year: int, month: int) -> Dict[str,int]:
+    try:
+        rows=_data(_retry_db(lambda: client().table("reward_credit_redemptions_v25136")
+            .select("initials,units,status").eq("year",int(year)).eq("month",int(month)).execute()))
+    except Exception:
+        return {}
+    return {str(r.get("initials")):int(r.get("units",0) or 0) for r in rows if str(r.get("status") or "reserved") in ("reserved","consumed")}
+
+
+def all_reward_credit_balances_v25136() -> Dict[str,int]:
+    try:
+        rows=_data(_retry_db(lambda: client().table("reward_credit_ledger_v25136").select("initials,units").execute()))
+        reds=_data(_retry_db(lambda: client().table("reward_credit_redemptions_v25136").select("initials,units,status").execute()))
+    except Exception:
+        return {}
+    out={}
+    for r in rows:
+        i=str(r.get("initials")); out[i]=out.get(i,0)+int(r.get("units",0) or 0)
+    for r in reds:
+        if str(r.get("status") or "reserved") not in ("reserved","consumed"): continue
+        i=str(r.get("initials")); out[i]=out.get(i,0)-int(r.get("units",0) or 0)
+    return {i:max(0,v) for i,v in out.items()}
+
+
+def award_manual_reward_credit_v25136(target_initials: str, event_date: str, shift_kind: str, units: int, detail: str="") -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("award_manual_reward_credit_v25136", {
+        "p_target_initials":str(target_initials),
+        "p_event_date":str(event_date),
+        "p_shift_kind":str(shift_kind),
+        "p_units":int(units),
+        "p_detail":str(detail or ""),
+    }).execute()))
+    return rows[0] if isinstance(rows,list) and rows else (rows if isinstance(rows,dict) else {})
+
+
+def consume_reward_credit_redemptions_v25136(year: int, month: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("consume_reward_credit_redemptions_v25136", {
+        "p_year":int(year),"p_month":int(month),
+    }).execute()))
+    return rows[0] if isinstance(rows,list) and rows else (rows if isinstance(rows,dict) else {})
 
 
 def _target_month_start(year: int, month: int) -> str:

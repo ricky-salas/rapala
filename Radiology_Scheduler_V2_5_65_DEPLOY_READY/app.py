@@ -35,7 +35,7 @@ import scheduler_engine as _scheduler_engine
 from scheduler_engine import (
     Person, Slot, SolveResult, DEFAULT_PEOPLE, PERSON_COLORS, next_month, weekday_count, round_half_up,
     standard_target, make_slots, solve_schedule, attempt_swap, preview_swap, validate_schedule,
-    lithuanian_public_holidays, public_holiday_days_in_month, is_public_holiday,
+    lithuanian_public_holidays, public_holiday_days_in_month, is_public_holiday, reward_credit_units_for_shift, reward_credit_value,
     serialize_result, deserialize_result, revalidate_loaded_result, calculate_targets, blocks_overlap, hard_unavailable_for_block,
     resident_hard_unavailable_for_block, absolute_unavailable_for_block,
     serialize_people_request_snapshot, people_from_request_snapshot,
@@ -51,8 +51,8 @@ import db
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.135 BE SENIŪNĖS VADOVO LANGO"
-EXPECTED_ENGINE_API_VERSION = "2.5.121"
+APP_VERSION = "2.5.137 PAGEIDAVIMŲ EXCEL"
+EXPECTED_ENGINE_API_VERSION = "2.5.137"
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "SP"
 RESEARCHER_INITIALS = "ŠR"
@@ -742,8 +742,14 @@ def swap_window_close_for(y,m):
     return datetime(cy,cm,16,0,0,tzinfo=ZoneInfo("Europe/Vilnius"))
 
 def weekend_backup_fcfs_window(y,m):
-    # Dublis self-selection stays open through the resident swap window.
-    return preference_open_for(y,m), swap_window_close_for(y,m)
+    # V2.5.136: dublis self-selection is independent from grafikas lifecycle.
+    # It opens with the preference month and remains available through the whole
+    # target month. FINAL / PRELIMINARY status alone never closes this selector.
+    if m==12:
+        close_at=datetime(y+1,1,1,0,0,tzinfo=ZoneInfo("Europe/Vilnius"))
+    else:
+        close_at=datetime(y,m+1,1,0,0,tzinfo=ZoneInfo("Europe/Vilnius"))
+    return preference_open_for(y,m), close_at
 
 def _fcfs_weekend_slot_pool(y,m):
     """Exactly sixteen selectable weekend 6h backup positions for the cycle."""
@@ -761,11 +767,10 @@ def render_fcfs_weekend_backup_selector(y,m,initials):
 
     st.markdown("### DUBLIS — savaitgalio 6 h" if lang=="LT" else "### BACKUP — weekend 6h")
     st.caption(
-        ("Tik 16 teorinių savaitgalio dublių visai grupei, po 1 žmogui. "
-         "Pasirinkimas vyksta pagal pateikimo eilę iki 16 d. 00:00. Jei nepasirinksi, po lango uždarymo likęs dublis bus priskirtas atsitiktinai. Dublis nėra darbo pamaina ir neturi jokios įtakos tavo pageidavimams ar įprasto grafiko sudarymui."
+        ("16 vietų · po 1 žmogui · galima pasirinkti ar keisti visą mėnesį, nepriklausomai nuo grafiko būsenos. Dublis nekeičia pageidavimų reitingo."
          if lang=="LT" else
          "Exactly 16 theoretical weekend backups for the group, one per resident. "
-         "First come, first served until day 16 00:00. If you do not choose one, a remaining mandatory backup is assigned at random after the window closes. A backup is NOT a work shift and never affects preferences or normal grafikas generation.")
+         "A backup can be selected or changed regardless of whether the schedule is not generated, preliminary, or final; self-service remains open throughout the target month. If all 16 are occupied, changing into another resident's slot uses a backup swap. A backup is not a work shift and does not affect normal preference ranking.")
     )
     c1,c2=st.columns(2)
     c1.metric("Užpildyta" if lang=="LT" else "Filled",f"{len(claims)}/16")
@@ -780,7 +785,7 @@ def render_fcfs_weekend_backup_selector(y,m,initials):
         st.info((f"Dublių langas atsidarys {open_at.strftime('%Y-%m-%d %H:%M')}." if lang=="LT" else f"Backup choice opens {open_at.strftime('%Y-%m-%d %H:%M')}."))
         return
     if now_lt >= close_at:
-        st.caption((f"Rezidentų dublio pasirinkimas uždarytas; trūkstami priskiriami automatiškai {close_at.strftime('%Y-%m-%d %H:%M')}." if lang=="LT" else f"Backup choice closed {close_at.strftime('%Y-%m-%d %H:%M')}."))
+        st.caption((f"Šio mėnesio dublių savitarna uždaryta {close_at.strftime('%Y-%m-%d %H:%M')}." if lang=="LT" else f"This month's backup self-service closed {close_at.strftime('%Y-%m-%d %H:%M')}."))
         return
     if len(claims)>=16 and mine is None:
         st.warning("Visi 16 dublių jau pasirinkti. Kreipkis į seniūnę." if lang=="LT" else "All 16 FCFS backup places are already taken. Contact SP.")
@@ -808,7 +813,14 @@ def render_fcfs_weekend_backup_selector(y,m,initials):
             sl=smap[int(choice)]
             try:
                 db.claim_weekend_backup_fcfs_v25118(y,m,sl.idx,sl.day,sl.block)
-                st.success("Dublis rezervuotas pagal pateikimo eilę." if lang=="LT" else "Backup reserved first-come-first-served.")
+                _cp=db.load_schedule(y,m,"current")
+                if _cp:
+                    try:
+                        _rr=refresh_result_payload(_cp,y,m,use_actual_backups=False)
+                        sync_backup_plan(y,m,_rr)
+                    except Exception:
+                        pass
+                st.success("Dublis išsaugotas." if lang=="LT" else "Backup saved.")
                 st.rerun()
             except Exception as e:
                 msg=str(e)
@@ -824,6 +836,13 @@ def render_fcfs_weekend_backup_selector(y,m,initials):
         if mine and st.button("ATLAISVINTI / KEISTI" if lang=="LT" else "RELEASE / CHANGE",use_container_width=True,key=f"fcfs_backup_release_{y}_{m}_{initials}"):
             try:
                 db.release_weekend_backup_fcfs_v25118(y,m)
+                _cp=db.load_schedule(y,m,"current")
+                if _cp:
+                    try:
+                        _rr=refresh_result_payload(_cp,y,m,use_actual_backups=False)
+                        sync_backup_plan(y,m,_rr)
+                    except Exception:
+                        pass
                 st.rerun()
             except Exception as e:
                 st.error(str(e))
@@ -1598,8 +1617,9 @@ def _build_request_ledger(y,m,initials,p,s,rp,recurring_rows,claims,slot_lookup,
             # V2.5.118: dublis selection is informational/theoretical only. It is
             # never part of normal-schedule preference scoring.
             add("backup_claim","THEORETICAL_BACKUP",cs.day,cs.block,"backup_claim",score=False,covered_slot=cs.idx,department=cs.department)
-    for _ in range(max(0,int(p.get("backup_credits_am_to_use",0) or 0))): add("rest_credit","ENTITLEMENT",source="rest_credit",value="AM")
-    for _ in range(max(0,int(p.get("backup_credits_pm_to_use",0) or 0))): add("rest_credit","ENTITLEMENT",source="rest_credit",value="PM")
+    _reward_units=max(0,int(p.get("reward_credit_units_to_use",0) or 0))
+    for _ in range(_reward_units//6):
+        add("rest_credit","ENTITLEMENT",source="reward_credit_v25136",value="0.50 kredito")
 
     note=str(p.get("note") or "").strip()
     if note:
@@ -1634,6 +1654,7 @@ def load_people(y,m):
     # Pateikimo eilė yra mėnesinė ir nekaupiama. Ji taikoma TAM PAČIAM grafikui
     # tik po to, kai bendras maksimaliai įmanomas pageidavimų išpildymas užrakinamas.
     priority_rows=db.all_applied_preference_priorities(y,m) if weekend_fcfs_backup_mode(y,m) else {}
+    reward_redemptions=db.all_reward_credit_redemptions_v25136(y,m)
     # V2.5.96: fairness history is audit-only; never solver input for a new month.
     fairness_prior={}
     holiday_prior={}
@@ -1650,7 +1671,11 @@ def load_people(y,m):
     py,pm=(y-1,12) if m==1 else (y,m-1)
     prev_prefs=db.all_preferences(py,pm); prev_last=calendar.monthrange(py,pm)[1]
     for row in DEFAULT_PEOPLE:
-        initials=row["initials"]; p=prefs.get(initials,{}); s=settings.get(initials,{})
+        initials=row["initials"]; p=dict(prefs.get(initials,{}) or {}); s=settings.get(initials,{})
+        reward_units=max(0,int(reward_redemptions.get(initials,0) or 0))
+        # Current day scheduler works in 6h workload blocks. One 0.50-credit redemption
+        # equals six ordinary tariff-hours and therefore removes one 6h target block.
+        p["reward_credit_units_to_use"]=reward_units
         duty_days=set(p.get("long_duty",set()))
         if prev_last in set(prev_prefs.get(initials,{}).get("long_duty",set())):
             duty_days.add(0)
@@ -1677,9 +1702,9 @@ def load_people(y,m):
         effective_soft_pm=short_soft_pm
         effective_pref_am=short_pref_am
         effective_pref_pm=short_pref_pm
-        credits_am=int(p.get("backup_credits_am_to_use",0))
-        credits_pm=int(p.get("backup_credits_pm_to_use",0))
-        credits_day=credits_am+credits_pm
+        credits_day=reward_units//6
+        credits_am=credits_day
+        credits_pm=0
         prior=fairness_prior.get(initials,{})
         reserved=set()
         if not weekend_fcfs_backup_mode(y,m):
@@ -1808,23 +1833,18 @@ def persist_actual_satisfaction(y,m,payload=None):
 
 
 def credit_selection_errors(y,m):
-    prefs=db.all_preferences(y,m); errors=[]
+    """Validate V2.5.136 coefficient-credit reservations before SYSTEM freeze."""
+    errors=[]
+    reds=db.all_reward_credit_redemptions_v25136(y,m)
     for row in DEFAULT_PEOPLE:
-        i=row["initials"]; p=prefs.get(i,{})
-        use_am=int(p.get("backup_credits_am_to_use",0))
-        use_pm=int(p.get("backup_credits_pm_to_use",0))
-        if use_am+use_pm>2:
-            errors.append({tr("person"):i,tr("details"):tr("max_credit_error")})
-        avail_am=db.rest_credit_available_for_month(i,y,m,"AM")
-        avail_pm=db.rest_credit_available_for_month(i,y,m,"PM")
-        if use_am>avail_am:
-            errors.append({tr("person"):i,tr("credit_am"):f"{use_am}/{avail_am}",tr("details"):tr("bonus_insufficient")})
-        if use_pm>avail_pm:
-            errors.append({tr("person"):i,tr("credit_pm"):f"{use_pm}/{avail_pm}",tr("details"):tr("bonus_insufficient")})
-        if int(p.get("backup_credits_night_to_use",0))>0:
-            errors.append({tr("person"):i,tr("credit_night"):p.get("backup_credits_night_to_use",0),tr("details"):tr("night_bank_only")})
+        i=row["initials"]
+        use_units=max(0,int(reds.get(i,0) or 0))
+        available=db.reward_credit_available_for_month(i,y,m)
+        if use_units % 6 != 0:
+            errors.append({tr("person"):i,tr("details"):"Kreditų panaudojimas šiam dieniniam grafikui turi būti 0,50 kredito žingsniais."})
+        if use_units>available:
+            errors.append({tr("person"):i,tr("details"):f"Pasirinkta {use_units/12:.2f} kred., galima {available/12:.2f} kred."})
     return errors
-
 
 def _parse_iso_dt(value):
     if not value: return None
@@ -3305,6 +3325,147 @@ def build_xlsx(y,m,result,document_status=None,backup_rows_override=None):
             for c,v in enumerate(row): bk.write(rr,c,"" if pd.isna(v) else v,cell)
     wb.close(); out.seek(0); return out.getvalue()
 
+def build_preferences_xlsx(y,m,rows,priority_visible=False):
+    """Beautiful live export of the currently saved preference table.
+
+    The export is deliberately independent from the preference-window status:
+    the senior/researcher can download the current snapshot at any time. The
+    priority column itself is only present after the preference deadline, just
+    like in the UI.
+    """
+    df=pd.DataFrame(rows).copy()
+    out=BytesIO()
+    wb=xlsxwriter.Workbook(out,{"in_memory":True})
+    wb.set_properties({
+        "title":f"Pageidavimai {y}-{m:02d}",
+        "subject":"Rezidentų pageidavimų eksportas",
+        "author":"Shift Happens",
+        "comments":"Eksportas atspindi tuo momentu sistemoje išsaugotus pageidavimus.",
+    })
+    ws=wb.add_worksheet("Pageidavimai")
+    sm=wb.add_worksheet("Suvestinė")
+
+    dark="#20242F"; accent="#FF4B4B"; white="#FFFFFF"; border="#D9DDE5"
+    pale="#F7F8FA"; pale_red="#FDECEC"; pale_blue="#EAF3FF"; pale_yellow="#FFF6DD"
+    pale_green="#EAF7EF"; pale_purple="#F3EEFF"; pale_gray="#F1F3F6"
+    title=wb.add_format({"bold":True,"font_size":18,"font_color":white,"bg_color":dark,"align":"left","valign":"vcenter"})
+    subtitle=wb.add_format({"font_size":10,"font_color":"#6B7280","bg_color":white})
+    metric_label=wb.add_format({"bold":True,"font_color":"#6B7280","bg_color":pale,"border":1,"border_color":border})
+    metric_value=wb.add_format({"bold":True,"font_size":12,"font_color":dark,"bg_color":pale,"border":1,"border_color":border})
+    header_default=wb.add_format({"bold":True,"font_color":dark,"bg_color":"#E8EBF0","border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True})
+    header_hard=wb.add_format({"bold":True,"font_color":"#8B1E1E","bg_color":"#F7D8D8","border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True})
+    header_rest=wb.add_format({"bold":True,"font_color":"#7A5A00","bg_color":"#F9E8AF","border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True})
+    header_work=wb.add_format({"bold":True,"font_color":"#17633A","bg_color":"#CFEAD9","border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True})
+    header_absence=wb.add_format({"bold":True,"font_color":"#24568A","bg_color":"#DCEBFA","border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True})
+    header_long=wb.add_format({"bold":True,"font_color":"#5A3E85","bg_color":"#E8DFF7","border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True})
+    cell=wb.add_format({"font_color":dark,"border":1,"border_color":border,"valign":"top","text_wrap":True})
+    cell_center=wb.add_format({"font_color":dark,"border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True})
+    yes_fmt=wb.add_format({"bold":True,"font_color":"#17633A","bg_color":pale_green,"border":1,"border_color":border,"align":"center"})
+    no_fmt=wb.add_format({"bold":True,"font_color":"#9B2C2C","bg_color":pale_red,"border":1,"border_color":border,"align":"center"})
+    priority_fmt=wb.add_format({"bold":True,"font_color":"#7A4B00","bg_color":pale_yellow,"border":1,"border_color":border,"align":"center"})
+    group_fmts={
+        "hard":wb.add_format({"bg_color":pale_red,"border":1,"border_color":border,"valign":"top","text_wrap":True}),
+        "absence":wb.add_format({"bg_color":pale_blue,"border":1,"border_color":border,"valign":"top","text_wrap":True}),
+        "rest":wb.add_format({"bg_color":pale_yellow,"border":1,"border_color":border,"valign":"top","text_wrap":True}),
+        "work":wb.add_format({"bg_color":pale_green,"border":1,"border_color":border,"valign":"top","text_wrap":True}),
+        "long":wb.add_format({"bg_color":pale_purple,"border":1,"border_color":border,"valign":"top","text_wrap":True}),
+        "neutral":wb.add_format({"bg_color":pale_gray,"border":1,"border_color":border,"valign":"top","text_wrap":True}),
+    }
+    person_fmts={i:wb.add_format({"bold":True,"bg_color":c,"font_color":contrast_text(c),"border":1,"border_color":border,"align":"center","valign":"vcenter"}) for i,c in PERSON_COLORS.items()}
+
+    ncols=max(1,len(df.columns))
+    ws.merge_range(0,0,0,ncols-1,f"Pageidavimai · {month_label(y,m)}",title)
+    ws.set_row(0,30)
+    export_time=datetime.now(ZoneInfo("Europe/Vilnius")).strftime("%Y-%m-%d %H:%M")
+    ws.merge_range(1,0,1,ncols-1,f"Gyvas sistemos eksportas · {export_time}",subtitle)
+
+    submitted_col=tr("submitted")
+    person_col=tr("person")
+    submitted_count=int((df[submitted_col].astype(str)==str(tr("yes"))).sum()) if submitted_col in df.columns else 0
+    missing=[]
+    if person_col in df.columns and submitted_col in df.columns:
+        missing=df.loc[df[submitted_col].astype(str)!=str(tr("yes")),person_col].astype(str).tolist()
+    ws.write(3,0,"Pateikta",metric_label); ws.write(3,1,f"{submitted_count}/{len(DEFAULT_PEOPLE)}",metric_value)
+    ws.write(3,2,"Dar nepateikė",metric_label); ws.merge_range(3,3,3,min(ncols-1,7),", ".join(missing) if missing else "—",metric_value)
+    if priority_visible:
+        ws.write(3,min(ncols-1,8),"Prioritetas",metric_label)
+        if min(ncols-1,9)>=min(ncols-1,8):
+            ws.write(3,min(ncols-1,9),"Galutinis po 14 d. 00:00",metric_value)
+
+    header_row=5
+    def col_group(name):
+        n=str(name).lower()
+        if "dirbti negaliu" in n or "unavailable" in n: return "hard"
+        if "atostog" in n or "neatvyk" in n or "budėjimo" in n: return "absence"
+        if "noriu laisv" in n or "time off" in n: return "rest"
+        if "pageidauju dirbti" in n or "prefer work" in n: return "work"
+        if "ilgalaik" in n or "long-term" in n: return "long"
+        if "komentar" in n or "el. pašt" in n or "šven" in n: return "neutral"
+        return "default"
+    header_fmt={"hard":header_hard,"absence":header_absence,"rest":header_rest,"work":header_work,"long":header_long}.get
+    for c,name in enumerate(df.columns):
+        grp=col_group(name)
+        ws.write(header_row,c,name,header_fmt(grp,header_default))
+    ws.set_row(header_row,42)
+
+    priority_name="Pateikimo vieta"
+    for r_idx,(_,row) in enumerate(df.iterrows(),start=header_row+1):
+        ini=str(row.get(person_col,"")) if person_col in df.columns else ""
+        for c,name in enumerate(df.columns):
+            value=row.get(name,"")
+            if pd.isna(value): value=""
+            grp=col_group(name)
+            fmt=cell
+            if name==person_col:
+                fmt=person_fmts.get(ini,cell_center)
+            elif name==submitted_col:
+                fmt=yes_fmt if str(value)==str(tr("yes")) else no_fmt
+            elif name==priority_name and priority_visible:
+                fmt=priority_fmt
+            elif grp in group_fmts:
+                fmt=group_fmts[grp]
+            elif c<=3:
+                fmt=cell_center
+            ws.write(r_idx,c,value,fmt)
+        ws.set_row(r_idx,38)
+
+    if len(df.columns):
+        ws.autofilter(header_row,0,header_row+len(df),len(df.columns)-1)
+    ws.freeze_panes(header_row+1,2)
+    # Compact but readable widths; long request fields wrap instead of creating a giant sheet.
+    for c,name in enumerate(df.columns):
+        n=str(name).lower()
+        width=14
+        if name==tr("name"): width=24
+        elif name==tr("person"): width=10
+        elif "komentar" in n: width=32
+        elif "ilgalaik" in n: width=30
+        elif "el. pašt" in n: width=27
+        elif any(k in n for k in ["dirbti negaliu","noriu laisv","pageidauju dirbti","atostog","neatvyk","budėjimo"]): width=20
+        elif "pateikimo būdas" in n: width=22
+        elif "pageidavimų apimtis" in n: width=18
+        ws.set_column(c,c,width)
+
+    # A clean summary sheet for a quick senior overview.
+    sm.merge_range("A1:F1",f"Suvestinė · {month_label(y,m)}",title)
+    sm.set_row(0,30)
+    sm.write("A3","Pateikta",metric_label); sm.write("B3",submitted_count,metric_value)
+    sm.write("C3","Iš viso",metric_label); sm.write("D3",len(DEFAULT_PEOPLE),metric_value)
+    sm.write("E3","Dar nepateikė",metric_label); sm.write("F3",len(missing),metric_value)
+    sm.write("A5","Dar nepateikė",header_default)
+    if missing:
+        for rr,ini in enumerate(missing,start=5):
+            sm.write(rr,0,ini,person_fmts.get(ini,cell_center))
+    else:
+        sm.write("A6","Visi pateikė",yes_fmt)
+    sm.write("C5","Pastaba",header_default)
+    sm.merge_range("C6:F8","Excel failą galima atsisiųsti bet kuriuo pageidavimų teikimo etapu. Iki 14 d. 00:00 prioritetinė vieta nerodoma; po termino eksportuojama galutinė eilė.",cell)
+    sm.set_column("A:A",18); sm.set_column("B:B",3); sm.set_column("C:F",22)
+    sm.freeze_panes(5,0)
+
+    wb.close(); out.seek(0); return out.getvalue()
+
+
 def render_schedule_download_buttons(y,m,result,*,status_label,file_prefix,key_prefix,backup_rows_override=None):
     """Explicit grafikas exports next to every operational grafikas view.
 
@@ -4015,10 +4176,6 @@ def publish_system_baseline_for_swap_window(y,m):
     db.save_draft(y,m,serialize_result(draft_result))
     if not db.publish_draft(y,m):
         return {"ok":False,"error":tr("no_draft")}
-    month_prefs=db.all_preferences(y,m)
-    for person in DEFAULT_PEOPLE:
-        i=person["initials"]; pp=month_prefs.get(i,{})
-        db.set_rest_credit_redemptions(i,y,m,int(pp.get("backup_credits_am_to_use",0)),int(pp.get("backup_credits_pm_to_use",0)))
     db.sync_backups(y,m,desired)
     payload=db.load_schedule(y,m,"current"); result=refresh_result_payload(payload,y,m,use_actual_backups=True)
     db.save_current(y,m,serialize_result(result))
@@ -4903,15 +5060,15 @@ with tabs[pos]:
                 st.success("Pateikta: TAIP — rezidento anketa." if lang=="LT" else "Submitted: YES — resident submission.")
 
         if weekend_fcfs_backup_mode(year,month):
-            pri=db.get_preference_priority(year,month,preference_target)
-            if pri and pri.get("submission_order"):
-                st.info(
-                    f"Pateikimo vieta: {int(pri['submission_order'])} iš 16. "
-                    "Sistema visada pirmiausia siekia įvykdyti kuo daugiau visų rezidentų pageidavimų. "
-                    "Pateikimo eilė tampa papildomu pranašumu tik tada, kai keli vienodai galimi pageidavimai tarpusavyje susikerta ir visų vienu metu įvykdyti neįmanoma."
-                )
-            elif cur:
-                st.caption("Pateikimo vieta neužfiksuota.")
+            # V2.5.136: live priority is intentionally hidden during the open
+            # preference window. Backend records the last material change, and
+            # the final 1–16 order becomes visible only after the 14 d. 00:00 cutoff.
+            if now_lt >= cutoff_pref:
+                pri=db.get_preference_priority(year,month,preference_target)
+                if pri and pri.get("submission_order"):
+                    st.info(f"Pateikimo vieta: {int(pri['submission_order'])} iš 16")
+                elif cur:
+                    st.caption("Pateikimo vieta netaikoma — nėra mėnesio pageidavimų, kuriems reikėtų konflikto prioriteto.")
             if preference_target==active_user:
                 render_fcfs_weekend_backup_selector(year,month,active_user)
                 st.divider()
@@ -4926,8 +5083,6 @@ with tabs[pos]:
             st.divider()
 
         days=list(range(1,calendar.monthrange(year,month)[1]+1))
-        avail_am=db.rest_credit_available_for_month(preference_target,year,month,"AM")
-        avail_pm=db.rest_credit_available_for_month(preference_target,year,month,"PM")
         st.markdown(f"### {tr('short_term')}")
         with st.form(f"prefs_{year}_{month}_{active_user}_{preference_target}"):
             if lifecycle_operator_ui and operator_manual_mode:
@@ -4994,11 +5149,10 @@ with tabs[pos]:
             )
 
             note=st.text_area(tr("note"),value=cur.get("note",""),placeholder=tr("note_ph"))
-            cr1,cr2=st.columns(2)
-            with cr1:
-                bonus_am_use=st.number_input(tr("use_credit_am"),min_value=0,max_value=max(0,avail_am),value=min(int(cur.get("backup_credits_am_to_use",0)),max(0,avail_am)),step=1,help=tr("bonus_target_effect"))
-            with cr2:
-                bonus_pm_use=st.number_input(tr("use_credit_pm"),min_value=0,max_value=max(0,avail_pm),value=min(int(cur.get("backup_credits_pm_to_use",0)),max(0,avail_pm)),step=1,help=tr("bonus_target_effect"))
+            # V2.5.136: reward credits are a separate wallet and are no longer
+            # mixed into the monthly preference form. Legacy typed fields stay zero.
+            bonus_am_use=0
+            bonus_pm_use=0
             st.divider()
             st.markdown(f"### {tr('legal_safety_inputs')}")
             st.caption(tr("labour_hard_summary"))
@@ -5051,8 +5205,6 @@ with tabs[pos]:
                     st.error(tr("hard_conflict"))
                 elif soft_pref_conflict:
                     st.error(tr("soft_conflict"))
-                elif int(bonus_am_use)+int(bonus_pm_use)>2:
-                    st.error(tr("max_credit_error"))
                 else:
                     pref_payload={
                         "unavailable":unavailable,
@@ -5114,10 +5266,11 @@ with tabs[pos]:
             )
     if senior_mode:
         st.divider(); st.markdown(f"### {tr('all_preferences')}"); prefs=db.all_preferences(year,month); sets=db.all_account_settings(); recurring_all=db.all_recurring_preferences(); nd=calendar.monthrange(year,month)[1]; rows=[]
-        priority_rows=db.all_preference_priorities(year,month) if weekend_fcfs_backup_mode(year,month) else {}
-        applied_priority_rows=db.all_applied_preference_priorities(year,month) if weekend_fcfs_backup_mode(year,month) else {}
-        if weekend_fcfs_backup_mode(year,month) and lang=="LT":
-            st.caption("Pateikimo vieta skaičiuojama iš naujo kiekvienam grafikui ir galioja būtent tam grafikui, kuriam pateikti pageidavimai. Ji naudojama tik kaip papildomas kriterijus, kai keli pageidavimai realiai susikerta ir visų vienu metu įvykdyti neįmanoma.")
+        _priority_visible=bool(weekend_fcfs_backup_mode(year,month) and now_lt>=cutoff_pref)
+        priority_rows=db.all_preference_priorities(year,month) if _priority_visible else {}
+        applied_priority_rows=db.all_applied_preference_priorities(year,month) if _priority_visible else {}
+        if weekend_fcfs_backup_mode(year,month) and lang=="LT" and _priority_visible:
+            st.caption("Pateikimo vieta galioja tam pačiam grafikui ir nustatoma pagal paskutinio reikšmingo pageidavimų pakeitimo laiką iki termino.")
         backup_claims=db.list_backup_claims(year,month) if weekend_fcfs_backup_mode(year,month) else []
         claims_by_person={str(r.get("initials")):r for r in backup_claims}
         slot_map_fcfs={s.idx:s for s in _fcfs_weekend_slot_pool(year,month)} if weekend_fcfs_backup_mode(year,month) else {}
@@ -5125,11 +5278,12 @@ with tabs[pos]:
             mc1,mc2=st.columns(2)
             mc1.metric("Pageidavimai pateikti" if lang=="LT" else "Preferences submitted",f"{len(prefs)}/16")
             mc2.metric("Dubliai užpildyti" if lang=="LT" else "Backups filled",f"{len(backup_claims)}/16")
-            st.caption(
-                "Pateikimo eilė: 1–16. Ji taikoma tam pačiam grafikui tik tada, kai keli pageidavimai realiai susikerta ir visų vienu metu įvykdyti neįmanoma. Sistema visada pirmiausia siekia 100% bendro pageidavimų išpildymo."
-                if lang=="LT" else
-                "Pateikimo eilė: 1–16. Ji taikoma tam pačiam grafikui ir tik kaip papildomas konfliktų sprendimo kriterijus po to, kai sistema užfiksuoja maksimaliai įmanomą bendrą pageidavimų išpildymą."
-            )
+            if _priority_visible:
+                st.caption(
+                    "Pateikimo eilė: 1–16. Ji nustatoma pagal paskutinį reikšmingą pageidavimų pakeitimą iki termino ir taikoma tik tada, kai keli pageidavimai realiai susikerta. Sistema visada pirmiausia siekia 100 % bendro pageidavimų išpildymo."
+                    if lang=="LT" else
+                    "Pateikimo eilė rodoma tik po termino ir naudojama tik likusiam konfliktui."
+                )
         for p in DEFAULT_PEOPLE:
             x=prefs.get(p["initials"],{})
             vol=(len(x.get("unavailable",set()))+len(x.get("unavailable_am",set()))+
@@ -5150,9 +5304,7 @@ with tabs[pos]:
                           else ("Rezidentas" if lang=="LT" else "Resident")
                           if x else "—")
                 ),
-                ("Pateikimo vieta" if lang=="LT" else "Submission rank"):(
-                    priority_rows.get(p["initials"],{}).get("submission_order") or "—"
-                ),
+                **(({"Pateikimo vieta":(priority_rows.get(p["initials"],{}).get("submission_order") or "—")}) if _priority_visible else {}),
                 ("Dublis" if lang=="LT" else "Backup"):(
                     (lambda rr: (
                         f"{slot_map_fcfs[int(rr['covered_slot'])].day:02d} {WEEKDAYS[lang][slot_map_fcfs[int(rr['covered_slot'])].weekday]} · {block_label(slot_map_fcfs[int(rr['covered_slot'])].block)}"
@@ -5174,13 +5326,32 @@ with tabs[pos]:
                 tr("preferred_am_dates"):", ".join(map(str,sorted(x.get("preferred_am",set())))),
                 tr("preferred_pm_dates"):", ".join(map(str,sorted(x.get("preferred_pm",set())))),
                 tr("long_term"):"; ".join(f"{WEEKDAY_FULL[lang][int(r['weekday'])]}: {r['preference_type']} {r.get('block','FULL')}" for r in recurring_all.get(p["initials"],[])),
-                tr("use_credit_am"):x.get("backup_credits_am_to_use",0),
-                tr("use_credit_pm"):x.get("backup_credits_pm_to_use",0),
                 tr("comment"):x.get("note",""),
                 tr("holiday_pref"):({-1:tr("holiday_rest"),0:tr("holiday_neutral"),1:tr("holiday_work")}.get(int(sets.get(p["initials"],{}).get("holiday_preference",0) or 0),tr("holiday_neutral"))),
                 tr("email"):sets.get(p["initials"],{}).get("email","")
             })
-        st.dataframe(style_rows(pd.DataFrame(rows)),use_container_width=True,hide_index=True); st.caption(tr("visibility_flag"))
+        _prefs_export_df=pd.DataFrame(rows)
+        st.dataframe(style_rows(_prefs_export_df),use_container_width=True,hide_index=True)
+        st.caption(tr("visibility_flag"))
+        _ex1,_ex2=st.columns(2)
+        with _ex1:
+            st.download_button(
+                "ATSISIŲSTI EXCEL (.xlsx)",
+                build_preferences_xlsx(year,month,rows,priority_visible=_priority_visible),
+                file_name=f"Pageidavimai_{year}_{month:02d}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key=f"preferences_xlsx_{year}_{month}",
+            )
+        with _ex2:
+            st.download_button(
+                "ATSISIŲSTI CSV (.csv)",
+                _prefs_export_df.to_csv(index=False).encode("utf-8-sig"),
+                file_name=f"Pageidavimai_{year}_{month:02d}.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key=f"preferences_csv_{year}_{month}",
+            )
 pos+=1
 
 # --- Settings ---
@@ -6019,7 +6190,7 @@ with tabs[pos]:
                     if payload:
                         _workflow_card(
                             "2 etapas · Apsikeitimų laikotarpis" if lang=="LT" else "PRELIMINARY PUBLISHED — SWAPS ACTIVE",
-                            f"Rezidentai mato preliminarų grafiką, gali siūlyti apsikeitimus ir pasirinkti dar laisvą dublį iki {s_close:%Y-%m-%d %H:%M}." if lang=="LT" else f"Residents can see the preliminary grafikas and create pre-FINAL swaps / choose a remaining FCFS backup until {s_close:%Y-%m-%d %H:%M}.",
+                            f"Rezidentai mato preliminarų grafiką ir gali siūlyti apsikeitimus iki {s_close:%Y-%m-%d %H:%M}. Dublių pasirinkimas lieka atskira viso mėnesio savitarna." if lang=="LT" else f"Residents can see the preliminary schedule and create pre-FINAL swaps until {s_close:%Y-%m-%d %H:%M}. Backup selection remains a separate all-month self-service.",
                             "swap_open"
                         )
                     elif draft_payload:
@@ -6084,7 +6255,7 @@ with tabs[pos]:
                     q3.metric("Paskirstyti automatiškai" if lang=="LT" else "AUTO random",auto_n)
                     _workflow_card(
                         "3 etapas · Seniūnės galutinė peržiūra" if lang=="LT" else "RESIDENT WINDOWS CLOSED — SENIOR REVIEW",
-                        "Nuo 16 d. 00:00 rezidentai nebegali keisti pageidavimų, siūlyti naujų apsikeitimų ar rinktis dublio. Visi likę privalomi dubliai automatiškai atsitiktine tvarka paskirstomi jų dar nepasirinkusiems rezidentams. Seniūnės rankinės funkcijos lieka aktyvios." if lang=="LT" else "From day 16 00:00 residents can no longer edit preferences, create pre-FINAL swaps, or choose a backup. Every unclaimed mandatory backup is randomly assigned among the remaining residents. SP/ŠR manual control remains active.",
+                        "Nuo 16 d. 00:00 uždaromi nauji grafiko pageidavimai ir apsikeitimai. Trūkstami dubliai gali būti užpildyti automatiškai finalinei aprėpčiai, tačiau dublio savitarna lieka aktyvi visą tikslinį mėnesį; aktyvuoto ar jau atlikto dublio tyliai perkelti negalima." if lang=="LT" else "From day 16 00:00 new schedule preferences and swaps close. Missing backups may be auto-filled for final coverage, while backup self-service remains active throughout the target month; an activated or completed backup cannot be silently moved.",
                         "swap_closed"
                     )
             else:
@@ -6212,6 +6383,13 @@ with tabs[pos]:
                     if hard_now!=0:
                         st.error(f"FINAL validacija nepraėjo: HARD={hard_now}"); st.stop()
                     db.finalize_schedule_v2592(year,month,serialize_result(rr))
+                    # V2.5.136: reserved reward credits become consumed only when FINAL is locked.
+                    # If this bookkeeping call ever fails, the reservation still remains unavailable
+                    # for double-spending and can be reconciled safely later.
+                    try:
+                        db.consume_reward_credit_redemptions_v25136(year,month)
+                    except Exception:
+                        pass
                     if weekend_fcfs_backup_mode(year,month):
                         st.session_state["_finalization_flash"]=("success","Galutinis grafikas patvirtintas ir paruoštas administracijai. Rezidentų savitarna lieka uždaryta; vėlesni realaus darbo pasikeitimai registruojami atskirame faktiniame grafike." if lang=="LT" else "FINAL locked and prepared for administration. Resident self-service remains closed; post-FINAL operational changes belong to the separate ACTUAL layer.")
                     else:
@@ -6665,56 +6843,93 @@ if advanced_mode:
     pos+=1
 
 # --- Credits ---
-# V2.5.117 — operational Credits is visible in both Simple and Advanced modes.
 with tabs[pos]:
-    st.subheader(tr("credits_debts"))
+    st.subheader("Kreditai")
 
-    # One immutable WESTON click ledger, mirrored as a negative balance for SP
-    # and an equal positive receivable for ŠR. This is intentionally shown in
-    # Credits, where both sides can see the running balance without hunting
-    # through Summary/Transparency.
     if active_user in (SENIOR_INITIALS,WESTON_CREDITOR_INITIALS):
         try:
             _weston_credit=db.weston_beer_stats_v25110(year,month)
             _w_total=int(_weston_credit.get("total_beers",0) or 0)
-            _w_month=int(_weston_credit.get("month_beers",0) or 0)
-            st.markdown("### WESTON balansas" if lang=="LT" else "### WESTON balance")
-            _wc1,_wc2,_wc3=st.columns(3)
-            if active_user==SENIOR_INITIALS:
-                _wc1.metric(("Tavo balansas" if lang=="LT" else "Your balance"),f"−{_w_total} WESTON")
-                _wc2.metric(("Skola ŠR — iš viso" if lang=="LT" else "Debt to ŠR — lifetime"),_w_total)
-                _wc3.metric(("Šį mėnesį prisidėjo" if lang=="LT" else "Added this month"),f"+{_w_month}")
-                st.caption(("SP: 1 GENERUOTI / PERKURTI paspaudimas = −1 WESTON tavo balanse ir +1 WESTON ŠR. Tas pats ledgeris rodomas abiem pusėms." if lang=="LT" else "SP: 1 GENERATE / REGENERATE click = −1 WESTON on your balance and +1 WESTON for ŠR. Both views come from the same ledger."))
-            else:
-                _wc1.metric(("Tavo balansas" if lang=="LT" else "Your balance"),f"+{_w_total} WESTON")
-                _wc2.metric(("SP tau skolinga — iš viso" if lang=="LT" else "SP owes you — lifetime"),_w_total)
-                _wc3.metric(("Šį mėnesį uždirbai" if lang=="LT" else "Earned this month"),f"+{_w_month}")
-                st.caption(("ŠR: kiekvienas SP GENERUOTI / PERKURTI paspaudimas = +1 WESTON tau. SP mato tą patį skaičių kaip savo skolą." if lang=="LT" else "ŠR: every SP GENERATE / REGENERATE click = +1 WESTON for you. SP sees the same number as her debt."))
-            st.divider()
-        except Exception as _weston_exc:
-            st.caption(("WESTON balanso šiuo metu nepavyko nuskaityti." if lang=="LT" else "WESTON balance is temporarily unavailable."))
+            with st.expander("WESTON",expanded=False):
+                st.metric("Balansas",(f"−{_w_total}" if active_user==SENIOR_INITIALS else f"+{_w_total}"))
+        except Exception:
+            pass
 
-    st.markdown(f"### {tr('credit_balances')}")
-    st.caption(tr("netting_explain"))
-    rest_bank=db.rest_credit_balances(active_user)
-    rb1,rb2,rb3=st.columns(3)
-    rb1.metric(tr("credit_am"),rest_bank.get("AM",0))
-    rb2.metric(tr("credit_pm"),rest_bank.get("PM",0))
-    rb3.metric(tr("credit_night"),rest_bank.get("NIGHT",0))
-    st.caption(tr("credit_month_cap")); st.caption(tr("night_bank_only"))
+    earned_units=db.reward_credit_earned_units(active_user)
+    current_use_units=db.reward_credit_redemption_units(active_user,year,month)
+    available_for_month=db.reward_credit_available_for_month(active_user,year,month)
+    other_reserved=max(0,earned_units-available_for_month)
+    free_units=max(0,available_for_month-current_use_units)
+
+    c1,c2,c3=st.columns(3)
+    c1.metric("Sukaupta",f"{earned_units/12:.2f}")
+    c2.metric("Šiam grafikui",f"{current_use_units/12:.2f}")
+    c3.metric("Laisvas likutis",f"{free_units/12:.2f}")
+    st.caption("1,00 kreditas = 12 bazinių tarifinių valandų · 1× / 2× / 3× · galiojimo pabaigos nėra. Uždirbtas kreditas naudojamas nuo kito mėnesio.")
+
+    _sched_state=db.get_schedule_state(year,month)
+    _lifecycle=db.get_schedule_lifecycle(year,month)
+    _credit_locked=bool(_sched_state.get("has_published")) or str(_lifecycle.get("state") or "")=="final"
+    st.markdown("### Panaudoti šiam grafikui")
+    max_redeem_units=(available_for_month//6)*6
+    _redeem_value=st.number_input(
+        "Kreditai",min_value=0.0,max_value=float(max_redeem_units)/12.0,
+        value=min(float(current_use_units)/12.0,float(max_redeem_units)/12.0),step=0.5,format="%.2f",
+        disabled=_credit_locked,key=f"reward_credit_use_{year}_{month}_{active_user}"
+    )
+    if _credit_locked:
+        st.caption("Pagrindinis grafikas jau paskelbtas — šio mėnesio kreditų panaudojimas užrakintas. Nepanaudotas likutis persikelia į kitus mėnesius.")
+    elif st.button("IŠSAUGOTI KREDITŲ PANAUDOJIMĄ",type="primary",use_container_width=True,key=f"reward_credit_save_{year}_{month}_{active_user}"):
+        try:
+            _units=int(round(float(_redeem_value)*12))
+            if _units%6:
+                raise ValueError("Šiam dieniniam grafikui kreditai naudojami 0,50 žingsniais.")
+            db.set_my_reward_credit_redemption_v25136(year,month,_units)
+            st.success("Išsaugota. Jei juodraštis jau buvo sugeneruotas, jį reikia sugeneruoti iš naujo.")
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+
+    if lifecycle_operator_ui:
+        with st.expander("Registruoti ekstra pavadavimą",expanded=False):
+            _target=st.selectbox("Rezidentas",[p["initials"] for p in DEFAULT_PEOPLE],key=f"reward_manual_person_{year}_{month}")
+            _event_date=st.date_input("Data",value=date.today(),key=f"reward_manual_date_{year}_{month}")
+            _kind_label=st.selectbox("Pamaina",["Rytas 08–14","Popietė 14–20","Diena 08–20","Naktis 20–08"],key=f"reward_manual_kind_{year}_{month}")
+            _kind={"Rytas 08–14":"AM","Popietė 14–20":"PM","Diena 08–20":"FULL","Naktis 20–08":"NIGHT"}[_kind_label]
+            _units=reward_credit_units_for_shift(_event_date.year,_event_date.month,_event_date.day,_kind)
+            st.metric("Kreditas",f"{reward_credit_value(_units):.2f}")
+            _detail=st.text_input("Pastaba",key=f"reward_manual_detail_{year}_{month}")
+            if st.button("REGISTRUOTI",use_container_width=True,key=f"reward_manual_add_{year}_{month}"):
+                try:
+                    db.award_manual_reward_credit_v25136(_target,_event_date.isoformat(),_kind,_units,_detail)
+                    st.success("Kreditas pridėtas.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+
+    with st.expander("Kreditų istorija",expanded=False):
+        _ledger=db.reward_credit_ledger(active_user)
+        if _ledger:
+            _rows=[]
+            for r in _ledger:
+                _rows.append({
+                    "Data":r.get("event_date") or str(r.get("created_at") or "")[:10],
+                    "Šaltinis":r.get("source"),
+                    "Pamaina":r.get("shift_kind"),
+                    "Kreditas":round(int(r.get("units",0) or 0)/12.0,2),
+                    "Pastaba":r.get("detail") or "",
+                })
+            st.dataframe(pd.DataFrame(_rows),use_container_width=True,hide_index=True)
+        else:
+            st.caption("Kreditų operacijų dar nėra.")
+
     if senior_mode:
-        st.divider(); st.markdown(f"### {tr('credit_balances')} — {tr('summary')}")
-        rest_all=db.all_rest_credit_balances()
-        rows=[]
-        for person in DEFAULT_PEOPLE:
-            i=person["initials"]
-            rows.append({
-                tr("person"):i,
-                f"{tr('rest_credit_bank')} AM":rest_all.get(i,{}).get("AM",0),
-                f"{tr('rest_credit_bank')} PM":rest_all.get(i,{}).get("PM",0),
-                f"{tr('rest_credit_bank')} NIGHT":rest_all.get(i,{}).get("NIGHT",0),
-            })
-        st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
+        with st.expander("Grupės balansai",expanded=False):
+            _all=db.all_reward_credit_balances_v25136()
+            st.dataframe(pd.DataFrame([{
+                "Rezidentas":p["initials"],
+                "Likutis":round(max(0,int(_all.get(p["initials"],0) or 0))/12.0,2),
+            } for p in DEFAULT_PEOPLE]),use_container_width=True,hide_index=True)
     pos+=1
 
 # --- Backups ---
@@ -7034,31 +7249,26 @@ with tabs[pos]:
                     st.success(f"{tr('completed_backup')}: {rr_fresh.get('completed_at')}")
                     if st.button(tr("undo_backup_completed"),use_container_width=True):
                         try:
-                            db.undo_backup_credit(rid); st.success(tr("backup_completion_undone")); st.rerun()
+                            db.undo_backup_credit_v25136(rid); st.success(tr("backup_completion_undone")); st.rerun()
                         except Exception as exc:
                             st.error(str(exc))
                 else:
                     auto_type=("NIGHT" if covered_slot and covered_slot.block=="NIGHT" else covered_slot.block if covered_slot else "")
-                    if auto_type=="AM": st.info(f"{tr('cover_credit_type')}: {tr('credit_am')}")
-                    elif auto_type=="PM": st.info(f"{tr('cover_credit_type')}: {tr('credit_pm')}")
-                    elif auto_type=="NIGHT": st.info(f"{tr('cover_credit_type')}: {tr('credit_night')}")
-                    st.caption(tr("cover_credit_note"))
-                    if st.button(tr("mark_backup_completed"),type="primary",use_container_width=True,disabled=auto_type not in ("AM","PM","NIGHT")):
+                    _credit_units=(reward_credit_units_for_shift(year,month,covered_slot.day,auto_type) if covered_slot is not None and auto_type in ("AM","PM","NIGHT") else 0)
+                    if _credit_units:
+                        st.info(f"Už realiai atliktą pavadavimą: +{reward_credit_value(_credit_units):.2f} kredito")
+                    if st.button(tr("mark_backup_completed"),type="primary",use_container_width=True,disabled=not _credit_units):
                         try:
-                            ev=db.complete_backup_cover(rid)
-                            st.success(tr("backup_completed"))
-                            if ev.get("coverer_effect")=="REST_EARNED": st.info(tr("cover_effect_rest"))
+                            db.complete_backup_cover_v25136(rid,_credit_units,auto_type,date(year,month,covered_slot.day).isoformat())
+                            st.success(f"Realus pavadavimas užregistruotas: +{reward_credit_value(_credit_units):.2f} kredito.")
                         except Exception as exc:
                             st.error(str(exc))
-                rest_all=db.all_rest_credit_balances()
-                st.markdown(f"### {tr('credit_balances')}")
-                all_ids=sorted(rest_all)
-                st.dataframe(pd.DataFrame([{
-                    tr("person"):i,
-                    f"{tr('rest_credit_bank')} AM":rest_all.get(i,{}).get("AM",0),
-                    f"{tr('rest_credit_bank')} PM":rest_all.get(i,{}).get("PM",0),
-                    f"{tr('rest_credit_bank')} NIGHT":rest_all.get(i,{}).get("NIGHT",0),
-                } for i in all_ids]),use_container_width=True,hide_index=True)
+                _all_credit=db.all_reward_credit_balances_v25136()
+                with st.expander("Kreditų balansai",expanded=False):
+                    st.dataframe(pd.DataFrame([{
+                        "Rezidentas":i,
+                        "Kreditai":round(max(0,int(_all_credit.get(i,0) or 0))/12.0,2),
+                    } for i in sorted(_all_credit)]),use_container_width=True,hide_index=True)
                 st.dataframe(backup_table(year,month,result),use_container_width=True,hide_index=True)
 pos+=1
 
