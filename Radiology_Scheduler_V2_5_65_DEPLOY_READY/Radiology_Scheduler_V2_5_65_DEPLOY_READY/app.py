@@ -51,8 +51,41 @@ import db
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.130 PRIVATŪS BLOKAI IR ŠVARI NAVIGACIJA"
-EXPECTED_ENGINE_API_VERSION = "2.5.121"
+APP_VERSION = "2.5.139 IMPORT COMPAT FIX"
+EXPECTED_ENGINE_API_VERSION = "2.5.137"
+COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.121", "2.5.137"}
+
+# V2.5.139: import-safe reward credit compatibility. Older deployed engines used
+# by the same app already contain the scheduling API but predate the credit helpers.
+# Keep the app bootable and use the exact same coefficient formula locally.
+def _fallback_reward_credit_units_for_shift(year: int, month: int, day: int, block: str) -> int:
+    b = str(block or "").upper()
+    d0 = date(int(year), int(month), int(day))
+    d1 = d0 + timedelta(days=1)
+    h0 = is_public_holiday(d0.year, d0.month, d0.day)
+    h1 = is_public_holiday(d1.year, d1.month, d1.day)
+    day_mult0 = 2 if h0 else 1
+    day_mult1 = 2 if h1 else 1
+    night_mult0 = 3 if h0 else 2
+    night_mult1 = 3 if h1 else 2
+    if b in ("AM", "PM"):
+        return 6 * day_mult0
+    if b == "FULL":
+        return 12 * day_mult0
+    if b == "NIGHT":
+        return 2 * day_mult0 + 2 * night_mult0 + 6 * night_mult1 + 2 * day_mult1
+    raise ValueError(f"Unsupported reward-credit shift block: {block}")
+
+def _fallback_reward_credit_value(units: int) -> float:
+    return float(units) / 12.0
+
+reward_credit_units_for_shift = getattr(
+    _scheduler_engine, "reward_credit_units_for_shift", _fallback_reward_credit_units_for_shift
+)
+reward_credit_value = getattr(
+    _scheduler_engine, "reward_credit_value", _fallback_reward_credit_value
+)
+
 BASE = Path(__file__).parent
 SENIOR_INITIALS = "SP"
 RESEARCHER_INITIALS = "ŠR"
@@ -69,12 +102,11 @@ db.init_db(DEFAULT_MANUAL_LT, DEFAULT_MANUAL_EN, DEFAULT_PEOPLE)
 
 st.set_page_config(page_title="Shift Happens", layout="wide", initial_sidebar_state="expanded")
 
-if str(ENGINE_API_VERSION) != EXPECTED_ENGINE_API_VERSION:
+if str(ENGINE_API_VERSION) not in COMPATIBLE_ENGINE_API_VERSIONS:
     st.error(
-        "APP / ENGINE VERSION MISMATCH. "
-        f"App expects scheduler_engine API {EXPECTED_ENGINE_API_VERSION}, "
-        f"but loaded {ENGINE_API_VERSION}. "
-        "Deploy app.py AND scheduler_engine.py from the same release."
+        "Nesuderinta programos ir planavimo variklio versija. "
+        f"Programai tinka {sorted(COMPATIBLE_ENGINE_API_VERSIONS)}, "
+        f"bet įkelta {ENGINE_API_VERSION}. Įkelkite app.py ir scheduler_engine.py iš to paties leidimo."
     )
     st.stop()
 st.markdown("""
@@ -742,8 +774,14 @@ def swap_window_close_for(y,m):
     return datetime(cy,cm,16,0,0,tzinfo=ZoneInfo("Europe/Vilnius"))
 
 def weekend_backup_fcfs_window(y,m):
-    # Dublis self-selection stays open through the resident swap window.
-    return preference_open_for(y,m), swap_window_close_for(y,m)
+    # V2.5.136: dublis self-selection is independent from grafikas lifecycle.
+    # It opens with the preference month and remains available through the whole
+    # target month. FINAL / PRELIMINARY status alone never closes this selector.
+    if m==12:
+        close_at=datetime(y+1,1,1,0,0,tzinfo=ZoneInfo("Europe/Vilnius"))
+    else:
+        close_at=datetime(y,m+1,1,0,0,tzinfo=ZoneInfo("Europe/Vilnius"))
+    return preference_open_for(y,m), close_at
 
 def _fcfs_weekend_slot_pool(y,m):
     """Exactly sixteen selectable weekend 6h backup positions for the cycle."""
@@ -761,11 +799,10 @@ def render_fcfs_weekend_backup_selector(y,m,initials):
 
     st.markdown("### DUBLIS — savaitgalio 6 h" if lang=="LT" else "### BACKUP — weekend 6h")
     st.caption(
-        ("Tik 16 teorinių savaitgalio dublių visai grupei, po 1 žmogui. "
-         "Pasirinkimas vyksta pagal pateikimo eilę iki 16 d. 00:00. Jei nepasirinksi, po lango uždarymo likęs dublis bus priskirtas atsitiktinai. Dublis nėra darbo pamaina ir neturi jokios įtakos tavo pageidavimams ar įprasto grafiko sudarymui."
+        ("16 vietų · po 1 žmogui · galima pasirinkti ar keisti visą mėnesį, nepriklausomai nuo grafiko būsenos. Dublis nekeičia pageidavimų reitingo."
          if lang=="LT" else
          "Exactly 16 theoretical weekend backups for the group, one per resident. "
-         "First come, first served until day 16 00:00. If you do not choose one, a remaining mandatory backup is assigned at random after the window closes. A backup is NOT a work shift and never affects preferences or normal grafikas generation.")
+         "A backup can be selected or changed regardless of whether the schedule is not generated, preliminary, or final; self-service remains open throughout the target month. If all 16 are occupied, changing into another resident's slot uses a backup swap. A backup is not a work shift and does not affect normal preference ranking.")
     )
     c1,c2=st.columns(2)
     c1.metric("Užpildyta" if lang=="LT" else "Filled",f"{len(claims)}/16")
@@ -780,7 +817,7 @@ def render_fcfs_weekend_backup_selector(y,m,initials):
         st.info((f"Dublių langas atsidarys {open_at.strftime('%Y-%m-%d %H:%M')}." if lang=="LT" else f"Backup choice opens {open_at.strftime('%Y-%m-%d %H:%M')}."))
         return
     if now_lt >= close_at:
-        st.caption((f"Rezidentų dublio pasirinkimas uždarytas; trūkstami priskiriami automatiškai {close_at.strftime('%Y-%m-%d %H:%M')}." if lang=="LT" else f"Backup choice closed {close_at.strftime('%Y-%m-%d %H:%M')}."))
+        st.caption((f"Šio mėnesio dublių savitarna uždaryta {close_at.strftime('%Y-%m-%d %H:%M')}." if lang=="LT" else f"This month's backup self-service closed {close_at.strftime('%Y-%m-%d %H:%M')}."))
         return
     if len(claims)>=16 and mine is None:
         st.warning("Visi 16 dublių jau pasirinkti. Kreipkis į seniūnę." if lang=="LT" else "All 16 FCFS backup places are already taken. Contact SP.")
@@ -808,7 +845,14 @@ def render_fcfs_weekend_backup_selector(y,m,initials):
             sl=smap[int(choice)]
             try:
                 db.claim_weekend_backup_fcfs_v25118(y,m,sl.idx,sl.day,sl.block)
-                st.success("Dublis rezervuotas pagal pateikimo eilę." if lang=="LT" else "Backup reserved first-come-first-served.")
+                _cp=db.load_schedule(y,m,"current")
+                if _cp:
+                    try:
+                        _rr=refresh_result_payload(_cp,y,m,use_actual_backups=False)
+                        sync_backup_plan(y,m,_rr)
+                    except Exception:
+                        pass
+                st.success("Dublis išsaugotas." if lang=="LT" else "Backup saved.")
                 st.rerun()
             except Exception as e:
                 msg=str(e)
@@ -824,6 +868,13 @@ def render_fcfs_weekend_backup_selector(y,m,initials):
         if mine and st.button("ATLAISVINTI / KEISTI" if lang=="LT" else "RELEASE / CHANGE",use_container_width=True,key=f"fcfs_backup_release_{y}_{m}_{initials}"):
             try:
                 db.release_weekend_backup_fcfs_v25118(y,m)
+                _cp=db.load_schedule(y,m,"current")
+                if _cp:
+                    try:
+                        _rr=refresh_result_payload(_cp,y,m,use_actual_backups=False)
+                        sync_backup_plan(y,m,_rr)
+                    except Exception:
+                        pass
                 st.rerun()
             except Exception as e:
                 st.error(str(e))
@@ -904,10 +955,10 @@ def _save_sp_dream_team_v25130(y: int, m: int, centro_members, adc_members, cent
 
 
 def render_sp_dream_team_settings_v25125(y: int, m: int):
-    """Private Dream Team block visible to SP and ŠR; only SP edits it."""
+    """Dream Team block visible and editable to SP and ŠR only."""
     if active_user not in (SENIOR_INITIALS,RESEARCHER_INITIALS):
         return
-    can_edit=(active_user==SENIOR_INITIALS)
+    can_edit=(active_user in (SENIOR_INITIALS,RESEARCHER_INITIALS))
     try:
         cfg=_get_sp_dream_team_config_v25130() or {}
         mon=_get_sp_dream_team_month_v25130(y,m) or {}
@@ -919,23 +970,22 @@ def render_sp_dream_team_settings_v25125(y: int, m: int):
     all_ini=[p["initials"] for p in DEFAULT_PEOPLE]
     centro_default=[x for x in (cfg.get("centro_members") or ["SP","ŠR","GE"]) if x in all_ini]
     adc_default=[x for x in (cfg.get("adc_members") or ["SP","ŠR"]) if x in all_ini]
-    st.markdown("### Nuolatinė komanda")
+    st.markdown("### Dream Team")
     c1,c2=st.columns(2)
     with c1:
-        st.markdown("#### CENTRO RO komanda")
-        centro=st.multiselect("Komandos nariai (2–4)",all_ini,default=centro_default,key=f"dream_centro_members_{y}_{m}",disabled=(frozen or not can_edit))
+        st.markdown("#### CENTRO RO")
+        centro=st.multiselect("Nariai (2–4)",all_ini,default=centro_default,key=f"dream_centro_members_{y}_{m}",disabled=(frozen or not can_edit))
         ct=int(st.number_input("Kiek kartų šį mėnesį norėtum šią komandą turėti kartu?",0,6,int(mon.get("centro_target",4) or 0),1,key=f"dream_centro_target_{y}_{m}",disabled=(frozen or not can_edit)))
     with c2:
-        st.markdown("#### ADC 144/145 komanda")
-        adc=st.multiselect("Komandos nariai (tiksliai 2)",all_ini,default=adc_default,key=f"dream_adc_members_{y}_{m}",disabled=(frozen or not can_edit))
+        st.markdown("#### ADC 144/145")
+        adc=st.multiselect("Nariai (tiksliai 2)",all_ini,default=adc_default,key=f"dream_adc_members_{y}_{m}",disabled=(frozen or not can_edit))
         at=int(st.number_input("Kiek kartų šį mėnesį norėtum šią porą turėti kartu?",0,12,int(mon.get("adc_target",0) or 0),1,key=f"dream_adc_target_{y}_{m}",disabled=(frozen or not can_edit)))
     if not can_edit:
-        st.caption("ŠR paskyroje šis blokas rodomas peržiūrai; komandos nustatymus keičia seniūnė.")
         return
     if frozen:
         st.info("Šio mėnesio pradinis grafikas jau užfiksuotas, todėl komandos nustatymai šiam mėnesiui neberedaguojami.")
         return
-    if st.button("IŠSAUGOTI KOMANDOS NUSTATYMUS",type="primary",use_container_width=True,key=f"save_dream_team_{y}_{m}"):
+    if st.button("IŠSAUGOTI",type="primary",use_container_width=True,key=f"save_dream_team_{y}_{m}"):
         if not (2<=len(centro)<=4):
             st.error("CENTRO RO komandą turi sudaryti 2–4 žmonės.")
         elif len(adc)!=2:
@@ -943,98 +993,124 @@ def render_sp_dream_team_settings_v25125(y: int, m: int):
         else:
             try:
                 _save_sp_dream_team_v25130(y,m,centro,adc,ct,at)
-                st.success("Komandos nustatymai išsaugoti.")
+                st.success("Išsaugota.")
                 st.rerun()
             except Exception as exc:
                 st.error(str(exc))
 
 
+def _operator_private_group_rows_v25134(rows) -> list[dict]:
+    """Sujungia vieno pageidavimo žmones į vieną UI / audito grupę."""
+    buckets={}
+    order=[]
+    for raw in (rows or []):
+        row=dict(raw)
+        gid=str(row.get("group_id") or f"legacy-{row.get('id')}")
+        if gid not in buckets:
+            buckets[gid]={"group_id":gid,"rows":[],"pref":row,"targets":[]}
+            order.append(gid)
+        buckets[gid]["rows"].append(row)
+        target=str(row.get("target_initials") or "")
+        if target and target not in buckets[gid]["targets"]:
+            buckets[gid]["targets"].append(target)
+    return [buckets[x] for x in order]
+
+
 def _list_operator_private_pair_preferences_v25130(y: int, m: int, owner: str | None = None) -> list[dict]:
-    """Compatibility reader: works even when an older db.py is deployed beside app.py."""
+    """Suderinamumo skaitytuvas: V2.5.134 grupės + senesnės vieno žmogaus eilutės."""
     fn=getattr(db,"list_operator_private_pair_preferences_v25128",None)
     if callable(fn):
         try:
             return [dict(x) for x in (fn(y,m,owner) or [])]
         except Exception:
             pass
-    try:
-        q=(db.client().table("operator_private_pair_preferences_v25128")
-           .select("id,owner_initials,year,month,preference_type,target_initials,scope_type,scope_start_date,block,workplace,created_at,updated_at")
-           .eq("year",int(y)).eq("month",int(m)))
-        if owner:
-            q=q.eq("owner_initials",str(owner))
-        resp=q.order("created_at").execute()
-        return [dict(x) for x in (getattr(resp,"data",None) or [])]
-    except Exception:
-        if str(owner or "")=="SP":
-            legacy=getattr(db,"list_sp_private_pair_preferences_v25123",None)
-            if callable(legacy):
-                try:
-                    return [dict(x,owner_initials="SP") for x in (legacy(y,m) or [])]
-                except Exception:
-                    pass
-        return []
+    # Pirmiausia bandome V2.5.134 schemą su group_id; jei migracija dar nepaleista,
+    # skaitome seną schemą be group_id, kad pats Pageidavimų langas nenulūžtų.
+    for select_cols in (
+        "id,group_id,owner_initials,year,month,preference_type,target_initials,scope_type,scope_start_date,block,workplace,created_at,updated_at",
+        "id,owner_initials,year,month,preference_type,target_initials,scope_type,scope_start_date,block,workplace,created_at,updated_at",
+    ):
+        try:
+            q=(db.client().table("operator_private_pair_preferences_v25128")
+               .select(select_cols).eq("year",int(y)).eq("month",int(m)))
+            if owner:
+                q=q.eq("owner_initials",str(owner))
+            resp=q.order("created_at").execute()
+            return [dict(x) for x in (getattr(resp,"data",None) or [])]
+        except Exception:
+            continue
+    if str(owner or "")=="SP":
+        legacy=getattr(db,"list_sp_private_pair_preferences_v25123",None)
+        if callable(legacy):
+            try:
+                return [dict(x,owner_initials="SP") for x in (legacy(y,m) or [])]
+            except Exception:
+                pass
+    return []
 
 
-def _create_operator_private_pair_preference_v25130(y: int, m: int, owner: str, preference_type: str, target_initials: str, scope_type: str, scope_start_date, block: str, workplace: str) -> dict:
-    fn=getattr(db,"create_operator_private_pair_preference_v25128",None)
+def _create_operator_private_group_preference_v25134(y: int, m: int, owner: str, preference_type: str, target_initials, scope_type: str, scope_start_date, block: str, workplace: str) -> list[dict]:
+    targets=[str(x) for x in (target_initials or []) if str(x) and str(x)!=str(owner)]
+    targets=list(dict.fromkeys(targets))
+    if not targets:
+        raise ValueError("Pasirink bent vieną žmogų.")
+    fn=getattr(db,"create_operator_private_group_preference_v25134",None)
     if callable(fn):
-        return dict(fn(y,m,preference_type,target_initials,scope_type,scope_start_date,block,workplace) or {})
-    payload={
-        "owner_initials":str(owner),"year":int(y),"month":int(m),
-        "preference_type":str(preference_type),"target_initials":str(target_initials),
-        "scope_type":str(scope_type),"scope_start_date":None if scope_start_date in (None,"") else str(scope_start_date),
-        "block":str(block or "ANY"),"workplace":str(workplace or "ANY"),
-    }
-    try:
-        resp=db.client().table("operator_private_pair_preferences_v25128").insert(payload).execute()
-        rows=getattr(resp,"data",None) or []
-        return dict(rows[0]) if rows else payload
-    except Exception as exc:
-        if str(owner)=="SP":
-            legacy=getattr(db,"create_sp_private_pair_preference_v25123",None)
-            if callable(legacy):
-                return dict(legacy(y,m,preference_type,target_initials,scope_type,scope_start_date,block,workplace) or {})
-        raise RuntimeError("Privatiems pageidavimams reikia paleisti V2.5.128 duomenų bazės migraciją.") from exc
+        return [dict(x) for x in (fn(y,m,preference_type,targets,scope_type,scope_start_date,block,workplace) or [])]
+    # V2.5.134 grupių semantikai reikalingas group_id ir ADC 144/145 jungtinės zonos
+    # apribojimas, todėl tyčia neimituojame grupės senoje DB schemoje.
+    raise RuntimeError("Paleisk SUPABASE_MIGRATION_V2_5_134_GROUPED_PEOPLE_WISHES.sql ir perkrauk programą.")
 
 
-def _delete_operator_private_pair_preference_v25130(pref_id: int, owner: str) -> bool:
-    fn=getattr(db,"delete_operator_private_pair_preference_v25128",None)
-    if callable(fn):
-        return bool(fn(int(pref_id)))
-    try:
-        resp=(db.client().table("operator_private_pair_preferences_v25128")
-              .delete().eq("id",int(pref_id)).eq("owner_initials",str(owner)).execute())
-        return bool(getattr(resp,"data",None) is not None)
-    except Exception as exc:
-        if str(owner)=="SP":
-            legacy=getattr(db,"delete_sp_private_pair_preference_v25123",None)
-            if callable(legacy):
-                return bool(legacy(int(pref_id)))
-        raise RuntimeError("Privatiems pageidavimams reikia paleisti V2.5.128 duomenų bazės migraciją.") from exc
+def _delete_operator_private_group_preference_v25134(group: dict, owner: str) -> bool:
+    gid=str(group.get("group_id") or "")
+    if gid and not gid.startswith("legacy-"):
+        fn=getattr(db,"delete_operator_private_group_preference_v25134",None)
+        if callable(fn):
+            return bool(fn(gid))
+    # Senoms vieno žmogaus eilutėms paliekame saugų ištrynimą po vieną.
+    ok=True
+    for row in (group.get("rows") or []):
+        pref_id=int(row.get("id"))
+        fn=getattr(db,"delete_operator_private_pair_preference_v25128",None)
+        if callable(fn):
+            ok=bool(fn(pref_id)) and ok
+        else:
+            try:
+                db.client().table("operator_private_pair_preferences_v25128").delete().eq("id",pref_id).eq("owner_initials",str(owner)).execute()
+            except Exception:
+                ok=False
+    return ok
 
 
 def operator_private_pair_preference_summary(owner_initials: str, y: int, m: int, result: SolveResult, prefs=None) -> dict:
-    """Private operator-only satisfaction audit; never saved into public schedule JSON."""
+    """SP/ŠR grupinių pageidavimų auditas; viena žmonių grupė = vienas pageidavimas."""
     owner=str(owner_initials or "")
-    prefs=[dict(x) for x in (prefs if prefs is not None else _list_operator_private_pair_preferences_v25130(y,m,owner))]
-    if not prefs or result is None:
-        return {"total":len(prefs),"honored":0,"missed":len(prefs),"rate":None,"rows":[]}
+    raw=[dict(x) for x in (prefs if prefs is not None else _list_operator_private_pair_preferences_v25130(y,m,owner))]
+    groups=_operator_private_group_rows_v25134(raw)
+    if not groups or result is None:
+        return {"total":len(groups),"honored":0,"missed":len(groups),"rate":None,"rows":[]}
     slots=make_slots(y,m)
     assignments=dict(getattr(result,"assignments",{}) or {})
     by_person={}
     for sl in slots:
         who=assignments.get(sl.idx)
-        if not who:
-            continue
-        by_person.setdefault(str(who),[]).append(sl)
+        if who:
+            by_person.setdefault(str(who),[]).append(sl)
 
     def active_in(sl: Slot, d: int, block: str) -> bool:
         return int(sl.day)==int(d) and blocks_overlap(str(sl.block),str(block))
 
+    def in_zone(sl: Slot, workplace: str) -> bool:
+        cat=rotation_category(sl)
+        if workplace=="ADC 144/145":
+            return cat in ("ADC 144","ADC 145")
+        return cat==workplace
+
     rows=[]; honored=0
-    for pref in prefs:
-        target=str(pref.get("target_initials") or "")
+    for group in groups:
+        pref=dict(group["pref"])
+        targets=list(group["targets"])
         ptype=str(pref.get("preference_type") or "").lower()
         workplace=_scheduler_engine.private_pair_workplace(pref)
         days=_scheduler_engine.private_pair_scope_days(pref,y,m)
@@ -1042,83 +1118,92 @@ def operator_private_pair_preference_summary(owner_initials: str, y: int, m: int
         matches=[]
         for d in days:
             for b in blocks:
-                own_slots=[sl for sl in by_person.get(owner,[]) if active_in(sl,d,b)]
-                tg_slots=[sl for sl in by_person.get(target,[]) if active_in(sl,d,b)]
-                if workplace=="ANY":
-                    if own_slots and tg_slots:
-                        matches.append((d,b,"ANY"))
+                own_here=[sl for sl in by_person.get(owner,[]) if active_in(sl,d,b) and in_zone(sl,workplace)]
+                if not own_here:
+                    continue
+                target_here=[]
+                for target in targets:
+                    target_here.append(any(active_in(sl,d,b) and in_zone(sl,workplace) for sl in by_person.get(target,[])))
+                if ptype=="together":
+                    if targets and all(target_here):
+                        matches.append((d,b))
                 else:
-                    own_here=[sl for sl in own_slots if rotation_category(sl)==workplace]
-                    tg_here=[sl for sl in tg_slots if rotation_category(sl)==workplace]
-                    if own_here and tg_here:
-                        matches.append((d,b,workplace))
+                    if any(target_here):
+                        matches.append((d,b))
         ok=(len(matches)>0) if ptype=="together" else (len(matches)==0)
         honored+=int(ok)
-        type_label="Skirti kartu" if ptype=="together" else "Neskirti kartu"
-        result_label="Įvykdyta" if ok else "Neįvykdyta"
-        match_txt="; ".join(f"{d:02d} {block_label(b)}" for d,b,_ in matches[:4])
-        if len(matches)>4:
-            match_txt+="; …"
+        match_txt="; ".join(f"{d:02d} {block_label(b)}" for d,b in matches[:4])
+        if len(matches)>4: match_txt+="; …"
         rows.append({
-            "ID":pref.get("id"),
-            "Tipas":type_label,
-            "Asmuo":target,
+            "Tipas":"Dirbti su" if ptype=="together" else "Dirbti be",
+            "Žmonės":", ".join(targets) or "—",
             "Laikotarpis":_sp_private_scope_label(pref,y,m),
             "Laikas":_sp_private_block_label(pref.get("block")),
             "Vieta":_sp_private_workplace_label(pref.get("workplace")),
-            "Rezultatas":result_label,
-            "Rasta kartu":(match_txt or "—"),
+            "Rezultatas":"Įvykdyta" if ok else "Neįvykdyta",
+            "Rasta kartu":match_txt or "—",
         })
-    total=len(prefs)
+    total=len(groups)
     return {"total":total,"honored":honored,"missed":total-honored,"rate":round(100.0*honored/total,1) if total else None,"rows":rows}
 
 
 def render_operator_private_pair_preferences(y: int, m: int, owner_initials: str):
-    """Private editor shown only to SP/ŠR in the dedicated Advanced tab."""
+    """SP/ŠR grupiniai „Dirbti su / Dirbti be“ pageidavimai tiesiai Pageidavimuose."""
     owner=str(owner_initials or "")
     if active_user not in (SENIOR_INITIALS,RESEARCHER_INITIALS) or owner!=active_user:
         return
-    prefs=_list_operator_private_pair_preferences_v25130(y,m,owner)
+    raw=_list_operator_private_pair_preferences_v25130(y,m,owner)
+    groups=_operator_private_group_rows_v25134(raw)
     state=db.get_schedule_state(y,m)
     lifecycle=db.get_schedule_lifecycle(y,m)
     frozen=bool(state.get("has_published")) or str(lifecycle.get("state") or "") in ("working","swap_open","swap_closed","final")
 
-    st.markdown("### Darbas su konkrečiais žmonėmis")
     name_map={p["initials"]:p["name"] for p in DEFAULT_PEOPLE}
-    for pref in prefs:
+    for group in groups:
+        pref=dict(group["pref"]); targets=list(group["targets"])
         together=str(pref.get("preference_type"))=="together"
         border="#22c55e" if together else "#ef4444"
-        bg="rgba(34,197,94,.10)" if together else "rgba(239,68,68,.10)"
-        title="SKIRTI KARTU" if together else "NESKIRTI KARTU"
-        target=str(pref.get("target_initials") or "")
+        bg="rgba(34,197,94,.07)" if together else "rgba(239,68,68,.07)"
+        title="Dirbti su" if together else "Dirbti be"
+        people_txt=", ".join(f"{ini} — {name_map.get(ini,ini)}" for ini in targets)
         st.markdown(
-            f'<div style="border-left:6px solid {border};border-top:1px solid {border}55;border-right:1px solid {border}55;border-bottom:1px solid {border}55;'
-            f'background:{bg};border-radius:13px;padding:11px 14px;margin:8px 0;">'
-            f'<b style="color:{border};">{html.escape(title)}</b> &nbsp; {html.escape(target)} — {html.escape(name_map.get(target,target))}<br>'
-            f'<span style="opacity:.86">{html.escape(_sp_private_scope_label(pref,y,m))} · {html.escape(_sp_private_block_label(pref.get("block")))} · {html.escape(_sp_private_workplace_label(pref.get("workplace")))}</span>'
+            f'<div style="border-left:4px solid {border};border-top:1px solid {border}33;border-right:1px solid {border}33;border-bottom:1px solid {border}33;'
+            f'background:{bg};border-radius:10px;padding:9px 12px;margin:7px 0;">'
+            f'<b>{html.escape(title)}</b> &nbsp; {html.escape(people_txt)}<br>'
+            f'<span style="opacity:.72">{html.escape(_sp_private_scope_label(pref,y,m))} · {html.escape(_sp_private_block_label(pref.get("block")))} · {html.escape(_sp_private_workplace_label(pref.get("workplace")))}</span>'
             f'</div>',unsafe_allow_html=True
         )
-        if not frozen and st.button("Pašalinti",key=f"op_priv_del_{owner}_{pref.get('id')}"):
+        if not frozen and st.button("Pašalinti",key=f"op_group_del_{owner}_{group['group_id']}"):
             try:
-                _delete_operator_private_pair_preference_v25130(int(pref["id"]),owner)
+                _delete_operator_private_group_preference_v25134(group,owner)
                 st.rerun()
             except Exception as exc:
                 st.error(str(exc))
 
     if frozen:
-        st.caption("Pradinis grafikas jau užfiksuotas. Šio mėnesio privatūs planavimo pageidavimai neberedaguojami; faktinį grafiką keiskite tik per įprastus koregavimo / apsikeitimo veiksmus.")
+        st.caption("Šio mėnesio nustatymai jau užfiksuoti.")
         return
 
-    st.markdown("#### Naujas pageidavimas")
-    targets=[p["initials"] for p in DEFAULT_PEOPLE if p["initials"]!=owner]
+    all_targets=[p["initials"] for p in DEFAULT_PEOPLE if p["initials"]!=owner]
     c1,c2=st.columns(2)
     with c1:
-        ptype_label=st.radio("",["Noriu dirbti su","Nenoriu dirbti su"],horizontal=True,label_visibility="collapsed",key=f"op_priv_type_{owner}_{y}_{m}")
-        ptype="together" if ptype_label=="Noriu dirbti su" else "apart"
-        target=st.selectbox("Asmuo",targets,format_func=lambda i:f"{i} — {name_map.get(i,i)}",key=f"op_priv_target_{owner}_{y}_{m}")
+        ptype_label=st.radio("",["Dirbti su","Dirbti be"],horizontal=True,label_visibility="collapsed",key=f"op_group_type_{owner}_{y}_{m}")
+        ptype="together" if ptype_label=="Dirbti su" else "apart"
     with c2:
-        scope_label=st.selectbox("Laikotarpis",["Visas mėnuo","Visa savaitė","Viena diena"],key=f"op_priv_scope_{owner}_{y}_{m}")
+        workplace=st.selectbox("Vieta",["CENTRO RO","ADC 144/145"],key=f"op_group_wp_{owner}_{y}_{m}")
+
+    max_people=(3 if workplace=="CENTRO RO" else 1) if ptype=="together" else None
+    selected=st.multiselect(
+        "Žmonės",all_targets,format_func=lambda i:f"{i} — {name_map.get(i,i)}",
+        max_selections=max_people,key=f"op_group_targets_{owner}_{y}_{m}_{ptype}_{workplace}"
+    )
+    c3,c4=st.columns(2)
+    with c3:
+        scope_label=st.selectbox("Laikotarpis",["Visas mėnuo","Visa savaitė","Viena diena"],key=f"op_group_scope_{owner}_{y}_{m}")
         scope={"Visas mėnuo":"month","Visa savaitė":"week","Viena diena":"day"}[scope_label]
+    with c4:
+        block_label_ui=st.selectbox("Laikas",["Bet kuris laikas","Rytas","Popietė"],key=f"op_group_block_{owner}_{y}_{m}")
+        block={"Bet kuris laikas":"ANY","Rytas":"AM","Popietė":"PM"}[block_label_ui]
 
     scope_date=None
     if scope=="week":
@@ -1127,25 +1212,18 @@ def render_operator_private_pair_preferences(y: int, m: int, owner_initials: str
             dd=date(y,m,d); monday=dd-timedelta(days=dd.weekday())
             if monday not in seen:
                 seen.append(monday); opts.append(dd)
-        scope_date=st.selectbox("Savaitė",opts,format_func=lambda dd:_sp_private_scope_label({"scope_type":"week","scope_start_date":dd.isoformat()},y,m),key=f"op_priv_week_{owner}_{y}_{m}")
+        scope_date=st.selectbox("Savaitė",opts,format_func=lambda dd:_sp_private_scope_label({"scope_type":"week","scope_start_date":dd.isoformat()},y,m),key=f"op_group_week_{owner}_{y}_{m}")
     elif scope=="day":
-        d=st.selectbox("Diena",list(range(1,calendar.monthrange(y,m)[1]+1)),format_func=lambda x:pretty_day(y,m,x),key=f"op_priv_day_{owner}_{y}_{m}")
+        d=st.selectbox("Diena",list(range(1,calendar.monthrange(y,m)[1]+1)),format_func=lambda x:pretty_day(y,m,x),key=f"op_group_day_{owner}_{y}_{m}")
         scope_date=date(y,m,int(d))
 
-    c3,c4=st.columns(2)
-    with c3:
-        block_label_ui=st.selectbox("Laikas",["Bet kuris laikas","Rytas","Popietė"],key=f"op_priv_block_{owner}_{y}_{m}")
-        block={"Bet kuris laikas":"ANY","Rytas":"AM","Popietė":"PM"}[block_label_ui]
-    with c4:
-        workplaces=(
-            ["ANY","CENTRO RO"] if ptype=="together"
-            else ["ANY","CENTRO RO","Onko RO","SPS RO","Centro UG","SPS UG","ADC 144","ADC 145","Vaikų UG","Mamografijos"]
-        )
-        workplace=st.selectbox("Vieta",workplaces,format_func=_sp_private_workplace_label,key=f"op_priv_wp_{owner}_{y}_{m}")
-
-    if st.button("PRIDĖTI PRIVATŲ PAGEIDAVIMĄ",type="primary",use_container_width=True,key=f"op_priv_add_{owner}_{y}_{m}"):
+    if st.button("PRIDĖTI PAGEIDAVIMĄ",type="primary",use_container_width=True,key=f"op_group_add_{owner}_{y}_{m}"):
         try:
-            _create_operator_private_pair_preference_v25130(y,m,owner,ptype,target,scope,scope_date.isoformat() if scope_date else None,block,workplace)
+            if not selected:
+                raise ValueError("Pasirink bent vieną žmogų.")
+            _create_operator_private_group_preference_v25134(
+                y,m,owner,ptype,selected,scope,scope_date.isoformat() if scope_date else None,block,workplace
+            )
             st.rerun()
         except Exception as exc:
             st.error(str(exc))
@@ -1158,25 +1236,16 @@ def render_operator_private_pair_stats(y: int, m: int, owner_initials: str, resu
     prefs=_list_operator_private_pair_preferences_v25130(y,m,owner)
     if not prefs:
         return
-    st.markdown("### Mano privataus sluoksnio rezultatas")
-    st.caption("Vertinama pagal preliminaraus / pradinio grafiko paskirstymą. Vėlesni savanoriški apsikeitimai šios statistikos neperrašo.")
-    if result is None:
-        st.caption("Privatūs planavimo pageidavimai pateikti, bet grafikas dar nesugeneruotas.")
-        return
-    sm=operator_private_pair_preference_summary(owner,y,m,result,prefs)
-    a,b,c,d=st.columns(4)
-    a.metric("Pateikta",sm["total"])
-    b.metric("Įvykdyta",sm["honored"])
-    c.metric("Neįvykdyta",sm["missed"])
-    d.metric("Įvykdymas",("—" if sm["rate"] is None else f"{sm['rate']}%"))
-    if sm["rows"]:
-        df=pd.DataFrame(sm["rows"])
-        def _row_style(row):
-            ok=str(row.get("Rezultatas"))=="Įvykdyta"
-            bg="background-color: rgba(34,197,94,.12);" if ok else "background-color: rgba(239,68,68,.12);"
-            return [bg]*len(row)
-        st.dataframe(df.style.apply(_row_style,axis=1),use_container_width=True,hide_index=True)
-
+    sm=operator_private_pair_preference_summary(owner,y,m,result,prefs) if result is not None else None
+    with st.expander("Rezultatas",expanded=False):
+        if sm is None:
+            st.caption("Grafikas dar nesugeneruotas.")
+            return
+        a,b,c,d=st.columns(4)
+        a.metric("Pateikta",sm["total"]); b.metric("Įvykdyta",sm["honored"]); c.metric("Neįvykdyta",sm["missed"])
+        d.metric("Įvykdymas",("—" if sm["rate"] is None else f"{sm['rate']}%"))
+        if sm["rows"]:
+            st.dataframe(pd.DataFrame(sm["rows"]),use_container_width=True,hide_index=True)
 
 def deadline_message(y,m):
     dl=deadline_for(y,m); today=date.today(); diff=(dl-today).days
@@ -1580,8 +1649,9 @@ def _build_request_ledger(y,m,initials,p,s,rp,recurring_rows,claims,slot_lookup,
             # V2.5.118: dublis selection is informational/theoretical only. It is
             # never part of normal-schedule preference scoring.
             add("backup_claim","THEORETICAL_BACKUP",cs.day,cs.block,"backup_claim",score=False,covered_slot=cs.idx,department=cs.department)
-    for _ in range(max(0,int(p.get("backup_credits_am_to_use",0) or 0))): add("rest_credit","ENTITLEMENT",source="rest_credit",value="AM")
-    for _ in range(max(0,int(p.get("backup_credits_pm_to_use",0) or 0))): add("rest_credit","ENTITLEMENT",source="rest_credit",value="PM")
+    _reward_units=max(0,int(p.get("reward_credit_units_to_use",0) or 0))
+    for _ in range(_reward_units//6):
+        add("rest_credit","ENTITLEMENT",source="reward_credit_v25136",value="0.50 kredito")
 
     note=str(p.get("note") or "").strip()
     if note:
@@ -1616,6 +1686,7 @@ def load_people(y,m):
     # Pateikimo eilė yra mėnesinė ir nekaupiama. Ji taikoma TAM PAČIAM grafikui
     # tik po to, kai bendras maksimaliai įmanomas pageidavimų išpildymas užrakinamas.
     priority_rows=db.all_applied_preference_priorities(y,m) if weekend_fcfs_backup_mode(y,m) else {}
+    reward_redemptions=db.all_reward_credit_redemptions_v25136(y,m)
     # V2.5.96: fairness history is audit-only; never solver input for a new month.
     fairness_prior={}
     holiday_prior={}
@@ -1632,7 +1703,11 @@ def load_people(y,m):
     py,pm=(y-1,12) if m==1 else (y,m-1)
     prev_prefs=db.all_preferences(py,pm); prev_last=calendar.monthrange(py,pm)[1]
     for row in DEFAULT_PEOPLE:
-        initials=row["initials"]; p=prefs.get(initials,{}); s=settings.get(initials,{})
+        initials=row["initials"]; p=dict(prefs.get(initials,{}) or {}); s=settings.get(initials,{})
+        reward_units=max(0,int(reward_redemptions.get(initials,0) or 0))
+        # Current day scheduler works in 6h workload blocks. One 0.50-credit redemption
+        # equals six ordinary tariff-hours and therefore removes one 6h target block.
+        p["reward_credit_units_to_use"]=reward_units
         duty_days=set(p.get("long_duty",set()))
         if prev_last in set(prev_prefs.get(initials,{}).get("long_duty",set())):
             duty_days.add(0)
@@ -1659,9 +1734,9 @@ def load_people(y,m):
         effective_soft_pm=short_soft_pm
         effective_pref_am=short_pref_am
         effective_pref_pm=short_pref_pm
-        credits_am=int(p.get("backup_credits_am_to_use",0))
-        credits_pm=int(p.get("backup_credits_pm_to_use",0))
-        credits_day=credits_am+credits_pm
+        credits_day=reward_units//6
+        credits_am=credits_day
+        credits_pm=0
         prior=fairness_prior.get(initials,{})
         reserved=set()
         if not weekend_fcfs_backup_mode(y,m):
@@ -1790,23 +1865,18 @@ def persist_actual_satisfaction(y,m,payload=None):
 
 
 def credit_selection_errors(y,m):
-    prefs=db.all_preferences(y,m); errors=[]
+    """Validate V2.5.136 coefficient-credit reservations before SYSTEM freeze."""
+    errors=[]
+    reds=db.all_reward_credit_redemptions_v25136(y,m)
     for row in DEFAULT_PEOPLE:
-        i=row["initials"]; p=prefs.get(i,{})
-        use_am=int(p.get("backup_credits_am_to_use",0))
-        use_pm=int(p.get("backup_credits_pm_to_use",0))
-        if use_am+use_pm>2:
-            errors.append({tr("person"):i,tr("details"):tr("max_credit_error")})
-        avail_am=db.rest_credit_available_for_month(i,y,m,"AM")
-        avail_pm=db.rest_credit_available_for_month(i,y,m,"PM")
-        if use_am>avail_am:
-            errors.append({tr("person"):i,tr("credit_am"):f"{use_am}/{avail_am}",tr("details"):tr("bonus_insufficient")})
-        if use_pm>avail_pm:
-            errors.append({tr("person"):i,tr("credit_pm"):f"{use_pm}/{avail_pm}",tr("details"):tr("bonus_insufficient")})
-        if int(p.get("backup_credits_night_to_use",0))>0:
-            errors.append({tr("person"):i,tr("credit_night"):p.get("backup_credits_night_to_use",0),tr("details"):tr("night_bank_only")})
+        i=row["initials"]
+        use_units=max(0,int(reds.get(i,0) or 0))
+        available=db.reward_credit_available_for_month(i,y,m)
+        if use_units % 6 != 0:
+            errors.append({tr("person"):i,tr("details"):"Kreditų panaudojimas šiam dieniniam grafikui turi būti 0,50 kredito žingsniais."})
+        if use_units>available:
+            errors.append({tr("person"):i,tr("details"):f"Pasirinkta {use_units/12:.2f} kred., galima {available/12:.2f} kred."})
     return errors
-
 
 def _parse_iso_dt(value):
     if not value: return None
@@ -3287,6 +3357,147 @@ def build_xlsx(y,m,result,document_status=None,backup_rows_override=None):
             for c,v in enumerate(row): bk.write(rr,c,"" if pd.isna(v) else v,cell)
     wb.close(); out.seek(0); return out.getvalue()
 
+def build_preferences_xlsx(y,m,rows,priority_visible=False):
+    """Beautiful live export of the currently saved preference table.
+
+    The export is deliberately independent from the preference-window status:
+    the senior/researcher can download the current snapshot at any time. The
+    priority column itself is only present after the preference deadline, just
+    like in the UI.
+    """
+    df=pd.DataFrame(rows).copy()
+    out=BytesIO()
+    wb=xlsxwriter.Workbook(out,{"in_memory":True})
+    wb.set_properties({
+        "title":f"Pageidavimai {y}-{m:02d}",
+        "subject":"Rezidentų pageidavimų eksportas",
+        "author":"Shift Happens",
+        "comments":"Eksportas atspindi tuo momentu sistemoje išsaugotus pageidavimus.",
+    })
+    ws=wb.add_worksheet("Pageidavimai")
+    sm=wb.add_worksheet("Suvestinė")
+
+    dark="#20242F"; accent="#FF4B4B"; white="#FFFFFF"; border="#D9DDE5"
+    pale="#F7F8FA"; pale_red="#FDECEC"; pale_blue="#EAF3FF"; pale_yellow="#FFF6DD"
+    pale_green="#EAF7EF"; pale_purple="#F3EEFF"; pale_gray="#F1F3F6"
+    title=wb.add_format({"bold":True,"font_size":18,"font_color":white,"bg_color":dark,"align":"left","valign":"vcenter"})
+    subtitle=wb.add_format({"font_size":10,"font_color":"#6B7280","bg_color":white})
+    metric_label=wb.add_format({"bold":True,"font_color":"#6B7280","bg_color":pale,"border":1,"border_color":border})
+    metric_value=wb.add_format({"bold":True,"font_size":12,"font_color":dark,"bg_color":pale,"border":1,"border_color":border})
+    header_default=wb.add_format({"bold":True,"font_color":dark,"bg_color":"#E8EBF0","border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True})
+    header_hard=wb.add_format({"bold":True,"font_color":"#8B1E1E","bg_color":"#F7D8D8","border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True})
+    header_rest=wb.add_format({"bold":True,"font_color":"#7A5A00","bg_color":"#F9E8AF","border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True})
+    header_work=wb.add_format({"bold":True,"font_color":"#17633A","bg_color":"#CFEAD9","border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True})
+    header_absence=wb.add_format({"bold":True,"font_color":"#24568A","bg_color":"#DCEBFA","border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True})
+    header_long=wb.add_format({"bold":True,"font_color":"#5A3E85","bg_color":"#E8DFF7","border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True})
+    cell=wb.add_format({"font_color":dark,"border":1,"border_color":border,"valign":"top","text_wrap":True})
+    cell_center=wb.add_format({"font_color":dark,"border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True})
+    yes_fmt=wb.add_format({"bold":True,"font_color":"#17633A","bg_color":pale_green,"border":1,"border_color":border,"align":"center"})
+    no_fmt=wb.add_format({"bold":True,"font_color":"#9B2C2C","bg_color":pale_red,"border":1,"border_color":border,"align":"center"})
+    priority_fmt=wb.add_format({"bold":True,"font_color":"#7A4B00","bg_color":pale_yellow,"border":1,"border_color":border,"align":"center"})
+    group_fmts={
+        "hard":wb.add_format({"bg_color":pale_red,"border":1,"border_color":border,"valign":"top","text_wrap":True}),
+        "absence":wb.add_format({"bg_color":pale_blue,"border":1,"border_color":border,"valign":"top","text_wrap":True}),
+        "rest":wb.add_format({"bg_color":pale_yellow,"border":1,"border_color":border,"valign":"top","text_wrap":True}),
+        "work":wb.add_format({"bg_color":pale_green,"border":1,"border_color":border,"valign":"top","text_wrap":True}),
+        "long":wb.add_format({"bg_color":pale_purple,"border":1,"border_color":border,"valign":"top","text_wrap":True}),
+        "neutral":wb.add_format({"bg_color":pale_gray,"border":1,"border_color":border,"valign":"top","text_wrap":True}),
+    }
+    person_fmts={i:wb.add_format({"bold":True,"bg_color":c,"font_color":contrast_text(c),"border":1,"border_color":border,"align":"center","valign":"vcenter"}) for i,c in PERSON_COLORS.items()}
+
+    ncols=max(1,len(df.columns))
+    ws.merge_range(0,0,0,ncols-1,f"Pageidavimai · {month_label(y,m)}",title)
+    ws.set_row(0,30)
+    export_time=datetime.now(ZoneInfo("Europe/Vilnius")).strftime("%Y-%m-%d %H:%M")
+    ws.merge_range(1,0,1,ncols-1,f"Gyvas sistemos eksportas · {export_time}",subtitle)
+
+    submitted_col=tr("submitted")
+    person_col=tr("person")
+    submitted_count=int((df[submitted_col].astype(str)==str(tr("yes"))).sum()) if submitted_col in df.columns else 0
+    missing=[]
+    if person_col in df.columns and submitted_col in df.columns:
+        missing=df.loc[df[submitted_col].astype(str)!=str(tr("yes")),person_col].astype(str).tolist()
+    ws.write(3,0,"Pateikta",metric_label); ws.write(3,1,f"{submitted_count}/{len(DEFAULT_PEOPLE)}",metric_value)
+    ws.write(3,2,"Dar nepateikė",metric_label); ws.merge_range(3,3,3,min(ncols-1,7),", ".join(missing) if missing else "—",metric_value)
+    if priority_visible:
+        ws.write(3,min(ncols-1,8),"Prioritetas",metric_label)
+        if min(ncols-1,9)>=min(ncols-1,8):
+            ws.write(3,min(ncols-1,9),"Galutinis po 14 d. 00:00",metric_value)
+
+    header_row=5
+    def col_group(name):
+        n=str(name).lower()
+        if "dirbti negaliu" in n or "unavailable" in n: return "hard"
+        if "atostog" in n or "neatvyk" in n or "budėjimo" in n: return "absence"
+        if "noriu laisv" in n or "time off" in n: return "rest"
+        if "pageidauju dirbti" in n or "prefer work" in n: return "work"
+        if "ilgalaik" in n or "long-term" in n: return "long"
+        if "komentar" in n or "el. pašt" in n or "šven" in n: return "neutral"
+        return "default"
+    header_fmt={"hard":header_hard,"absence":header_absence,"rest":header_rest,"work":header_work,"long":header_long}.get
+    for c,name in enumerate(df.columns):
+        grp=col_group(name)
+        ws.write(header_row,c,name,header_fmt(grp,header_default))
+    ws.set_row(header_row,42)
+
+    priority_name="Pateikimo vieta"
+    for r_idx,(_,row) in enumerate(df.iterrows(),start=header_row+1):
+        ini=str(row.get(person_col,"")) if person_col in df.columns else ""
+        for c,name in enumerate(df.columns):
+            value=row.get(name,"")
+            if pd.isna(value): value=""
+            grp=col_group(name)
+            fmt=cell
+            if name==person_col:
+                fmt=person_fmts.get(ini,cell_center)
+            elif name==submitted_col:
+                fmt=yes_fmt if str(value)==str(tr("yes")) else no_fmt
+            elif name==priority_name and priority_visible:
+                fmt=priority_fmt
+            elif grp in group_fmts:
+                fmt=group_fmts[grp]
+            elif c<=3:
+                fmt=cell_center
+            ws.write(r_idx,c,value,fmt)
+        ws.set_row(r_idx,38)
+
+    if len(df.columns):
+        ws.autofilter(header_row,0,header_row+len(df),len(df.columns)-1)
+    ws.freeze_panes(header_row+1,2)
+    # Compact but readable widths; long request fields wrap instead of creating a giant sheet.
+    for c,name in enumerate(df.columns):
+        n=str(name).lower()
+        width=14
+        if name==tr("name"): width=24
+        elif name==tr("person"): width=10
+        elif "komentar" in n: width=32
+        elif "ilgalaik" in n: width=30
+        elif "el. pašt" in n: width=27
+        elif any(k in n for k in ["dirbti negaliu","noriu laisv","pageidauju dirbti","atostog","neatvyk","budėjimo"]): width=20
+        elif "pateikimo būdas" in n: width=22
+        elif "pageidavimų apimtis" in n: width=18
+        ws.set_column(c,c,width)
+
+    # A clean summary sheet for a quick senior overview.
+    sm.merge_range("A1:F1",f"Suvestinė · {month_label(y,m)}",title)
+    sm.set_row(0,30)
+    sm.write("A3","Pateikta",metric_label); sm.write("B3",submitted_count,metric_value)
+    sm.write("C3","Iš viso",metric_label); sm.write("D3",len(DEFAULT_PEOPLE),metric_value)
+    sm.write("E3","Dar nepateikė",metric_label); sm.write("F3",len(missing),metric_value)
+    sm.write("A5","Dar nepateikė",header_default)
+    if missing:
+        for rr,ini in enumerate(missing,start=5):
+            sm.write(rr,0,ini,person_fmts.get(ini,cell_center))
+    else:
+        sm.write("A6","Visi pateikė",yes_fmt)
+    sm.write("C5","Pastaba",header_default)
+    sm.merge_range("C6:F8","Excel failą galima atsisiųsti bet kuriuo pageidavimų teikimo etapu. Iki 14 d. 00:00 prioritetinė vieta nerodoma; po termino eksportuojama galutinė eilė.",cell)
+    sm.set_column("A:A",18); sm.set_column("B:B",3); sm.set_column("C:F",22)
+    sm.freeze_panes(5,0)
+
+    wb.close(); out.seek(0); return out.getvalue()
+
+
 def render_schedule_download_buttons(y,m,result,*,status_label,file_prefix,key_prefix,backup_rows_override=None):
     """Explicit grafikas exports next to every operational grafikas view.
 
@@ -3997,10 +4208,6 @@ def publish_system_baseline_for_swap_window(y,m):
     db.save_draft(y,m,serialize_result(draft_result))
     if not db.publish_draft(y,m):
         return {"ok":False,"error":tr("no_draft")}
-    month_prefs=db.all_preferences(y,m)
-    for person in DEFAULT_PEOPLE:
-        i=person["initials"]; pp=month_prefs.get(i,{})
-        db.set_rest_credit_redemptions(i,y,m,int(pp.get("backup_credits_am_to_use",0)),int(pp.get("backup_credits_pm_to_use",0)))
     db.sync_backups(y,m,desired)
     payload=db.load_schedule(y,m,"current"); result=refresh_result_payload(payload,y,m,use_actual_backups=True)
     db.save_current(y,m,serialize_result(result))
@@ -4718,9 +4925,6 @@ if advanced_mode:
 
 names=[]
 names += [tr("preferences"),tr("settings")]
-private_operator_tab_label="Privatūs pageidavimai"
-if active_user in (SENIOR_INITIALS,RESEARCHER_INITIALS) and advanced_mode:
-    names.append(private_operator_tab_label)
 if senior_mode:
     names.append(tr("generation"))
 names.append(tr("schedule"))
@@ -4732,8 +4936,6 @@ names.append(tr("credits_debts"))
 names += [tr("backups"),tr("swaps"),tr("calendar"),tr("research")]
 if advanced_mode:
     names.append(tr("proof"))
-if senior_mode:
-    names.append(tr("senior_guide"))
 names.append(tr("rules"))
 
 # ŠR keeps the isolated research-shadow generator, but it is a tab inside the
@@ -4890,22 +5092,29 @@ with tabs[pos]:
                 st.success("Pateikta: TAIP — rezidento anketa." if lang=="LT" else "Submitted: YES — resident submission.")
 
         if weekend_fcfs_backup_mode(year,month):
-            pri=db.get_preference_priority(year,month,preference_target)
-            if pri and pri.get("submission_order"):
-                st.info(
-                    f"Pateikimo vieta: {int(pri['submission_order'])} iš 16. "
-                    "Sistema visada pirmiausia siekia įvykdyti kuo daugiau visų rezidentų pageidavimų. "
-                    "Pateikimo eilė tampa papildomu pranašumu tik tada, kai keli vienodai galimi pageidavimai tarpusavyje susikerta ir visų vienu metu įvykdyti neįmanoma."
-                )
-            elif cur:
-                st.caption("Pateikimo vieta neužfiksuota.")
+            # V2.5.136: live priority is intentionally hidden during the open
+            # preference window. Backend records the last material change, and
+            # the final 1–16 order becomes visible only after the 14 d. 00:00 cutoff.
+            if now_lt >= cutoff_pref:
+                pri=db.get_preference_priority(year,month,preference_target)
+                if pri and pri.get("submission_order"):
+                    st.info(f"Pateikimo vieta: {int(pri['submission_order'])} iš 16")
+                elif cur:
+                    st.caption("Pateikimo vieta netaikoma — nėra mėnesio pageidavimų, kuriems reikėtų konflikto prioriteto.")
             if preference_target==active_user:
                 render_fcfs_weekend_backup_selector(year,month,active_user)
                 st.divider()
 
+        # SP / ŠR papildomi planavimo blokai yra tiesiai Pageidavimuose ir
+        # rodomi tiek Paprastame, tiek Išplėstiniame režime.
+        if preference_target==active_user and active_user in (SENIOR_INITIALS,RESEARCHER_INITIALS):
+            st.divider()
+            render_sp_dream_team_settings_v25125(year,month)
+            st.divider()
+            render_operator_private_pair_preferences(year,month,active_user)
+            st.divider()
+
         days=list(range(1,calendar.monthrange(year,month)[1]+1))
-        avail_am=db.rest_credit_available_for_month(preference_target,year,month,"AM")
-        avail_pm=db.rest_credit_available_for_month(preference_target,year,month,"PM")
         st.markdown(f"### {tr('short_term')}")
         with st.form(f"prefs_{year}_{month}_{active_user}_{preference_target}"):
             if lifecycle_operator_ui and operator_manual_mode:
@@ -4972,11 +5181,10 @@ with tabs[pos]:
             )
 
             note=st.text_area(tr("note"),value=cur.get("note",""),placeholder=tr("note_ph"))
-            cr1,cr2=st.columns(2)
-            with cr1:
-                bonus_am_use=st.number_input(tr("use_credit_am"),min_value=0,max_value=max(0,avail_am),value=min(int(cur.get("backup_credits_am_to_use",0)),max(0,avail_am)),step=1,help=tr("bonus_target_effect"))
-            with cr2:
-                bonus_pm_use=st.number_input(tr("use_credit_pm"),min_value=0,max_value=max(0,avail_pm),value=min(int(cur.get("backup_credits_pm_to_use",0)),max(0,avail_pm)),step=1,help=tr("bonus_target_effect"))
+            # V2.5.136: reward credits are a separate wallet and are no longer
+            # mixed into the monthly preference form. Legacy typed fields stay zero.
+            bonus_am_use=0
+            bonus_pm_use=0
             st.divider()
             st.markdown(f"### {tr('legal_safety_inputs')}")
             st.caption(tr("labour_hard_summary"))
@@ -5029,8 +5237,6 @@ with tabs[pos]:
                     st.error(tr("hard_conflict"))
                 elif soft_pref_conflict:
                     st.error(tr("soft_conflict"))
-                elif int(bonus_am_use)+int(bonus_pm_use)>2:
-                    st.error(tr("max_credit_error"))
                 else:
                     pref_payload={
                         "unavailable":unavailable,
@@ -5092,10 +5298,11 @@ with tabs[pos]:
             )
     if senior_mode:
         st.divider(); st.markdown(f"### {tr('all_preferences')}"); prefs=db.all_preferences(year,month); sets=db.all_account_settings(); recurring_all=db.all_recurring_preferences(); nd=calendar.monthrange(year,month)[1]; rows=[]
-        priority_rows=db.all_preference_priorities(year,month) if weekend_fcfs_backup_mode(year,month) else {}
-        applied_priority_rows=db.all_applied_preference_priorities(year,month) if weekend_fcfs_backup_mode(year,month) else {}
-        if weekend_fcfs_backup_mode(year,month) and lang=="LT":
-            st.caption("Pateikimo vieta skaičiuojama iš naujo kiekvienam grafikui ir galioja būtent tam grafikui, kuriam pateikti pageidavimai. Ji naudojama tik kaip papildomas kriterijus, kai keli pageidavimai realiai susikerta ir visų vienu metu įvykdyti neįmanoma.")
+        _priority_visible=bool(weekend_fcfs_backup_mode(year,month) and now_lt>=cutoff_pref)
+        priority_rows=db.all_preference_priorities(year,month) if _priority_visible else {}
+        applied_priority_rows=db.all_applied_preference_priorities(year,month) if _priority_visible else {}
+        if weekend_fcfs_backup_mode(year,month) and lang=="LT" and _priority_visible:
+            st.caption("Pateikimo vieta galioja tam pačiam grafikui ir nustatoma pagal paskutinio reikšmingo pageidavimų pakeitimo laiką iki termino.")
         backup_claims=db.list_backup_claims(year,month) if weekend_fcfs_backup_mode(year,month) else []
         claims_by_person={str(r.get("initials")):r for r in backup_claims}
         slot_map_fcfs={s.idx:s for s in _fcfs_weekend_slot_pool(year,month)} if weekend_fcfs_backup_mode(year,month) else {}
@@ -5103,11 +5310,12 @@ with tabs[pos]:
             mc1,mc2=st.columns(2)
             mc1.metric("Pageidavimai pateikti" if lang=="LT" else "Preferences submitted",f"{len(prefs)}/16")
             mc2.metric("Dubliai užpildyti" if lang=="LT" else "Backups filled",f"{len(backup_claims)}/16")
-            st.caption(
-                "Pateikimo eilė: 1–16. Ji taikoma tam pačiam grafikui tik tada, kai keli pageidavimai realiai susikerta ir visų vienu metu įvykdyti neįmanoma. Sistema visada pirmiausia siekia 100% bendro pageidavimų išpildymo."
-                if lang=="LT" else
-                "Pateikimo eilė: 1–16. Ji taikoma tam pačiam grafikui ir tik kaip papildomas konfliktų sprendimo kriterijus po to, kai sistema užfiksuoja maksimaliai įmanomą bendrą pageidavimų išpildymą."
-            )
+            if _priority_visible:
+                st.caption(
+                    "Pateikimo eilė: 1–16. Ji nustatoma pagal paskutinį reikšmingą pageidavimų pakeitimą iki termino ir taikoma tik tada, kai keli pageidavimai realiai susikerta. Sistema visada pirmiausia siekia 100 % bendro pageidavimų išpildymo."
+                    if lang=="LT" else
+                    "Pateikimo eilė rodoma tik po termino ir naudojama tik likusiam konfliktui."
+                )
         for p in DEFAULT_PEOPLE:
             x=prefs.get(p["initials"],{})
             vol=(len(x.get("unavailable",set()))+len(x.get("unavailable_am",set()))+
@@ -5128,9 +5336,7 @@ with tabs[pos]:
                           else ("Rezidentas" if lang=="LT" else "Resident")
                           if x else "—")
                 ),
-                ("Pateikimo vieta" if lang=="LT" else "Submission rank"):(
-                    priority_rows.get(p["initials"],{}).get("submission_order") or "—"
-                ),
+                **(({"Pateikimo vieta":(priority_rows.get(p["initials"],{}).get("submission_order") or "—")}) if _priority_visible else {}),
                 ("Dublis" if lang=="LT" else "Backup"):(
                     (lambda rr: (
                         f"{slot_map_fcfs[int(rr['covered_slot'])].day:02d} {WEEKDAYS[lang][slot_map_fcfs[int(rr['covered_slot'])].weekday]} · {block_label(slot_map_fcfs[int(rr['covered_slot'])].block)}"
@@ -5152,13 +5358,34 @@ with tabs[pos]:
                 tr("preferred_am_dates"):", ".join(map(str,sorted(x.get("preferred_am",set())))),
                 tr("preferred_pm_dates"):", ".join(map(str,sorted(x.get("preferred_pm",set())))),
                 tr("long_term"):"; ".join(f"{WEEKDAY_FULL[lang][int(r['weekday'])]}: {r['preference_type']} {r.get('block','FULL')}" for r in recurring_all.get(p["initials"],[])),
-                tr("use_credit_am"):x.get("backup_credits_am_to_use",0),
-                tr("use_credit_pm"):x.get("backup_credits_pm_to_use",0),
                 tr("comment"):x.get("note",""),
                 tr("holiday_pref"):({-1:tr("holiday_rest"),0:tr("holiday_neutral"),1:tr("holiday_work")}.get(int(sets.get(p["initials"],{}).get("holiday_preference",0) or 0),tr("holiday_neutral"))),
                 tr("email"):sets.get(p["initials"],{}).get("email","")
             })
-        st.dataframe(style_rows(pd.DataFrame(rows)),use_container_width=True,hide_index=True); st.caption(tr("visibility_flag"))
+        _prefs_export_df=pd.DataFrame(rows)
+        # Export actions stay above the table so they are always visible.
+        _ex1,_ex2=st.columns(2)
+        with _ex1:
+            st.download_button(
+                "ATSISIŲSTI EXCEL (.xlsx)",
+                build_preferences_xlsx(year,month,rows,priority_visible=_priority_visible),
+                file_name=f"Pageidavimai_{year}_{month:02d}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                type="primary",
+                key=f"preferences_xlsx_{year}_{month}",
+            )
+        with _ex2:
+            st.download_button(
+                "ATSISIŲSTI CSV (.csv)",
+                _prefs_export_df.to_csv(index=False).encode("utf-8-sig"),
+                file_name=f"Pageidavimai_{year}_{month:02d}.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key=f"preferences_csv_{year}_{month}",
+            )
+        st.dataframe(style_rows(_prefs_export_df),use_container_width=True,hide_index=True)
+        st.caption(tr("visibility_flag"))
 pos+=1
 
 # --- Settings ---
@@ -5235,19 +5462,6 @@ with tabs[pos]:
                     else:
                         flash_saved(tr("settings_saved"))
 pos+=1
-
-# --- Privatūs pageidavimai: tik SP / ŠR ir tik Išplėstiniame režime ---
-if active_user in (SENIOR_INITIALS,RESEARCHER_INITIALS) and advanced_mode:
-    with tabs[pos]:
-        st.subheader(f"Privatūs pageidavimai — {month_label(year,month)}")
-        render_sp_dream_team_settings_v25125(year,month)
-        st.divider()
-        render_operator_private_pair_preferences(year,month,active_user)
-        _private_payload=db.load_schedule(year,month,"baseline") or db.load_schedule(year,month,"draft")
-        _private_result=(refresh_result_payload(_private_payload,year,month,use_actual_backups=False) if _private_payload else None)
-        with st.expander("Rezultatas",expanded=False):
-            render_operator_private_pair_stats(year,month,active_user,_private_result)
-    pos+=1
 
 def _hard_error_explanation(raw, lang="LT"):
     s=str(raw)
@@ -5709,7 +5923,7 @@ if senior_mode:
                 st.dataframe(_wish["table"],use_container_width=True,hide_index=True)
 
             # Privataus operatorių refinemento detalės sąmoningai nerodomos bendrame
-            # Sudarymo lange. Jos yra tik atskirame „Privatūs pageidavimai“ lange.
+            # Sudarymo lange. Jos redaguojamos tiesiai „Pageidavimai“ lange.
             _wcap=g.get("admin_weekend_spread_cap_used")
             _bp,_be=backup_counts(year,month,dr)
             _bvals=list(_bp.values())
@@ -6010,7 +6224,7 @@ with tabs[pos]:
                     if payload:
                         _workflow_card(
                             "2 etapas · Apsikeitimų laikotarpis" if lang=="LT" else "PRELIMINARY PUBLISHED — SWAPS ACTIVE",
-                            f"Rezidentai mato preliminarų grafiką, gali siūlyti apsikeitimus ir pasirinkti dar laisvą dublį iki {s_close:%Y-%m-%d %H:%M}." if lang=="LT" else f"Residents can see the preliminary grafikas and create pre-FINAL swaps / choose a remaining FCFS backup until {s_close:%Y-%m-%d %H:%M}.",
+                            f"Rezidentai mato preliminarų grafiką ir gali siūlyti apsikeitimus iki {s_close:%Y-%m-%d %H:%M}. Dublių pasirinkimas lieka atskira viso mėnesio savitarna." if lang=="LT" else f"Residents can see the preliminary schedule and create pre-FINAL swaps until {s_close:%Y-%m-%d %H:%M}. Backup selection remains a separate all-month self-service.",
                             "swap_open"
                         )
                     elif draft_payload:
@@ -6075,7 +6289,7 @@ with tabs[pos]:
                     q3.metric("Paskirstyti automatiškai" if lang=="LT" else "AUTO random",auto_n)
                     _workflow_card(
                         "3 etapas · Seniūnės galutinė peržiūra" if lang=="LT" else "RESIDENT WINDOWS CLOSED — SENIOR REVIEW",
-                        "Nuo 16 d. 00:00 rezidentai nebegali keisti pageidavimų, siūlyti naujų apsikeitimų ar rinktis dublio. Visi likę privalomi dubliai automatiškai atsitiktine tvarka paskirstomi jų dar nepasirinkusiems rezidentams. Seniūnės rankinės funkcijos lieka aktyvios." if lang=="LT" else "From day 16 00:00 residents can no longer edit preferences, create pre-FINAL swaps, or choose a backup. Every unclaimed mandatory backup is randomly assigned among the remaining residents. SP/ŠR manual control remains active.",
+                        "Nuo 16 d. 00:00 uždaromi nauji grafiko pageidavimai ir apsikeitimai. Trūkstami dubliai gali būti užpildyti automatiškai finalinei aprėpčiai, tačiau dublio savitarna lieka aktyvi visą tikslinį mėnesį; aktyvuoto ar jau atlikto dublio tyliai perkelti negalima." if lang=="LT" else "From day 16 00:00 new schedule preferences and swaps close. Missing backups may be auto-filled for final coverage, while backup self-service remains active throughout the target month; an activated or completed backup cannot be silently moved.",
                         "swap_closed"
                     )
             else:
@@ -6203,6 +6417,13 @@ with tabs[pos]:
                     if hard_now!=0:
                         st.error(f"FINAL validacija nepraėjo: HARD={hard_now}"); st.stop()
                     db.finalize_schedule_v2592(year,month,serialize_result(rr))
+                    # V2.5.136: reserved reward credits become consumed only when FINAL is locked.
+                    # If this bookkeeping call ever fails, the reservation still remains unavailable
+                    # for double-spending and can be reconciled safely later.
+                    try:
+                        db.consume_reward_credit_redemptions_v25136(year,month)
+                    except Exception:
+                        pass
                     if weekend_fcfs_backup_mode(year,month):
                         st.session_state["_finalization_flash"]=("success","Galutinis grafikas patvirtintas ir paruoštas administracijai. Rezidentų savitarna lieka uždaryta; vėlesni realaus darbo pasikeitimai registruojami atskirame faktiniame grafike." if lang=="LT" else "FINAL locked and prepared for administration. Resident self-service remains closed; post-FINAL operational changes belong to the separate ACTUAL layer.")
                     else:
@@ -6656,56 +6877,93 @@ if advanced_mode:
     pos+=1
 
 # --- Credits ---
-# V2.5.117 — operational Credits is visible in both Simple and Advanced modes.
 with tabs[pos]:
-    st.subheader(tr("credits_debts"))
+    st.subheader("Kreditai")
 
-    # One immutable WESTON click ledger, mirrored as a negative balance for SP
-    # and an equal positive receivable for ŠR. This is intentionally shown in
-    # Credits, where both sides can see the running balance without hunting
-    # through Summary/Transparency.
     if active_user in (SENIOR_INITIALS,WESTON_CREDITOR_INITIALS):
         try:
             _weston_credit=db.weston_beer_stats_v25110(year,month)
             _w_total=int(_weston_credit.get("total_beers",0) or 0)
-            _w_month=int(_weston_credit.get("month_beers",0) or 0)
-            st.markdown("### WESTON balansas" if lang=="LT" else "### WESTON balance")
-            _wc1,_wc2,_wc3=st.columns(3)
-            if active_user==SENIOR_INITIALS:
-                _wc1.metric(("Tavo balansas" if lang=="LT" else "Your balance"),f"−{_w_total} WESTON")
-                _wc2.metric(("Skola ŠR — iš viso" if lang=="LT" else "Debt to ŠR — lifetime"),_w_total)
-                _wc3.metric(("Šį mėnesį prisidėjo" if lang=="LT" else "Added this month"),f"+{_w_month}")
-                st.caption(("SP: 1 GENERUOTI / PERKURTI paspaudimas = −1 WESTON tavo balanse ir +1 WESTON ŠR. Tas pats ledgeris rodomas abiem pusėms." if lang=="LT" else "SP: 1 GENERATE / REGENERATE click = −1 WESTON on your balance and +1 WESTON for ŠR. Both views come from the same ledger."))
-            else:
-                _wc1.metric(("Tavo balansas" if lang=="LT" else "Your balance"),f"+{_w_total} WESTON")
-                _wc2.metric(("SP tau skolinga — iš viso" if lang=="LT" else "SP owes you — lifetime"),_w_total)
-                _wc3.metric(("Šį mėnesį uždirbai" if lang=="LT" else "Earned this month"),f"+{_w_month}")
-                st.caption(("ŠR: kiekvienas SP GENERUOTI / PERKURTI paspaudimas = +1 WESTON tau. SP mato tą patį skaičių kaip savo skolą." if lang=="LT" else "ŠR: every SP GENERATE / REGENERATE click = +1 WESTON for you. SP sees the same number as her debt."))
-            st.divider()
-        except Exception as _weston_exc:
-            st.caption(("WESTON balanso šiuo metu nepavyko nuskaityti." if lang=="LT" else "WESTON balance is temporarily unavailable."))
+            with st.expander("WESTON",expanded=False):
+                st.metric("Balansas",(f"−{_w_total}" if active_user==SENIOR_INITIALS else f"+{_w_total}"))
+        except Exception:
+            pass
 
-    st.markdown(f"### {tr('credit_balances')}")
-    st.caption(tr("netting_explain"))
-    rest_bank=db.rest_credit_balances(active_user)
-    rb1,rb2,rb3=st.columns(3)
-    rb1.metric(tr("credit_am"),rest_bank.get("AM",0))
-    rb2.metric(tr("credit_pm"),rest_bank.get("PM",0))
-    rb3.metric(tr("credit_night"),rest_bank.get("NIGHT",0))
-    st.caption(tr("credit_month_cap")); st.caption(tr("night_bank_only"))
+    earned_units=db.reward_credit_earned_units(active_user)
+    current_use_units=db.reward_credit_redemption_units(active_user,year,month)
+    available_for_month=db.reward_credit_available_for_month(active_user,year,month)
+    other_reserved=max(0,earned_units-available_for_month)
+    free_units=max(0,available_for_month-current_use_units)
+
+    c1,c2,c3=st.columns(3)
+    c1.metric("Sukaupta",f"{earned_units/12:.2f}")
+    c2.metric("Šiam grafikui",f"{current_use_units/12:.2f}")
+    c3.metric("Laisvas likutis",f"{free_units/12:.2f}")
+    st.caption("1,00 kreditas = 12 bazinių tarifinių valandų · 1× / 2× / 3× · galiojimo pabaigos nėra. Uždirbtas kreditas naudojamas nuo kito mėnesio.")
+
+    _sched_state=db.get_schedule_state(year,month)
+    _lifecycle=db.get_schedule_lifecycle(year,month)
+    _credit_locked=bool(_sched_state.get("has_published")) or str(_lifecycle.get("state") or "")=="final"
+    st.markdown("### Panaudoti šiam grafikui")
+    max_redeem_units=(available_for_month//6)*6
+    _redeem_value=st.number_input(
+        "Kreditai",min_value=0.0,max_value=float(max_redeem_units)/12.0,
+        value=min(float(current_use_units)/12.0,float(max_redeem_units)/12.0),step=0.5,format="%.2f",
+        disabled=_credit_locked,key=f"reward_credit_use_{year}_{month}_{active_user}"
+    )
+    if _credit_locked:
+        st.caption("Pagrindinis grafikas jau paskelbtas — šio mėnesio kreditų panaudojimas užrakintas. Nepanaudotas likutis persikelia į kitus mėnesius.")
+    elif st.button("IŠSAUGOTI KREDITŲ PANAUDOJIMĄ",type="primary",use_container_width=True,key=f"reward_credit_save_{year}_{month}_{active_user}"):
+        try:
+            _units=int(round(float(_redeem_value)*12))
+            if _units%6:
+                raise ValueError("Šiam dieniniam grafikui kreditai naudojami 0,50 žingsniais.")
+            db.set_my_reward_credit_redemption_v25136(year,month,_units)
+            st.success("Išsaugota. Jei juodraštis jau buvo sugeneruotas, jį reikia sugeneruoti iš naujo.")
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+
+    if lifecycle_operator_ui:
+        with st.expander("Registruoti ekstra pavadavimą",expanded=False):
+            _target=st.selectbox("Rezidentas",[p["initials"] for p in DEFAULT_PEOPLE],key=f"reward_manual_person_{year}_{month}")
+            _event_date=st.date_input("Data",value=date.today(),key=f"reward_manual_date_{year}_{month}")
+            _kind_label=st.selectbox("Pamaina",["Rytas 08–14","Popietė 14–20","Diena 08–20","Naktis 20–08"],key=f"reward_manual_kind_{year}_{month}")
+            _kind={"Rytas 08–14":"AM","Popietė 14–20":"PM","Diena 08–20":"FULL","Naktis 20–08":"NIGHT"}[_kind_label]
+            _units=reward_credit_units_for_shift(_event_date.year,_event_date.month,_event_date.day,_kind)
+            st.metric("Kreditas",f"{reward_credit_value(_units):.2f}")
+            _detail=st.text_input("Pastaba",key=f"reward_manual_detail_{year}_{month}")
+            if st.button("REGISTRUOTI",use_container_width=True,key=f"reward_manual_add_{year}_{month}"):
+                try:
+                    db.award_manual_reward_credit_v25136(_target,_event_date.isoformat(),_kind,_units,_detail)
+                    st.success("Kreditas pridėtas.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+
+    with st.expander("Kreditų istorija",expanded=False):
+        _ledger=db.reward_credit_ledger(active_user)
+        if _ledger:
+            _rows=[]
+            for r in _ledger:
+                _rows.append({
+                    "Data":r.get("event_date") or str(r.get("created_at") or "")[:10],
+                    "Šaltinis":r.get("source"),
+                    "Pamaina":r.get("shift_kind"),
+                    "Kreditas":round(int(r.get("units",0) or 0)/12.0,2),
+                    "Pastaba":r.get("detail") or "",
+                })
+            st.dataframe(pd.DataFrame(_rows),use_container_width=True,hide_index=True)
+        else:
+            st.caption("Kreditų operacijų dar nėra.")
+
     if senior_mode:
-        st.divider(); st.markdown(f"### {tr('credit_balances')} — {tr('summary')}")
-        rest_all=db.all_rest_credit_balances()
-        rows=[]
-        for person in DEFAULT_PEOPLE:
-            i=person["initials"]
-            rows.append({
-                tr("person"):i,
-                f"{tr('rest_credit_bank')} AM":rest_all.get(i,{}).get("AM",0),
-                f"{tr('rest_credit_bank')} PM":rest_all.get(i,{}).get("PM",0),
-                f"{tr('rest_credit_bank')} NIGHT":rest_all.get(i,{}).get("NIGHT",0),
-            })
-        st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
+        with st.expander("Grupės balansai",expanded=False):
+            _all=db.all_reward_credit_balances_v25136()
+            st.dataframe(pd.DataFrame([{
+                "Rezidentas":p["initials"],
+                "Likutis":round(max(0,int(_all.get(p["initials"],0) or 0))/12.0,2),
+            } for p in DEFAULT_PEOPLE]),use_container_width=True,hide_index=True)
     pos+=1
 
 # --- Backups ---
@@ -7025,31 +7283,26 @@ with tabs[pos]:
                     st.success(f"{tr('completed_backup')}: {rr_fresh.get('completed_at')}")
                     if st.button(tr("undo_backup_completed"),use_container_width=True):
                         try:
-                            db.undo_backup_credit(rid); st.success(tr("backup_completion_undone")); st.rerun()
+                            db.undo_backup_credit_v25136(rid); st.success(tr("backup_completion_undone")); st.rerun()
                         except Exception as exc:
                             st.error(str(exc))
                 else:
                     auto_type=("NIGHT" if covered_slot and covered_slot.block=="NIGHT" else covered_slot.block if covered_slot else "")
-                    if auto_type=="AM": st.info(f"{tr('cover_credit_type')}: {tr('credit_am')}")
-                    elif auto_type=="PM": st.info(f"{tr('cover_credit_type')}: {tr('credit_pm')}")
-                    elif auto_type=="NIGHT": st.info(f"{tr('cover_credit_type')}: {tr('credit_night')}")
-                    st.caption(tr("cover_credit_note"))
-                    if st.button(tr("mark_backup_completed"),type="primary",use_container_width=True,disabled=auto_type not in ("AM","PM","NIGHT")):
+                    _credit_units=(reward_credit_units_for_shift(year,month,covered_slot.day,auto_type) if covered_slot is not None and auto_type in ("AM","PM","NIGHT") else 0)
+                    if _credit_units:
+                        st.info(f"Už realiai atliktą pavadavimą: +{reward_credit_value(_credit_units):.2f} kredito")
+                    if st.button(tr("mark_backup_completed"),type="primary",use_container_width=True,disabled=not _credit_units):
                         try:
-                            ev=db.complete_backup_cover(rid)
-                            st.success(tr("backup_completed"))
-                            if ev.get("coverer_effect")=="REST_EARNED": st.info(tr("cover_effect_rest"))
+                            db.complete_backup_cover_v25136(rid,_credit_units,auto_type,date(year,month,covered_slot.day).isoformat())
+                            st.success(f"Realus pavadavimas užregistruotas: +{reward_credit_value(_credit_units):.2f} kredito.")
                         except Exception as exc:
                             st.error(str(exc))
-                rest_all=db.all_rest_credit_balances()
-                st.markdown(f"### {tr('credit_balances')}")
-                all_ids=sorted(rest_all)
-                st.dataframe(pd.DataFrame([{
-                    tr("person"):i,
-                    f"{tr('rest_credit_bank')} AM":rest_all.get(i,{}).get("AM",0),
-                    f"{tr('rest_credit_bank')} PM":rest_all.get(i,{}).get("PM",0),
-                    f"{tr('rest_credit_bank')} NIGHT":rest_all.get(i,{}).get("NIGHT",0),
-                } for i in all_ids]),use_container_width=True,hide_index=True)
+                _all_credit=db.all_reward_credit_balances_v25136()
+                with st.expander("Kreditų balansai",expanded=False):
+                    st.dataframe(pd.DataFrame([{
+                        "Rezidentas":i,
+                        "Kreditai":round(max(0,int(_all_credit.get(i,0) or 0))/12.0,2),
+                    } for i in sorted(_all_credit)]),use_container_width=True,hide_index=True)
                 st.dataframe(backup_table(year,month,result),use_container_width=True,hide_index=True)
 pos+=1
 
@@ -11993,119 +12246,6 @@ if advanced_mode:
                      if lang=="LT" else
                      "Detailed criterion tables and component progress are shown in Advanced mode.")
                 )
-    pos+=1
-
-# --- Senior usability / audit guide ---
-if senior_mode:
-    with tabs[pos]:
-        st.subheader(tr("senior_guide"))
-        if lang=="LT":
-            st.info(
-                "Tikslas nėra aklai pasitikėti algoritmu. Tikslas — vietoje viso grafiko konstravimo ranka gauti "
-                "stiprų juodraštį su įrodymais ir seniūnei palikti trumpą, kryptingą išimčių auditą."
-            )
-            st.markdown("### 5 minučių audito protokolas")
-            audit_rows=[
-                {"Žingsnis":"1","Kur žiūrėti":"Privalomos taisyklės / diagnostika","Ką patikrinti":"0 privalomų saugos klaidų ir 0 „Dirbti negaliu“ pažeidimų.","Jei blogai":"Nepublikuoti."},
-                {"Žingsnis":"2","Kur žiūrėti":"Darbo vietų matrica","Ką patikrinti":"SPS UG, SPS RO, savaitgaliai ir kitos darbo vietos paskirstytos kuo tolygiau; jei skirtumas didesnis, turi būti aiški matematinė priežastis.","Jei blogai":"Nepublikuoti arba aiškiai patikrinti, ar nukrypimas matematiškai neišvengiamas."},
-                {"Žingsnis":"3","Kur žiūrėti":"Rezidentų rodikliai","Ką patikrinti":"Nėra vieno žmogaus su neproporcingu savaitiniu krūviu; 7 dienų darbo krūvio, dublių ir poilsio rodikliai logiški.","Jei blogai":"Regeneruoti / taisyti prieš publikavimą."},
-                {"Žingsnis":"4","Kur žiūrėti":"Išplėstinis / Patikra","Ką patikrinti":"Pasirinkti 3–5 rezidentus, ypač mažiausio ir didžiausio pageidavimų išpildymo, ir ranka patikrinti 1–2 konkrečius įrankio teiginius kiekvienam.","Jei blogai":"Jei teiginys nesutampa su pradiniu grafiku, laikyti tai rodiklio / programos klaida ir nepublikuoti, kol ištaisyta."},
-                {"Žingsnis":"5","Kur žiūrėti":"Grafikas + patikra","Ką patikrinti":"Privalomas padengimas, nepaaiškintos skylės, akivaizdūs persidengimai ir ar galutinis grafikas atitinka tai, ką rodo suvestinės.","Jei blogai":"Nepublikuoti."},
-            ]
-            st.dataframe(pd.DataFrame(audit_rows),use_container_width=True,hide_index=True)
-            st.markdown("### Įrankio teiginių patikra — paprastai, be žargono")
-            st.info(
-                "**Teiginys** = vienas konkretus sakinys, kurį įrankis sako apie grafiką. Pvz.: "
-                "„ŠR 18 d. popietę prašė laisvos, bet pradiniame grafike paskirtas SPS UG, todėl pageidavimas neįvykdytas.“ "
-                "Patikra reiškia tik viena: atsidaryti 18 d. ir pažiūrėti, ar tas SPS UG PM tikrai yra. "
-                "Nereikia iš naujo perskaičiuoti viso mėnesio."
-            )
-            st.markdown(
-                "**Ką tikrinti:** 1) ko žmogus prašė; 2) ką pradinis grafikas jam realiai paskyrė; "
-                "3) ar iš to logiškai seka „įvykdyta / neįvykdyta“; 4) ar darbo vietų matricos skaičiai sutampa su grafiku."
-            )
-
-            # V2.5.60: interactive senior verification card. Load its own schedule
-            # state so this tab is safe even when other tabs did not define base/current.
-            _guide_currentp=db.load_schedule(year,month,"current")
-            _guide_basep=db.load_schedule(year,month,"baseline")
-            if _guide_currentp:
-                _guide_system=refresh_result_payload(_guide_basep or _guide_currentp,year,month,use_actual_backups=False)
-                _guide_people=[p["initials"] for p in DEFAULT_PEOPLE]
-                _guide_person=st.selectbox("Pasirink rezidentą teiginių patikrai",_guide_people,key=f"senior_verify_person_{year}_{month}")
-                _guide_pd=(_guide_system.stats.get("people",{}).get(_guide_person,{}) or {})
-                _gh,_gs,_go,_gw=st.columns(4)
-                _gh.metric("Dirbti negaliu",tr("not_applicable") if _guide_pd.get("resident_hard_score") is None else f"{_guide_pd.get('resident_hard_score')}%")
-                _gs.metric("Pageidavimai",tr("not_applicable") if _guide_pd.get("soft_preference_score") is None else f"{_guide_pd.get('soft_preference_score')}%")
-                _go.metric("Visi prašymai",tr("not_applicable") if _guide_pd.get("overall_request_score") is None else f"{_guide_pd.get('overall_request_score')}%")
-                _gw.metric("SPS UG",int((_guide_pd.get("rotation_counts") or {}).get("SPS UG",0) or 0))
-                _guide_rows=(_guide_pd.get("resident_hard_conflicts") or [])+(_guide_pd.get("soft_request_misses") or [])
-                if _guide_rows:
-                    st.markdown("#### Ką konkrečiai įrankis teigia apie šį rezidentą")
-                    st.dataframe(request_details_df(_guide_rows,_guide_person),use_container_width=True,hide_index=True)
-                else:
-                    st.success("Šiam rezidentui neįvykdytų struktūruotų negalėjimų ar pageidavimų nėra.")
-                with st.expander("Rodyti ir įvykdytus prašymus — atrankinei patikrai",expanded=False):
-                    _guide_honored=_guide_pd.get("honored_request_details") or []
-                    if _guide_honored:
-                        st.dataframe(request_details_df(_guide_honored,_guide_person),use_container_width=True,hide_index=True)
-                    else:
-                        st.caption("Nėra į rodiklį įtrauktų struktūruotų prašymų.")
-                st.caption("Darbo vietų skaičių tikrink darbo vietų matricoje ir pradiniame grafike. Pvz., jei rodoma SPS UG = 2, turi rasti lygiai du SPS UG paskyrimus šiam rezidentui.")
-            else:
-                st.caption("Interaktyvi teiginių patikros kortelė atsiras, kai šiam mėnesiui bus paskelbtas grafikas.")
-
-            st.success(
-                "Principas: **ne skaityti visą grafiką nuo nulio, o tikrinti konkrečius įrankio teiginius ir išimtis.** "
-                "Jei sakinys nesutampa su pačiu pradiniu grafiku, tai ne „nuomonės skirtumas“, o aiški rodiklio / programos klaida."
-            )
-            st.markdown("### Kada grafiko NEPUBLIKUOTI")
-            st.dataframe(pd.DataFrame([
-                {"Raudona vėliava":"Privaloma saugos klaida","Veiksmas":"Blokuoti publikavimą."},
-                {"Raudona vėliava":"Trūksta privalomo SPS RO / SPS UG / savaitgalio padengimo","Veiksmas":"Blokuoti publikavimą."},
-                {"Raudona vėliava":"Kritinis SPS RO / SPS UG / savaitgalių paskirstymo skirtumas >1 be aiškaus paaiškinimo","Veiksmas":"Regeneruoti / tirti."},
-                {"Raudona vėliava":"Bet koks „Dirbti negaliu“ pažeidimas pradiniame juodraštyje","Veiksmas":"Regeneruoti / tirti."},
-                {"Raudona vėliava":"Teiginys apie pageidavimą / darbo vietą / krūvį nesutampa su pačiu pradiniu grafiku","Veiksmas":"Laikyti metrikos klaida; nepublikuoti, kol išspręsta."},
-                {"Raudona vėliava":"Importuoti pageidavimai akivaizdžiai nepilni / rodo N/A, nors žmogus pateikė prašymus","Veiksmas":"Taisyti importą prieš generuojant."},
-            ]),use_container_width=True,hide_index=True)
-            st.markdown("### Kas po publikavimo yra normalu")
-            st.markdown(
-                "- **Apsikeitimai** keičia faktinį grafiką; pradinis grafikas auditui lieka užfiksuotas.\n"
-                "- **Liga / neatvykimas** gali perkelti jau dirbantį žmogų iš neprivalomos darbo vietos į SPS; pradinis grafikas dėl to nesikeičia, o faktinio darbo statistika perskaičiuojama pagal realybę.\n"
-                "- **Neįvykdytas pageidavimas** savaime nėra klaida, jei jį aiškiai paaiškina svarbesnės taisyklės arba neišvengiamas konfliktas.\n"
-                "- **Didesnis darbo vietos paskirstymo skirtumas** priimtinas tik tada, kai tolygesnis variantas matematiškai neįmanomas dėl svarbesnių apribojimų."
-            )
-            st.markdown("### Seniūnės darbo eiga — nuo nulio iki mėnesio uždarymo")
-            workflow=pd.DataFrame([
-                {"Etapas":"1. Paruošti mėnesį","Seniūnės veiksmas":"Patikrinti aktyvų taisyklių profilį, šventes, etatus, tikslinius krūvius ir administracinius uždarymus.","Įrankio darbas":"Sukuria aktualų darbo vietų ir taisyklių rinkinį."},
-                {"Etapas":"2. Surinkti pageidavimus","Seniūnės veiksmas":"Stebėti, kas nepateikė; peržiūrėti tik neaiškius / konfliktinius įrašus.","Įrankio darbas":"Sutvarko negalėjimus, pageidavimus ir ilgalaikius nustatymus į vienodą įvesties formatą."},
-                {"Etapas":"3. Sugeneruoti","Seniūnės veiksmas":"Spausti Generate; nebandyti iš anksto ranka konstruoti viso grafiko.","Įrankio darbas":"Sprendžia privalomą padengimą, tolygų krūvį, „Dirbti negaliu“, darbo vietas ir pageidavimus."},
-                {"Etapas":"4. Audituoti","Seniūnės veiksmas":"5 min. raudonų vėliavų ir konkrečių teiginių atrankinė patikra; tikrinti išimtis, ne kiekvieną langelį.","Įrankio darbas":"Rodo diagnostiką, darbo vietų matricą, rezidentų rodiklius, pageidavimų išpildymą ir neįvykdytų pageidavimų priežastis."},
-                {"Etapas":"5. Koreguoti","Seniūnės veiksmas":"Tik jei auditas randa realią klaidą arba administracinę išimtį.","Įrankio darbas":"Pakartotinis generavimas arba rankinė korekcija su pakartotine patikra."},
-                {"Etapas":"6. Publikuoti","Seniūnės veiksmas":"Publikuoti tik po galutinės patikros.","Įrankio darbas":"Užfiksuoja pradinį grafiką auditui ir paskelbia grafiką."},
-                {"Etapas":"7. Eksploatuoti","Seniūnės veiksmas":"Apsikeitimams ir nenumatytiems pakeitimams naudoti platformos srautą, o ne asmenines žinutes.","Įrankio darbas":"Faktinis grafikas keičiasi, o pradinis grafikas lieka auditui ir tyrimui."},
-                {"Etapas":"8. Uždaryti mėnesį","Seniūnės veiksmas":"Peržiūrėti pradinį ir faktinį grafiką bei eksportuoti tyrimo duomenis.","Įrankio darbas":"Palieka audito, pageidavimų išpildymo, darbo vietų ir pakeitimų istoriją."},
-            ])
-            st.dataframe(workflow,use_container_width=True,hide_index=True)
-            with st.expander("Pilnas seniūnės naudojimo ir audito vadovas"):
-                st.markdown(SENIOR_GUIDE_LT)
-        else:
-            st.info(
-                "The aim is not blind trust in an algorithm. The aim is to replace full manual construction with a strong draft, "
-                "explicit evidence and a short exception-focused human audit."
-            )
-            st.markdown("### Five-minute audit protocol")
-            audit_rows=[
-                {"Step":"1","Where":"Privalomos taisyklės / diagnostika","Verify":"Zero TRUE ABSOLUTE HARD errors and zero Resident-HARD / Unavailable violations.","If failed":"Do not publish."},
-                {"Step":"2","Where":"Darbo vietų matrica","Verify":"SPS RO, SPS UG and weekend spread 0–1; other posts remain within the current-month structural water-fill guardrails.","If failed":"Do not publish unless the deviation is explicitly proven unavoidable."},
-                {"Step":"3","Where":"Rezidentų rodikliai","Verify":"No disproportionate weekly load; rolling-7 and double/recovery metrics are plausible.","If failed":"Regenerate / correct before publication."},
-                {"Step":"4","Where":"Advanced / Proof","Verify":"Spot-check 3–5 residents, including the lowest and highest satisfaction, against the actual grid.","If failed":"Treat the tool statement as a metric defect until corrected."},
-                {"Step":"5","Where":"Schedule + Proof","Verify":"Coverage, gaps, overlaps and that summary claims match the schedule.","If failed":"Do not publish."},
-            ]
-            st.dataframe(pd.DataFrame(audit_rows),use_container_width=True,hide_index=True)
-            st.success("Principle: verify concrete tool statements against the grid instead of rebuilding the entire month by hand.")
-            with st.expander("Full senior usability and audit guide"):
-                st.markdown(SENIOR_GUIDE_EN)
     pos+=1
 
 def explanatory_manual_only(content: str) -> str:

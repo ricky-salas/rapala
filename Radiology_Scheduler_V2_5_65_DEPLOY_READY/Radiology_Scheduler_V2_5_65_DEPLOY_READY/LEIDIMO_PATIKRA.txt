@@ -1,9 +1,10 @@
-SHIFT HAPPENS V2.5.130 — leidimo patikra
+V2.5.137 PAGEIDAVIMŲ EXCEL — LEIDIMO PATIKRA
 
-- „Seniūnės skydas“: pašalintas.
-- „Privatūs pageidavimai“: SP ir ŠR tik Išplėstiniame režime.
-- Nuolatinė komanda: matoma SP ir ŠR; redaguoja SP.
-- „Noriu dirbti su / Nenoriu dirbti su“: matoma ir redaguojama kiekvieno operatoriaus savo privačiame lange.
-- Senesnio db.py suderinamumas: nėra tiesioginio AttributeError kelio per operator_private_pair_preferences_v25128.
-- Python kompiliacija: tikrinama testais.
-- ZIP: mažiau nei 100 failų.
+PASS — app.py / scheduler_engine.py versijos sutampa: 2.5.137
+PASS — Python kompiliacija
+PASS — 6/6 V2.5.137 leidimo testų
+PASS — Pageidavimų Excel eksportas pasiekiamas nepriklausomai nuo termino būsenos
+PASS — CSV eksportas paliktas šalia
+PASS — prioritetinė vieta iki 14 d. 00:00 neeksportuojama
+PASS — Excel turi Pageidavimai + Suvestinė lapus, spalvas, filtrus ir fiksuotas antraštes
+PASS — bandomasis .xlsx sugeneruotas ir patikrintas

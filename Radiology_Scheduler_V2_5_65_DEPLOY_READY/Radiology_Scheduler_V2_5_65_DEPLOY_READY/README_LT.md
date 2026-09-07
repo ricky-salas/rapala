@@ -1,46 +1,20 @@
-# SHIFT HAPPENS — V2.5.130
+# SHIFT HAPPENS — V2.5.136
 
-Šis paketas yra lietuviška radiologijos rezidentų grafikų sistemos versija.
+Streamlit radiologijos rezidentų grafiko sistema.
 
+## Šio leidimo pagrindas
+- koeficientinis kreditų bankas;
+- dublio pasirinkimas visą tikslinį mėnesį, nepriklausomai nuo grafiko statuso;
+- pateikimo eilė skaičiuojama pagal paskutinį reikšmingą pakeitimą ir rodoma tik po termino;
+- atnaujintas lietuviškas seniūnės Word vadovas.
 
-## V2.5.130 sąsajos pataisa
+## Diegimas
+1. Diegti visą ZIP turinį kartu (`app.py`, `db.py`, `scheduler_engine.py`).
+2. Supabase SQL Editor paleisti `SUPABASE_MIGRATION_V2_5_136_CREDIT_ENGINE_GUARD.sql`.
+3. Perkrauti Streamlit aplikaciją.
 
-- Atskiro **„Seniūnės skydo“** nebėra.
-- SP ir ŠR išplėstiniame režime turi **„Privatūs pageidavimai“**.
-- Ten matoma **Nuolatinė komanda** ir **„Noriu dirbti su / Nenoriu dirbti su“**.
-- Privatus langas nebekrenta dėl senesnio deploy'intame `db.py` trūkstamos V2.5.128 funkcijos.
+Ankstesnių migracijų failai palikti pakete naujos aplinkos atkūrimui.
 
-## Kas svarbiausia šiame leidime
+## V2.5.137 — Pageidavimų Excel eksportas
 
-- Visa rezidentams ir seniūnei rodoma pagrindinė sąsaja yra lietuvių kalba.
-- Paprastame režime pašalintas programuotojų žargonas: rezidentas mato aiškius laukus, pvz., **„Dirbti negaliu“**, **„Noriu laisvos“**, **„Pageidauju dirbti“**.
-- Sistemos tikslas kiekvieną mėnesį — **100 % pageidavimų išpildymas**. Sudėtingame mėnesyje geriausias įmanomas rezultatas gali būti mažesnis, pavyzdžiui, 93 %, jei dalis norų tarpusavyje nesuderinami arba juos riboja svarbesnės saugos, padengimo ir darbo krūvio taisyklės.
-- Pateikimo vieta 1–16 taikoma **tam pačiam grafikui** ir naudojama tik likusiam konfliktui tarp vienodai gerų sprendinių — ji nesumažina jau pasiekto bendro pageidavimų išpildymo.
-- Vieša sprendimų seka: **sauga ir padengimas → 0 „Dirbti negaliu“ pažeidimų → kuo tolygesnis privalomas krūvis ir darbo vietos → maksimalus visų rezidentų pageidavimų išpildymas → pateikimo eilė tik likusiam vienodai geram konfliktui**.
-- Mėnesio ciklas: pageidavimai iki 14 d. 00:00; preliminaraus grafiko parengimas iki 15 d. 00:00; apsikeitimų langas 15 d. 00:00–16 d. 00:00; nuo 16 d. 00:00 — seniūnės galutinė patikra ir galutinio grafiko paskelbimas.
-- Grafikų sudarymo metodų palyginimas perkeltas į **„Tyrimas“** langą ir nebėra atskiras pagrindinės navigacijos langas.
-
-## Seniūnės vadovas
-
-Pagrindinis pristatymui ir kasdieniam darbui skirtas dokumentas:
-
-`SHIFT_HAPPENS_SENIUNES_VADOVAS_V2_5_128.docx`
-
-Trumpa tekstinė versija:
-
-`SENIOR_USABILITY_GUIDE_LT.md`
-
-## Paleidimas
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-Jei naudojama ankstesnė Supabase duomenų bazė, prieš paleidžiant šį leidimą turi būti pritaikytos pakete esančios aktualios migracijos.
-
-## Leidimo patikra
-
-```bash
-pytest -q test_v25130_release.py
-```
+„Pageidavimai“ lange SP / ŠR gali bet kuriuo metu atsisiųsti aktualų spalvotą `.xlsx` failą. Eksportas nepriklauso nuo to, ar pageidavimų langas dar atidarytas, ar jau uždarytas. Iki 14 d. 00:00 prioritetinė eilė faile nerodoma; po termino ji įtraukiama automatiškai.
