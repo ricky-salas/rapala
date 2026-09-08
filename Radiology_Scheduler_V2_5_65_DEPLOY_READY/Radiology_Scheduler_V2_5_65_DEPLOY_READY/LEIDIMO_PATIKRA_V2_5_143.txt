@@ -1,0 +1,11 @@
+V2.5.143 RELEASE CHECK
+PASS — Python compile
+PASS — October operational structure
+PASS — Mammography disabled from October
+PASS — Centro 120 AM fail-closed
+PASS — weekend 12 h FULL duty
+PASS — NIGHT scheduling disabled until confirmation
+PASS — October operational solve_schedule smoke test
+PASS — OPTUS extension validation
+PASS — OPTUS isolated preview: 0 unfilled, workload spread2 <=2, weekend spread <=1
+PASS — Senior guide rendered and visually checked 8/8 pages

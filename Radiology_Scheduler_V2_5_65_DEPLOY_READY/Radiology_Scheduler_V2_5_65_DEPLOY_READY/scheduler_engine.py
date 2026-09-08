@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.137"
+ENGINE_API_VERSION = "2.5.150"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -163,6 +163,33 @@ def weekend_fcfs_backup_mode(year: int, month: int) -> bool:
     """Return True for the new theoretical FCFS weekend-backup constitution."""
     return (int(year), int(month)) >= WEEKEND_FCFS_BACKUP_START
 
+# V2.5.142 cohort structure agreed with the senior scheduler.
+OCTOBER_2026_MODEL_START = (2026, 10)
+NIGHT_XRAY_DUTY_START = None
+# 120 AM may return in Nov/Dec, but the date is explicitly not confirmed yet.
+# Keep it closed until the senior scheduler provides a concrete activation month.
+CENTRO120_AM_REACTIVATION_START = None
+ANNUAL_EXAM_DATES = (date(2027,6,2), date(2027,6,16), date(2027,6,21))
+
+def cohort_october_model(year: int, month: int) -> bool:
+    return (int(year), int(month)) >= OCTOBER_2026_MODEL_START
+
+def night_xray_duty_active(year: int, month: int) -> bool:
+    # Night XR duties were announced as a future November change, but the senior
+    # scheduler has not yet confirmed the operational implementation details.
+    # Fail closed: do not generate NIGHT rows until an explicit activation month
+    # is configured in a later extension/release.
+    if NIGHT_XRAY_DUTY_START is None:
+        return False
+    return (int(year), int(month)) >= tuple(NIGHT_XRAY_DUTY_START)
+
+def centro120_am_active(year: int, month: int) -> bool:
+    if not cohort_october_model(year, month):
+        return True
+    if CENTRO120_AM_REACTIVATION_START is None:
+        return False
+    return (int(year), int(month)) >= tuple(CENTRO120_AM_REACTIVATION_START)
+
 
 @dataclass
 class Person:
@@ -173,6 +200,8 @@ class Person:
     unavailable_pm: Set[int] = field(default_factory=set)    # HARD: afternoon block
     vacation: Set[int] = field(default_factory=set)           # ABSOLUTE HARD: approved vacation / leave
     justified_absence: Set[int] = field(default_factory=set)  # ABSOLUTE HARD: other approved no-work date
+    wellness_days: Set[int] = field(default_factory=set)      # paid working day away from clinical rota
+    qualification_days: Set[int] = field(default_factory=set) # paid education / qualification day away from clinical rota
     long_duty: Set[int] = field(default_factory=set)          # start date of >12-24h / 24h duty
     reserved_backup: Set[Tuple[int, str]] = field(default_factory=set)  # self-claimed WEEKEND/SPS backup slots
     soft_free: Set[int] = field(default_factory=set)         # SOFT: would like the whole day off
@@ -241,7 +270,7 @@ class Slot:
     day: int
     weekday: int       # Monday = 0
     department: str
-    block: str         # AM / PM / FULL
+    block: str         # AM / PM / FULL / NIGHT
     workload2: int     # workload x2: normal 2, Onko 3
     mandatory: bool
     blocked: bool = False
@@ -259,6 +288,8 @@ class SolveResult:
     # Planned backup duties frozen at publication. CURRENT/ACTUAL revalidation may
     # override this with the live backup table, while SYSTEM baseline keeps it.
     backup_snapshot: Optional[List[dict]] = None
+    # V2.5.150: immutable generation provenance for draft compatibility/audit.
+    provenance: Optional[dict] = None
 
 
 DEFAULT_PEOPLE = [
@@ -388,6 +419,31 @@ def reward_credit_value(units: int) -> float:
     return float(units)/12.0
 
 
+def scheduled_slot_hours(slot: Slot) -> float:
+    """Known clock-hours for safety/load accounting.
+
+    Historical Onko RO FULL is the old 9 h day. From Oct-2026 the only FULL
+    normal-duty row is the 08:00-20:00 weekend/holiday duty and therefore 12 h.
+    NIGHT is 20:00-08:00 (12 h).
+    """
+    b=str(slot.block or '').upper()
+    if b=='NIGHT':
+        return 12.0
+    if b=='FULL':
+        return 9.0 if slot.department=='Onko RO centre' else 12.0
+    return 6.0
+
+def scheduled_slot_clock(slot: Slot) -> Tuple[float,float]:
+    """Start/end hours relative to the slot start date; NIGHT ends next day at 32."""
+    b=str(slot.block or '').upper()
+    if b=='AM': return 8.0,14.0
+    if b=='PM': return 14.0,20.0
+    if b=='NIGHT': return 20.0,32.0
+    if b=='FULL':
+        return (8.0,17.0) if slot.department=='Onko RO centre' else (8.0,20.0)
+    raise ValueError(f'Unsupported slot block: {slot.block}')
+
+
 def weekday_count(year: int, month: int) -> int:
     """Normal outpatient working weekdays, excluding statutory public holidays."""
     _, ndays = calendar.monthrange(year, month)
@@ -429,8 +485,10 @@ def resident_hard_unavailable_for_block(person: Person, day: int, block: str) ->
 
 
 def absolute_unavailable_for_block(person: Person, day: int, block: str) -> bool:
-    """ABSOLUTE HARD no-work state: never relaxable by the solver."""
+    """ABSOLUTE HARD no-clinical-work state: never relaxable by the solver."""
     if day in person.vacation or day in person.justified_absence:
+        return True
+    if day in person.wellness_days or day in person.qualification_days:
         return True
     # A marked >12-24h / 24h duty starts on day N. The following calendar
     # day is conservatively blocked to protect at least 24h post-duty rest.
@@ -449,13 +507,25 @@ def hard_unavailable_for_block(person: Person, day: int, block: str) -> bool:
 
 
 def normal_assignment_blocked(person: Person, day: int, block: str, include_resident_hard: bool = True) -> bool:
-    if absolute_unavailable_for_block(person, day, block):
+    b=str(block or '').upper()
+    if absolute_unavailable_for_block(person, day, b):
         return True
-    if include_resident_hard and resident_hard_unavailable_for_block(person, day, block):
+    if include_resident_hard and resident_hard_unavailable_for_block(person, day, b):
         return True
+    if b=='NIGHT':
+        # 20:00 day N -> 08:00 day N+1: protect both calendar dates.
+        if day in person.unavailable_pm or day in person.unavailable:
+            return True
+        nxt=day+1
+        if nxt in person.vacation or nxt in person.justified_absence:
+            return True
+        if nxt in person.wellness_days or nxt in person.qualification_days:
+            return True
+        if include_resident_hard and (nxt in person.unavailable or nxt in person.unavailable_am):
+            return True
     # Legacy reservations may block normal work. V2.5.118 new-month FCFS dubliai
     # never reach this set: the app deliberately loads reserved_backup=set().
-    return any(rday == day and blocks_overlap(rblock, block) for rday, rblock in person.reserved_backup)
+    return any(rday == day and blocks_overlap(rblock, b) for rday, rblock in person.reserved_backup)
 
 
 def absolute_assignment_blocked(person: Person, day: int, block: str) -> bool:
@@ -498,6 +568,8 @@ def normalize_preferences_against_engine(
             unavailable_pm=set(p.unavailable_pm),
             vacation=set(p.vacation),
             justified_absence=set(p.justified_absence),
+            wellness_days=set(p.wellness_days),
+            qualification_days=set(p.qualification_days),
             long_duty=set(p.long_duty),
             reserved_backup=set(p.reserved_backup),
             soft_free=set(p.soft_free),
@@ -607,6 +679,7 @@ def serialize_people_request_snapshot(people: List[Person]) -> dict:
     rows=[]
     set_fields=(
         "unavailable","unavailable_am","unavailable_pm","vacation","justified_absence",
+        "wellness_days","qualification_days",
         "long_duty","soft_free","soft_free_am","soft_free_pm","preferred",
         "preferred_am","preferred_pm",
     )
@@ -657,6 +730,8 @@ def people_from_request_snapshot(snapshot: Optional[dict]) -> List[Person]:
                 unavailable_pm=set(r.get("unavailable_pm") or []),
                 vacation=set(r.get("vacation") or []),
                 justified_absence=set(r.get("justified_absence") or []),
+                wellness_days=set(r.get("wellness_days") or []),
+                qualification_days=set(r.get("qualification_days") or []),
                 long_duty=set(r.get("long_duty") or []),
                 reserved_backup={tuple(x) for x in (r.get("reserved_backup") or []) if len(x)==2},
                 soft_free=set(r.get("soft_free") or []),
@@ -709,18 +784,10 @@ def _fallback_request_items(person: Person, year: int, month: int) -> List[dict]
     for d in sorted(person.preferred): add("preferred","SOFT2_POSITIVE_PLACEMENT",d,"FULL")
     for d in sorted(person.preferred_am): add("preferred","SOFT2_POSITIVE_PLACEMENT",d,"AM")
     for d in sorted(person.preferred_pm): add("preferred","SOFT2_POSITIVE_PLACEMENT",d,"PM")
-    # V2.5.102 persistent work-style settings are scored as SOFT3. Weekend
-    # direction can only choose inside the structural Saturday/Sunday corridor.
-    if person.weekday_preference: add("weekday_preference","SOFT3_SCHEDULE_SHAPE",source="account_settings",value=int(person.weekday_preference))
-    if person.weekend_preference: add("weekend_preference","SOFT3_SCHEDULE_SHAPE",source="account_settings",value=int(person.weekend_preference))
-    if person.spread_preference: add("spread_preference","SOFT3_SCHEDULE_SHAPE",source="account_settings",value=int(person.spread_preference))
-    if person.holiday_preference and public_holiday_days_in_month(year,month):
-        add("holiday_preference","SOFT_HOLIDAY",source="account_settings",value=int(person.holiday_preference))
-    shift_len=max(0,min(3,int(getattr(person,"shift_length_preference",0) or 0)))
-    if shift_len:
-        add("shift_length_preference","SOFT1_TIME_PROTECTION" if shift_len==1 else "SOFT3_SCHEDULE_SHAPE",source="account_settings",value=shift_len)
-    elif person.avoid_doubles:
-        add("avoid_doubles","SOFT1_TIME_PROTECTION",source="account_settings",value=True)
+    # V2.5.140: account-level work-style settings are NOT monthly wishes.
+    # They still shape the solver through Person fields, but they never enter the
+    # resident wish ledger, request denominator, missed-wish table or priority stats.
+    # This keeps "pageidavimų išpildymas" limited to actual resident requests.
     for d in sorted(person.vacation): add("vacation","ABSOLUTE_HARD",d,"FULL",score=False)
     for d in sorted(person.justified_absence): add("justified_absence","ABSOLUTE_HARD",d,"FULL",score=False)
     for d in sorted(person.long_duty): add("long_duty","ABSOLUTE_HARD",d,"FULL",score=False)
@@ -753,6 +820,7 @@ def _request_kind_label(kind: str) -> str:
 ROTATION_CATEGORIES = (
     "CENTRO RO",
     "Onko RO",
+    "Onko/TBL",
     "SPS RO",
     "Centro UG",
     "SPS UG",
@@ -924,6 +992,8 @@ def rotation_category(slot: Slot) -> str:
         return "CENTRO RO"
     if d.startswith("Onko RO"):
         return "Onko RO"
+    if d.startswith("Onkologinė/TBL") or d.startswith("Onko/TBL"):
+        return "Onko/TBL"
     if d.startswith("SPS RO"):
         return "SPS RO"
     if d.startswith("Centro UG"):
@@ -1012,36 +1082,24 @@ def apply_emergency_critical_transfer(
 
 
 def make_slots(year: int, month: int) -> List[Slot]:
-    """
-    Current department model from the group's supplied rules.
+    """Build the month-specific cohort work model.
 
-    Weekdays:
-      CENTRO RO 4x AM + 4x PM
-      Onko RO centre FULL, workload 1.5
-      Centro UG 120kab AM + PM (PM appended after legacy rows to preserve historical slot IDs)
-      SPS RO d.d. AM
-      SPS UG 1035kab AM + PM
-      ADC 144kab AM + PM
-      145kab AM + PM
-      Vaikų UG 1019kab AM
-      Mamografijos 31kab AM + PM (PM blocked Fridays)
-
-    Weekends:
-      SPS RO budėjimai AM + PM
-
-    Coverage:
-      SPS RO d.d., SPS UG and weekend SPS RO duties are mandatory.
-      Other administrative rows may be left empty when required by exact monthly workload,
-      but optional gaps are dispersed (max 1 per weekday).
-      Explicit closure exceptions remain blocked (currently Mamografijos PM Fridays).
-    Onko:
-      If the month has an even number of weekdays -> every weekday filled.
-      If odd -> exactly one weekday Onko slot may stay empty.
+    Through Sep-2026 the historical model is preserved. From Oct-2026:
+      * CENTRO RO = exactly 4 AM + 4 PM rows on every open weekday;
+      * Onkologinė/TBL = 1 AM + 1 PM (old 9 h Onko FULL/parity model retired);
+      * SPS RO works both AM and PM on weekdays;
+      * Mammography is closed for this cohort;
+      * weekend/holiday daytime duty is one 08:00-20:00 FULL row;
+      * Centro 120 AM stays closed until a concrete reactivation month is confirmed.
+    Future night XR duties remain disabled until their start model is explicitly confirmed.
     """
     slots: List[Slot] = []
     idx = 0
     _, ndays = calendar.monthrange(year, month)
+    legacy_onko = not cohort_october_model(year, month)
     odd_weekdays = weekday_count(year, month) % 2 == 1
+    new_model = cohort_october_model(year, month)
+    night_model = night_xray_duty_active(year, month)
 
     def add(day, wd, dept, block, workload2=2, mandatory=False, blocked=False):
         nonlocal idx
@@ -1057,24 +1115,24 @@ def make_slots(year: int, month: int) -> List[Slot]:
     for d in range(1, ndays + 1):
         wd = date(year, month, d).weekday()
         if wd < 5:
-            # V2.5.58 backward-compatible slot identity:
-            # Keep the legacy weekday rows (and therefore every historical slot id)
-            # even on a statutory holiday, but mark all ordinary outpatient rows
-            # CLOSED/BLOCKED. The two live SPS RO holiday-duty rows are appended only
-            # after every legacy day row has been created. This prevents a weekday
-            # holiday from shifting ids in already-published SYSTEM baselines.
             holiday_closed = d in holiday_days
             for k in range(1, 5):
-                add(d, wd, f"CENTRO RO {k}", "AM", blocked=holiday_closed)
+                add(d, wd, f"CENTRO RO {k}", "AM", mandatory=(new_model and not holiday_closed), blocked=holiday_closed)
             for k in range(1, 5):
-                add(d, wd, f"CENTRO RO {k}", "PM", blocked=holiday_closed)
-            add(d, wd, "Onko RO centre", "FULL", workload2=3, mandatory=(not holiday_closed and not odd_weekdays), blocked=holiday_closed)
-            add(d, wd, "Centro UG 120kab", "AM", blocked=holiday_closed)
-            # V2.5.97: remember the new PM shift but append it only after every
-            # pre-existing slot. Historical published JSON uses numeric slot IDs,
-            # so inserting it here would corrupt old schedules.
+                add(d, wd, f"CENTRO RO {k}", "PM", mandatory=(new_model and not holiday_closed), blocked=holiday_closed)
+
+            if legacy_onko:
+                add(d, wd, "Onko RO centre", "FULL", workload2=3, mandatory=(not holiday_closed and not odd_weekdays), blocked=holiday_closed)
+            else:
+                add(d, wd, "Onkologinė/TBL", "AM", mandatory=(not holiday_closed), blocked=holiday_closed)
+                add(d, wd, "Onkologinė/TBL", "PM", mandatory=(not holiday_closed), blocked=holiday_closed)
+
+            add(d, wd, "Centro UG 120kab", "AM", blocked=(holiday_closed or not centro120_am_active(year,month)))
             centro120_pm_days.append((d,wd,holiday_closed))
+
             add(d, wd, "SPS RO d.d.", "AM", mandatory=(not holiday_closed), blocked=holiday_closed)
+            if new_model:
+                add(d, wd, "SPS RO d.d.", "PM", mandatory=(not holiday_closed), blocked=holiday_closed)
             add(d, wd, "SPS UG 1035kab", "AM", mandatory=(not holiday_closed), blocked=holiday_closed)
             add(d, wd, "SPS UG 1035kab", "PM", mandatory=(not holiday_closed), blocked=holiday_closed)
             add(d, wd, "ADC 144kab", "AM", blocked=holiday_closed)
@@ -1082,54 +1140,65 @@ def make_slots(year: int, month: int) -> List[Slot]:
             add(d, wd, "145kab", "AM", blocked=holiday_closed)
             add(d, wd, "145kab", "PM", blocked=holiday_closed)
             add(d, wd, "Vaikų UG 1019kab", "AM", blocked=holiday_closed)
-            add(d, wd, "Mamografijos 31kab", "AM", blocked=holiday_closed)
-            add(d, wd, "Mamografijos 31kab", "PM", blocked=(holiday_closed or wd == 4))
+            # Kept as blocked rows to preserve stable identities/exports while the
+            # cohort no longer works Mammography from Oct-2026.
+            add(d, wd, "Mamografijos 31kab", "AM", blocked=(holiday_closed or new_model))
+            add(d, wd, "Mamografijos 31kab", "PM", blocked=(holiday_closed or wd == 4 or new_model))
             if holiday_closed:
                 weekday_holidays.append((d,wd))
+        else:
+            if new_model:
+                add(d, wd, "SPS RO budėjimai", "FULL", workload2=4, mandatory=True)
+            else:
+                add(d, wd, "SPS RO budėjimai", "AM", mandatory=True)
+                add(d, wd, "SPS RO budėjimai", "PM", mandatory=True)
+
+    # Weekday public holidays are duty days, not ordinary outpatient rows.
+    for d,wd in weekday_holidays:
+        if new_model:
+            add(d, wd, "SPS RO budėjimai", "FULL", workload2=4, mandatory=True)
         else:
             add(d, wd, "SPS RO budėjimai", "AM", mandatory=True)
             add(d, wd, "SPS RO budėjimai", "PM", mandatory=True)
 
-    # Add live weekday-holiday emergency duty rows *after* the legacy slot block.
-    # Weekend holidays already use the normal weekend SPS RO duty rows above.
-    for d,wd in weekday_holidays:
-        add(d, wd, "SPS RO budėjimai", "AM", mandatory=True)
-        add(d, wd, "SPS RO budėjimai", "PM", mandatory=True)
-
-    # V2.5.97 NEW CAPACITY — append-only identity rule.
+    # Append-only identity rule for the previously added Centro 120 PM capacity.
     for d,wd,holiday_closed in centro120_pm_days:
         add(d, wd, "Centro UG 120kab", "PM", blocked=bool(holiday_closed))
+
+    # Future 20:00-08:00 XR night duties remain fail-closed until explicitly confirmed.
+    # When activated later, keep them append-only so daytime slot identities stay stable.
+    if night_model:
+        for d in range(1,ndays+1):
+            wd=date(year,month,d).weekday()
+            add(d, wd, "SPS RO naktinis budėjimas", "NIGHT", workload2=4, mandatory=True)
     return slots
 
 
 def weekend_fcfs_backup_slots(year: int, month: int) -> List[Slot]:
-    """Return exactly 16 weekend 6h theoretical-backup positions for V2.5.119.
+    """Return the active theoretical weekend dublis catalog.
 
-    Current cohort constitution is one weekend dublis per each of 16 residents.
-    Weekend duty is SPS RO AM/PM only.  Calendar months can expose 16, 18 or 20
-    weekend 6h duty rows, so this temporary PGY1 rule chooses four complete
-    Saturday+Sunday weekend pairs inside the month (4 weekends x 2 days x 2
-    blocks = 16 positions).  Boundary orphan days are excluded first.  If a
-    rare month contains five complete weekend pairs, the first four are used;
-    this catalog is deliberately isolated so night duties / a future senior-
-    configured slot catalog can replace it without touching the normal solver.
+    Historical months keep the 16 separate 6 h positions. From Oct-2026 weekend
+    duty is one 12 h 08:00-20:00 row per Saturday/Sunday (and therefore one dublis
+    position per weekend day).
     """
     all_slots=make_slots(year,month)
+    if cohort_october_model(year,month):
+        out=[sl for sl in all_slots if sl.weekday>=5 and sl.block=='FULL' and sl.department.startswith('SPS RO budėjimai') and not sl.blocked]
+        return sorted(out,key=lambda sl:(sl.day,sl.idx))
+
     by_day={}
     for sl in all_slots:
         if sl.weekday>=5 and sl.block in ("AM","PM") and sl.department.startswith("SPS RO budėjimai"):
             by_day.setdefault(sl.day,[]).append(sl)
     complete_pairs=[]
     for d in sorted(by_day):
-        if date(year,month,d).weekday()!=5:  # Saturday
+        if date(year,month,d).weekday()!=5:
             continue
         if d+1 in by_day and date(year,month,d+1).weekday()==6:
             complete_pairs.append((d,d+1))
     chosen_days=[]
     for sat,sun in complete_pairs[:4]:
         chosen_days.extend([sat,sun])
-    # Defensive fallback for unusual/legacy calendars: supplement from remaining
-    # weekend dates until exactly eight dates are represented.
     if len(chosen_days)<8:
         for d in sorted(by_day):
             if d not in chosen_days:
@@ -1207,7 +1276,14 @@ def calculate_targets(year: int, month: int, people: List[Person]) -> Dict[str, 
             * float(rule_value("target_daily_hours"))
             / float(rule_value("target_shift_hours"))
         )
-        targets[p.initials]=max(0,adjusted_base+p.target_adjustment)
+        # V2.5.145: wellness / qualification days are PAID working days outside
+        # the clinical rota, not leave and not resident wishes. Until LSMU confirms
+        # a different accounting rule, each marked day removes one 12 h clinical
+        # duty equivalent = 2 standard 6 h target units. This constant is isolated
+        # here so the accounting can be changed without touching fairness logic.
+        special_paid_days=len(set(p.wellness_days) | set(p.qualification_days))
+        special_target_reduction=2 * special_paid_days
+        targets[p.initials]=max(0,adjusted_base+p.target_adjustment-special_target_reduction)
     return targets
 
 
@@ -1716,7 +1792,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     Safety/rest, exact workload, coverage and Onko parity remain hard.
     """
     n=len(people); ndays=calendar.monthrange(year,month)[1]
-    mb=_V2564FastMB(); am={}; pm={}; full={}; work={}; dbl={}; rh_by_person={pi:[] for pi in range(n)}
+    mb=_V2564FastMB(); am={}; pm={}; full={}; long={}; night={}; work={}; dbl={}; rh_by_person={pi:[] for pi in range(n)}
     # V2.5.71: workday-length preference redistributes a neutral, group-level
     # double pool. It must not manufacture extra AM+PM double-days.
     mixed_dev_vars={}
@@ -1730,7 +1806,9 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         for d in range(1,ndays+1):
             am[(pi,d)]=mb.var(cost=(((pi+1)*31+d*7)%97)*1e-7)
             pm[(pi,d)]=mb.var(cost=(((pi+1)*29+d*11)%89)*1e-7)
-            full[(pi,d)]=mb.var(cost=onko_prior_penalty+(((pi+1)*23+d*13)%83)*1e-7)
+            full[(pi,d)]=mb.var(cost=onko_prior_penalty+(((pi+1)*23+d*13)%83)*1e-7)  # legacy 9h Onko FULL only
+            long[(pi,d)]=mb.var(cost=(((pi+1)*19+d*17)%79)*1e-7)   # generic 12h FULL (weekend/holiday)
+            night[(pi,d)]=mb.var(cost=(((pi+1)*17+d*19)%73)*1e-7)  # 20:00-08:00
             work[(pi,d)]=mb.var()
             # Neutral baseline cost only. Personal 6h/12h direction is added in a
             # second solve after the neutral total number of doubles is locked.
@@ -1740,16 +1818,21 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         am_slots=[s for s in slots if s.day==d and not s.blocked and s.idx not in fixed_gaps and s.department!="Onko RO centre" and s.block=="AM"]
         pm_slots=[s for s in slots if s.day==d and not s.blocked and s.idx not in fixed_gaps and s.department!="Onko RO centre" and s.block=="PM"]
         full_slots=[s for s in slots if s.day==d and not s.blocked and s.idx not in fixed_gaps and s.department=="Onko RO centre"]
+        long_slots=[s for s in slots if s.day==d and not s.blocked and s.idx not in fixed_gaps and s.block=="FULL" and s.department!="Onko RO centre"]
+        night_slots=[s for s in slots if s.day==d and not s.blocked and s.idx not in fixed_gaps and s.block=="NIGHT"]
         mb.constraint({am[(pi,d)]:1.0 for pi in range(n)},len(am_slots),len(am_slots))
         mb.constraint({pm[(pi,d)]:1.0 for pi in range(n)},len(pm_slots),len(pm_slots))
         mb.constraint({full[(pi,d)]:1.0 for pi in range(n)},len(full_slots),len(full_slots))
+        mb.constraint({long[(pi,d)]:1.0 for pi in range(n)},len(long_slots),len(long_slots))
+        mb.constraint({night[(pi,d)]:1.0 for pi in range(n)},len(night_slots),len(night_slots))
     # Person-level feasibility and exact monthly workload.
     for pi,p in enumerate(people):
         for d in range(1,ndays+1):
-            mb.constraint({am[(pi,d)]:1.0,full[(pi,d)]:1.0},-np.inf,1.0)
-            mb.constraint({pm[(pi,d)]:1.0,full[(pi,d)]:1.0},-np.inf,1.0)
-            # number of assignments = one worked day + one extra unit if a true AM+PM double
-            mb.constraint({am[(pi,d)]:1.0,pm[(pi,d)]:1.0,full[(pi,d)]:1.0,work[(pi,d)]:-1.0,dbl[(pi,d)]:-1.0},0.0,0.0)
+            mb.constraint({am[(pi,d)]:1.0,full[(pi,d)]:1.0,long[(pi,d)]:1.0,night[(pi,d)]:1.0},-np.inf,1.0)
+            mb.constraint({pm[(pi,d)]:1.0,full[(pi,d)]:1.0,long[(pi,d)]:1.0,night[(pi,d)]:1.0},-np.inf,1.0)
+            mb.constraint({full[(pi,d)]:1.0,long[(pi,d)]:1.0,night[(pi,d)]:1.0},-np.inf,1.0)
+            # number of assignments = one worked day + one extra unit only for a true AM+PM double
+            mb.constraint({am[(pi,d)]:1.0,pm[(pi,d)]:1.0,full[(pi,d)]:1.0,long[(pi,d)]:1.0,night[(pi,d)]:1.0,work[(pi,d)]:-1.0,dbl[(pi,d)]:-1.0},0.0,0.0)
             mb.constraint({dbl[(pi,d)]:1.0,am[(pi,d)]:-1.0},-np.inf,0.0)
             mb.constraint({dbl[(pi,d)]:1.0,pm[(pi,d)]:-1.0},-np.inf,0.0)
             # V2.5.107 RESIDENT HARD is a real generation constraint. A resident
@@ -1762,8 +1845,12 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
                 mb.constraint({pm[(pi,d)]:1.0},0.0,0.0)
             if hard_unavailable_for_block(p,d,"FULL") or (_legacy_backup_block and any(rday==d and blocks_overlap(rblock,"FULL") for rday,rblock in p.reserved_backup)):
                 mb.constraint({full[(pi,d)]:1.0},0.0,0.0)
+                mb.constraint({long[(pi,d)]:1.0},0.0,0.0)
+            if normal_assignment_blocked(p,d,"NIGHT"):
+                mb.constraint({night[(pi,d)]:1.0},0.0,0.0)
         co={}
-        for d in range(1,ndays+1): co[am[(pi,d)]]=2.0; co[pm[(pi,d)]]=2.0; co[full[(pi,d)]]=3.0
+        for d in range(1,ndays+1):
+            co[am[(pi,d)]]=2.0; co[pm[(pi,d)]]=2.0; co[full[(pi,d)]]=3.0; co[long[(pi,d)]]=4.0; co[night[(pi,d)]]=4.0
         # V2.5.67 ABSOLUTE workload equality. x2 arithmetic keeps 1.5-unit Onko
         # integral, but no +/-0.5 escape is permitted.
         mb.constraint(co,targets[p.initials]*2,targets[p.initials]*2)
@@ -1781,9 +1868,10 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         for d in range(1,ndays):
             mb.constraint({full[(pi,d)]:1.0,full[(pi,d+1)]:1.0},-np.inf,1.0)
 
-        # V2.5.70/71 MIXED means a genuine mixture, not merely "no preference".
-        # The deviation variables exist during the neutral solve with zero cost;
-        # they become a small work-style objective only after total doubles lock.
+        # V2.5.141 MIXED is a flexible mode: both 6 h and 12 h days are acceptable.
+        # It is NOT a 50/50 target and must never compete against a resident who
+        # explicitly prefers 12 h days.  The deviation variables are retained only
+        # for backward-compatible diagnostics; they carry no scheduling objective.
         if max(0,min(3,int(getattr(p,"shift_length_preference",0) or 0)))==2:
             mix_pos=mb.var(0,ndays,False,cost=0.0)
             mix_neg=mb.var(0,ndays,False,cost=0.0)
@@ -1852,6 +1940,8 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             co[am[(pi,d)]]=co.get(am[(pi,d)],0.0)+1.0
             co[pm[(pi,d)]]=co.get(pm[(pi,d)],0.0)+1.0
             co[full[(pi,d)]]=co.get(full[(pi,d)],0.0)+1.0
+            co[long[(pi,d)]]=co.get(long[(pi,d)],0.0)+1.0
+            co[night[(pi,d)]]=co.get(night[(pi,d)],0.0)+1.0
         _friday_expr.append(co)
         if not structural_relaxation:
             mb.constraint(co,float(friday_lo),float(friday_hi))
@@ -1874,7 +1964,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         candidates=[pi for pi,p in enumerate(people) if not hard_unavailable_for_block(p,d,block)]
         if not candidates:
             return None
-        if block=="FULL":
+        if block in ("FULL","NIGHT"):
             busy={work[(pi,d)]:1.0 for pi in candidates}
         elif block=="AM":
             busy={}
@@ -1894,18 +1984,37 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         for start in range(1,ndays-6+1):
             mb.constraint({work[(pi,d)]:1.0 for d in range(start,start+7)},-np.inf,float(max_days7))
             co={}
-            for d in range(start,start+7): co[am[(pi,d)]]=6.0; co[pm[(pi,d)]]=6.0; co[full[(pi,d)]]=9.0
+            for d in range(start,start+7):
+                co[am[(pi,d)]]=6.0; co[pm[(pi,d)]]=6.0; co[full[(pi,d)]]=9.0; co[long[(pi,d)]]=12.0; co[night[(pi,d)]]=12.0
             mb.constraint(co,-np.inf,max_hours7)
-        # Generator recovery rule: after two consecutive AM+PM doubles, next day is PM-only/off.
+        # Generator recovery rule: after two consecutive AM+PM doubles, next day is PM/night-only or off.
         for d in range(3,ndays+1):
-            mb.constraint({dbl[(pi,d-2)]:1.0,dbl[(pi,d-1)]:1.0,am[(pi,d)]:1.0,full[(pi,d)]:1.0},-np.inf,2.0)
+            mb.constraint({dbl[(pi,d-2)]:1.0,dbl[(pi,d-1)]:1.0,am[(pi,d)]:1.0,full[(pi,d)]:1.0,long[(pi,d)]:1.0},-np.inf,2.0)
+        # NIGHT ends 08:00 next day; no AM/PM/FULL daytime assignment is legal
+        # on that following day under the 11 h rest rule. Consecutive NIGHT is okay (12 h rest).
+        for d in range(1,ndays):
+            mb.constraint({night[(pi,d)]:1.0,am[(pi,d+1)]:1.0},-np.inf,1.0)
+            mb.constraint({night[(pi,d)]:1.0,pm[(pi,d+1)]:1.0},-np.inf,1.0)
+            mb.constraint({night[(pi,d)]:1.0,full[(pi,d+1)]:1.0},-np.inf,1.0)
+            mb.constraint({night[(pi,d)]:1.0,long[(pi,d+1)]:1.0},-np.inf,1.0)
+    # V2.5.142 NIGHT raw water-fill: one 20:00-08:00 duty per calendar day
+    # is shared as evenly as mathematically possible.
+    if night_xray_duty_active(year,month):
+        for i in range(n):
+            for j in range(i+1,n):
+                _co={}
+                for d in range(1,ndays+1):
+                    _co[night[(i,d)]]=_co.get(night[(i,d)],0.0)+1.0
+                    _co[night[(j,d)]]=_co.get(night[(j,d)],0.0)-1.0
+                mb.constraint(_co,-1.0,1.0)
+
     # V2.5.90 BASELINE WEEKEND VOLUNTEERS.
     # Standard months keep the old exact raw floor/ceil weekend water-fill.
     # In the FIRST no-history month, explicit weekend "prefer to work" assignments
     # are removed from the fairness expression. The remaining NON-voluntary burden
     # is pairwise water-filled at spread <=1.
     weekend_days=[d for d in range(1,ndays+1) if date(year,month,d).weekday()>=5]
-    total_weekend=sum(2 for _d in weekend_days)
+    total_weekend=(len(weekend_days) if cohort_october_model(year,month) else sum(2 for _d in weekend_days))
     wlo=total_weekend//max(1,n); whi=int(math.ceil(total_weekend/max(1,n)))
     anchors=sorted({d if date(year,month,d).weekday()==5 else d-1 for d in weekend_days})
 
@@ -1942,17 +2051,24 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         raw={}
         vol={}
         for d in weekend_days:
-            raw[am[(pi,d)]]=raw.get(am[(pi,d)],0.0)+1.0
-            raw[pm[(pi,d)]]=raw.get(pm[(pi,d)],0.0)+1.0
+            if cohort_october_model(year,month):
+                raw[long[(pi,d)]]=raw.get(long[(pi,d)],0.0)+1.0
+            else:
+                raw[am[(pi,d)]]=raw.get(am[(pi,d)],0.0)+1.0
+                raw[pm[(pi,d)]]=raw.get(pm[(pi,d)],0.0)+1.0
             # Whole-day positive request is fulfilled by working that DAY at all,
             # therefore it contributes at most one voluntary fairness-exemption unit.
             if d in p.preferred:
                 vol[work[(pi,d)]]=vol.get(work[(pi,d)],0.0)+1.0
             else:
-                if d in p.preferred_am:
-                    vol[am[(pi,d)]]=vol.get(am[(pi,d)],0.0)+1.0
-                if d in p.preferred_pm:
-                    vol[pm[(pi,d)]]=vol.get(pm[(pi,d)],0.0)+1.0
+                if cohort_october_model(year,month):
+                    if d in p.preferred_am or d in p.preferred_pm:
+                        vol[long[(pi,d)]]=vol.get(long[(pi,d)],0.0)+1.0
+                else:
+                    if d in p.preferred_am:
+                        vol[am[(pi,d)]]=vol.get(am[(pi,d)],0.0)+1.0
+                    if d in p.preferred_pm:
+                        vol[pm[(pi,d)]]=vol.get(pm[(pi,d)],0.0)+1.0
         weekend_raw_expr[pi]=raw
         weekend_vol_expr[pi]=vol
         fair=dict(raw)
@@ -1997,9 +2113,12 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         for pi,p in enumerate(people):
             _raw={}; _vol={}
             for d in _days:
-                _raw[am[(pi,d)]]=_raw.get(am[(pi,d)],0.0)+1.0
-                _raw[pm[(pi,d)]]=_raw.get(pm[(pi,d)],0.0)+1.0
-                _raw[full[(pi,d)]]=_raw.get(full[(pi,d)],0.0)+1.0
+                if cohort_october_model(year,month):
+                    _raw[long[(pi,d)]]=_raw.get(long[(pi,d)],0.0)+1.0
+                else:
+                    _raw[am[(pi,d)]]=_raw.get(am[(pi,d)],0.0)+1.0
+                    _raw[pm[(pi,d)]]=_raw.get(pm[(pi,d)],0.0)+1.0
+                    _raw[full[(pi,d)]]=_raw.get(full[(pi,d)],0.0)+1.0
                 if d in p.preferred:
                     _vol[work[(pi,d)]]=_vol.get(work[(pi,d)],0.0)+1.0
                 else:
@@ -2023,7 +2142,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
                         if _co:
                             mb.constraint(_co,-1.0,1.0)
             else:
-                _total=2*len(_days)
+                _total=(len(_days) if cohort_october_model(year,month) else 2*len(_days))
                 _lo=_total//max(1,n); _hi=int(math.ceil(float(_total)/float(max(1,n))))
                 for pi in range(n):
                     if _raw_by_pi[pi]:
@@ -2064,9 +2183,12 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             co={}
             for d in (a,a+1):
                 if 1<=d<=ndays and date(year,month,d).weekday()>=5:
-                    co[am[(pi,d)]]=co.get(am[(pi,d)],0.0)+1.0
-                    co[pm[(pi,d)]]=co.get(pm[(pi,d)],0.0)+1.0
-                    co[full[(pi,d)]]=co.get(full[(pi,d)],0.0)+1.0
+                    if cohort_october_model(year,month):
+                        co[long[(pi,d)]]=co.get(long[(pi,d)],0.0)+1.0
+                    else:
+                        co[am[(pi,d)]]=co.get(am[(pi,d)],0.0)+1.0
+                        co[pm[(pi,d)]]=co.get(pm[(pi,d)],0.0)+1.0
+                        co[full[(pi,d)]]=co.get(full[(pi,d)],0.0)+1.0
             if not structural_relaxation:
                 mb.constraint(co,-np.inf,1.0)
             else:
@@ -2272,11 +2394,10 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
                 # already-needed double but cannot make an extra double profitable.
                 single_costs[dbl[(pi,d)]] -= _STYLE_UNIT
         elif shift_len==2:
-            workstyle_applied=True
-            if pi in mixed_dev_vars:
-                a,b=mixed_dev_vars[pi]
-                single_costs[a]+=_STYLE_UNIT
-                single_costs[b]+=_STYLE_UNIT
+            # Flexible mixed mode: no 50/50 optimization.  The ordinary scheduler
+            # will naturally produce a mixture when feasible; explicit 12 h / 6 h
+            # modes have priority over manufacturing equality for mixed users.
+            pass
 
     # Active work-style may widen the neutral double spread, as in V2.5.97, but
     # only through explicit penalized slack and never through a second blocking solve.
@@ -2317,10 +2438,10 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
                     mb.constraint({work[(pi,d)]:1.0},1.0,1.0)
             for d in sorted(set(p.preferred_am)-full_pref):
                 if date(year,month,d).weekday()<5:
-                    mb.constraint({am[(pi,d)]:1.0,full[(pi,d)]:1.0},1.0,1.0)
+                    mb.constraint({am[(pi,d)]:1.0,full[(pi,d)]:1.0,long[(pi,d)]:1.0},1.0,1.0)
             for d in sorted(set(p.preferred_pm)-full_pref):
                 if date(year,month,d).weekday()<5:
-                    mb.constraint({pm[(pi,d)]:1.0,full[(pi,d)]:1.0},1.0,1.0)
+                    mb.constraint({pm[(pi,d)]:1.0,full[(pi,d)]:1.0,long[(pi,d)]:1.0},1.0,1.0)
 
         _workstyle_lock_mark=len(mb.rows)
         for pi,p in enumerate(people):
@@ -2334,13 +2455,10 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             elif _style==1 or (_style==0 and bool(getattr(p,"avoid_doubles",False))):
                 _prefer6_cap=max(1,int(math.ceil(float(targets[p.initials])*0.24)))
                 mb.constraint({dbl[(pi,d)]:1.0 for d in range(1,ndays+1)},-np.inf,float(_prefer6_cap))
-            elif _style==2 and pi in mixed_dev_vars:
-                # MIXED means a genuine near-even 6 h / 12 h blend. One-day
-                # difference is the mathematical near-half outcome when the number
-                # of normal workdays is odd.
-                _mp,_mn=mixed_dev_vars[pi]
-                mb.constraint({_mp:1.0},-np.inf,1.0)
-                mb.constraint({_mn:1.0},-np.inf,1.0)
+            elif _style==2:
+                # MIXED is deliberately unconstrained. It means that either 6 h or
+                # 12 h is acceptable, not that the engine must force a 50/50 split.
+                pass
 
         # Pure feasibility objective: once a valid candidate exists, HiGHS may stop
         # instead of spending minutes proving a cosmetic weighted optimum. Tiny
@@ -2349,6 +2467,8 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         for (pi,d),v in am.items(): mb.c[v]+=(((pi+1)*31+d*7)%97)*1e-8
         for (pi,d),v in pm.items(): mb.c[v]+=(((pi+1)*29+d*11)%89)*1e-8
         for (pi,d),v in full.items(): mb.c[v]+=(((pi+1)*23+d*13)%83)*1e-8
+        for (pi,d),v in long.items(): mb.c[v]+=(((pi+1)*19+d*17)%79)*1e-8
+        for (pi,d),v in night.items(): mb.c[v]+=(((pi+1)*17+d*19)%73)*1e-8
     else:
         mb.c=single_costs
 
@@ -2388,6 +2508,104 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     if res.x is None:
         return None
 
+    # V2.5.141 ACCOUNT-MODE REFINEMENT.
+    # 6 h / mixed / 12 h is an account-level work-style mode, NOT a scored wish.
+    # The first solve maximizes all real resident wishes. Only after those exact
+    # outcomes are known do we redistribute the already-required AM+PM double pool
+    # to fit work-style modes as strongly as possible. This pass cannot reduce any
+    # actual resident wish, cannot create extra doubles, and cannot relax safety,
+    # workload or structural fairness constraints.
+    _mode_indices=[
+        pi for pi,p in enumerate(people)
+        if max(0,min(3,int(getattr(p,"shift_length_preference",0) or 0))) in (1,3)
+        or bool(getattr(p,"avoid_doubles",False))
+    ]
+    _mode_refinement_applied=False
+    if _mode_indices:
+        _mode_base_x=np.asarray(res.x,dtype=float)
+
+        def _mode_lock_binary_expr(_co):
+            _value=sum(float(_mode_base_x[_v])*float(_c) for _v,_c in _co.items())
+            _value=float(round(_value))
+            mb.constraint(dict(_co),_value,_value)
+
+        # Freeze every actual resident request outcome before optimizing settings.
+        for _pi,_p in enumerate(people):
+            for _d in sorted(set(_p.soft_free)|set(_p.preferred)):
+                _mode_lock_binary_expr({work[(_pi,_d)]:1.0})
+            for _d in sorted(set(_p.soft_free_am)|set(_p.preferred_am)):
+                _mode_lock_binary_expr({am[(_pi,_d)]:1.0,full[(_pi,_d)]:1.0,long[(_pi,_d)]:1.0})
+            for _d in sorted(set(_p.soft_free_pm)|set(_p.preferred_pm)):
+                _mode_lock_binary_expr({pm[(_pi,_d)]:1.0,full[(_pi,_d)]:1.0,long[(_pi,_d)]:1.0})
+
+        # Keep the total 12 h burden fixed: settings only redistribute it.
+        _base_total_doubles=float(round(sum(
+            float(_mode_base_x[dbl[(_pi,_d)]])
+            for _pi in range(n) for _d in range(1,ndays+1)
+        )))
+        mb.constraint(
+            {dbl[(_pi,_d)]:1.0 for _pi in range(n) for _d in range(1,ndays+1)},
+            _base_total_doubles,_base_total_doubles,
+            "V25140 frozen total doubles before account-mode refinement"
+        )
+        # V2.5.141 preference-aware double fairness.  A resident who explicitly
+        # prefers 12 h days is allowed to sit ABOVE the all-resident average.  The
+        # previous global double-spread corridor could incorrectly block that.
+        # Fairness is instead protected INSIDE each strong preference cohort.
+        # Mixed / neutral residents are flexible and receive the residual pattern.
+        _pref12=[]; _pref6=[]; _mixed=[]
+        for _pi,_p in enumerate(people):
+            _style=max(0,min(3,int(getattr(_p,"shift_length_preference",0) or 0)))
+            if _style==0 and bool(getattr(_p,"avoid_doubles",False)):
+                _style=1
+            if _style==3: _pref12.append(_pi)
+            elif _style==1: _pref6.append(_pi)
+            elif _style==2: _mixed.append(_pi)
+
+        # Keep residents with the SAME strong mode water-filled with each other,
+        # while allowing the 12 h cohort to receive more doubles than mixed/neutral.
+        for _cohort,_label in ((_pref12,"pref12"),(_pref6,"pref6")):
+            for _aa in range(len(_cohort)):
+                for _bb in range(_aa+1,len(_cohort)):
+                    _i,_j=_cohort[_aa],_cohort[_bb]
+                    _co={}
+                    for _d in range(1,ndays+1):
+                        _co[dbl[(_i,_d)]]=_co.get(dbl[(_i,_d)],0.0)+1.0
+                        _co[dbl[(_j,_d)]]=_co.get(dbl[(_j,_d)],0.0)-1.0
+                    mb.constraint(_co,-1.0,1.0,f"V25141 {_label} cohort fairness {_i}-{_j}")
+
+        mb.c=[0.0 for _ in mb.c]
+        # Lexicographic-feeling water-fill: first lift the LOWEST 12 h requester,
+        # then maximize their group total. This prevents one 12 h requester from
+        # taking every double while another remains below average.
+        if _pref12:
+            _m12=mb.var("V25140_pref12_min",cost=-10000.0,lb=0.0,ub=ndays,integer=False)
+            for _pi in _pref12:
+                _co={_m12:-1.0}
+                for _d in range(1,ndays+1):
+                    _co[dbl[(_pi,_d)]]=_co.get(dbl[(_pi,_d)],0.0)+1.0
+                    mb.c[dbl[(_pi,_d)]]-=100.0
+                mb.constraint(_co,0.0,np.inf,f"V25140 pref12 floor {people[_pi].initials}")
+
+        # 6 h mode gets the mirror treatment: lower the HIGHEST double count first.
+        if _pref6:
+            _m6=mb.var("V25140_pref6_max",cost=10000.0,lb=0.0,ub=ndays,integer=False)
+            for _pi in _pref6:
+                _co={_m6:-1.0}
+                for _d in range(1,ndays+1):
+                    _co[dbl[(_pi,_d)]]=_co.get(dbl[(_pi,_d)],0.0)+1.0
+                    mb.c[dbl[(_pi,_d)]]+=100.0
+                mb.constraint(_co,-np.inf,0.0,f"V25140 pref6 ceiling {people[_pi].initials}")
+
+        # Mixed / neutral mode is intentionally a residual flexible state.
+        # Do not spend objective weight forcing an artificial equal 6 h / 12 h mix.
+
+        _mode_seconds=max(3.0,min(12.0,float(seconds)*0.20))
+        _mode_res=mb.solve(_mode_seconds,mip_gap=0.0)
+        if _mode_res.x is not None:
+            res=_mode_res
+            _mode_refinement_applied=True
+
     # Final private refinement.  Freeze the outcomes of every ordinary resident
     # request (including weekend wishes), plus the meaningful schedule-shape
     # quantities already optimized above.  The second pass may rearrange only
@@ -2407,9 +2625,9 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             for _d in sorted(set(_p.soft_free)|set(_p.preferred)):
                 _lock_binary_expr({work[(_pi,_d)]:1.0})
             for _d in sorted(set(_p.soft_free_am)|set(_p.preferred_am)):
-                _lock_binary_expr({am[(_pi,_d)]:1.0,full[(_pi,_d)]:1.0})
+                _lock_binary_expr({am[(_pi,_d)]:1.0,full[(_pi,_d)]:1.0,long[(_pi,_d)]:1.0})
             for _d in sorted(set(_p.soft_free_pm)|set(_p.preferred_pm)):
-                _lock_binary_expr({pm[(_pi,_d)]:1.0,full[(_pi,_d)]:1.0})
+                _lock_binary_expr({pm[(_pi,_d)]:1.0,full[(_pi,_d)]:1.0,long[(_pi,_d)]:1.0})
 
         # Preserve ordinary weekend-request fulfillment while allowing equivalent
         # dates/blocks to move. Private targets are intentionally NOT frozen here;
@@ -2466,12 +2684,15 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             "mode":"V25106_SINGLE_PASS_WEIGHTED",
         }
 
-    pattern={"am":{},"pm":{},"full":{}}
+    pattern={"am":{},"pm":{},"full":{},"long":{},"night":{}}
+    pattern["account_mode_refinement_applied"]=bool(_mode_refinement_applied)
     for pi in range(n):
         for d in range(1,ndays+1):
             pattern["am"][(pi,d)]=float(res.x[am[(pi,d)]])>0.5
             pattern["pm"][(pi,d)]=float(res.x[pm[(pi,d)]])>0.5
             pattern["full"][(pi,d)]=float(res.x[full[(pi,d)]])>0.5
+            pattern["long"][(pi,d)]=float(res.x[long[(pi,d)]])>0.5
+            pattern["night"][(pi,d)]=float(res.x[night[(pi,d)]])>0.5
     pattern["resident_hard_min_total"]=int(round(sum(float(res.x[v]) for vals in rh_by_person.values() for v in vals)))
     pattern["structural_relaxation_mode"]=bool(structural_relaxation)
     pattern["weekend_spread_cap"]=int(1 if not structural_relaxation else weekend_spread_cap)
@@ -2513,7 +2734,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     friday_days=[d for d in range(1,ndays+1) if date(year,month,d).weekday()==4]
     for pi in range(n):
         fvals.append(int(round(sum(
-            float(res.x[am[(pi,d)]])+float(res.x[pm[(pi,d)]])+float(res.x[full[(pi,d)]])
+            float(res.x[am[(pi,d)]])+float(res.x[pm[(pi,d)]])+float(res.x[full[(pi,d)]])+float(res.x[long[(pi,d)]])+float(res.x[night[(pi,d)]])
             for d in friday_days
         ))))
     pattern["friday_counts"]={people[pi].initials:fvals[pi] for pi in range(n)}
@@ -2544,7 +2765,7 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
     parity model: 0/2/4/... per resident and monthly spread <=2.
     """
     n=len(people); ndays=calendar.monthrange(year,month)[1]
-    normal=[s for s in slots if not s.blocked and s.idx not in fixed_gaps and s.department!="Onko RO centre"]
+    normal=[s for s in slots if not s.blocked and s.idx not in fixed_gaps and s.department!="Onko RO centre" and s.block in ("AM","PM")]
     byid={s.idx:s for s in normal}
 
     baseline_weekend_volunteer_mode=bool(pattern.get("baseline_weekend_volunteer_mode",False))
@@ -2789,7 +3010,7 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
     returns no schedule rather than silently widening it.
     """
     n=len(people); ndays=calendar.monthrange(year,month)[1]
-    normal=[s for s in slots if not s.blocked and s.idx not in fixed_gaps and s.department!="Onko RO centre"]
+    normal=[s for s in slots if not s.blocked and s.idx not in fixed_gaps and s.department!="Onko RO centre" and s.block in ("AM","PM")]
     byid={s.idx:s for s in normal}
     baseline_weekend_volunteer_mode=bool(pattern.get("baseline_weekend_volunteer_mode",False))
 
@@ -2828,6 +3049,18 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
 
     cats=[c for c in ROTATION_CATEGORIES if c!="Onko RO"]
     cat_slot_counts={cat:sum(1 for sl in normal if rotation_category(sl)==cat) for cat in cats}
+    _fixed_long_by_day={sl.day:sl for sl in slots if not sl.blocked and sl.idx not in fixed_gaps and sl.block=='FULL' and sl.department!='Onko RO centre'}
+    _fixed_night_by_day={sl.day:sl for sl in slots if not sl.blocked and sl.idx not in fixed_gaps and sl.block=='NIGHT'}
+    _fixed_cat_offset={(pi,cat):0 for pi in range(n) for cat in cats}
+    for pi in range(n):
+        for d,sl in _fixed_long_by_day.items():
+            if bool(pattern.get('long',{}).get((pi,d),False)) and rotation_category(sl) in cats:
+                _fixed_cat_offset[(pi,rotation_category(sl))]+=1
+        for d,sl in _fixed_night_by_day.items():
+            if bool(pattern.get('night',{}).get((pi,d),False)) and rotation_category(sl) in cats:
+                _fixed_cat_offset[(pi,rotation_category(sl))]+=1
+    for cat in cats:
+        cat_slot_counts[cat]=int(cat_slot_counts.get(cat,0))+sum(_fixed_cat_offset[(pi,cat)] for pi in range(n))
     # V2.5.107: post fairness is below mandatory cannot-work blocks. Tight
     # corridors are still tried first and widened only after HiGHS proves the
     # tighter one infeasible. This lets the engine preserve 0 hard-wish losses
@@ -2873,21 +3106,31 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
                 if total<=0: continue
                 cap=critical_cap if cat in CRITICAL_ROTATION_CATEGORIES else noncritical_cap
                 adjusted=(baseline_weekend_volunteer_mode and cat=="SPS RO")
-                offsets={pi:(int(volunteer_weekend_sps_const.get(pi,0)) if adjusted else 0) for pi in range(n)}
-                fair_total=total-sum(offsets.values()) if adjusted else total
+                # Phase 1 already fixed generic 12 h FULL and NIGHT duties. They must
+                # count in raw post fairness even though phase 2 labels only AM/PM rows.
+                # A volunteered weekend SPS duty (legacy mode only) is subtracted from
+                # the fairness burden. Therefore:
+                #   fair_i = variable_AMPM_i + fixed_FULL_NIGHT_i - volunteered_i
+                shifts={
+                    pi:int(_fixed_cat_offset.get((pi,cat),0))
+                       - (int(volunteer_weekend_sps_const.get(pi,0)) if adjusted else 0)
+                    for pi in range(n)
+                }
+                fair_total=total-(sum(int(volunteer_weekend_sps_const.get(pi,0)) for pi in range(n)) if adjusted else 0)
                 if fair_total<0: fair_total=0
                 if int(cap)<=1:
                     lo=fair_total//max(1,n); hi=int(math.ceil(float(fair_total)/float(max(1,n))))
                     for pi in range(n):
-                        mb.constraint(expr[(pi,cat)],float(lo+offsets[pi]),float(hi+offsets[pi]))
+                        # variable + shift in [lo, hi]
+                        mb.constraint(expr[(pi,cat)],float(lo-shifts[pi]),float(hi-shifts[pi]))
                 else:
-                    # Pairwise fair-count corridor: |(raw_i-off_i)-(raw_j-off_j)| <= cap.
+                    # |(variable_i+shift_i)-(variable_j+shift_j)| <= cap
                     for i in range(n):
                         for j in range(i+1,n):
                             co=dict(expr[(i,cat)])
                             for v,c in expr[(j,cat)].items(): co[v]=co.get(v,0.0)-c
-                            shift=float(offsets[i]-offsets[j])
-                            mb.constraint(co,-float(cap)+shift,float(cap)+shift)
+                            delta=float(shifts[i]-shifts[j])
+                            mb.constraint(co,-float(cap)-delta,float(cap)-delta)
 
             # Vietai specifiniai SP + ŠR grupiniai pageidavimai. Vienas pageidavimas
             # gali turėti kelis žmones. CENTRO RO reiškia tą pačią CENTRO RO zoną;
@@ -3080,15 +3323,27 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
             logs.append({"critical_cap":critical_cap,"noncritical_cap":noncritical_cap,"status":status,"incumbent":has,"solver":"V25105_RESILIENT_POST","dream_team_centro_count":dream_count,"dream_team_centro_target":dream_target,"dream_team_adc_count":adc_dream_count,"dream_team_adc_target":int(_dream_adc_target)})
             if has:
                 assignments={}
+                # Legacy 9 h Onko FULL is fixed by phase 1.
                 onko_by_day={sl.day:sl for sl in slots if sl.department=="Onko RO centre" and not sl.blocked and sl.idx not in fixed_gaps}
                 for pi,p in enumerate(people):
                     for d in range(1,ndays+1):
-                        if pattern["full"][(pi,d)]:
+                        if bool(pattern.get("full",{}).get((pi,d),False)):
                             os=onko_by_day.get(d)
-                            if os is None: return None,None,None,logs,None
+                            if os is None:
+                                return None,None,None,logs,None
                             assignments[os.idx]=p.initials
+                # Generic 12 h FULL and NIGHT rows are also already fixed by phase 1;
+                # phase 2 must merely materialize those labels.
+                for pi,p in enumerate(people):
+                    for d,sl in _fixed_long_by_day.items():
+                        if bool(pattern.get("long",{}).get((pi,d),False)):
+                            assignments[sl.idx]=p.initials
+                    for d,sl in _fixed_night_by_day.items():
+                        if bool(pattern.get("night",{}).get((pi,d),False)):
+                            assignments[sl.idx]=p.initials
                 for (pi,sid),v in x.items():
-                    if float(res.x[v])>0.5: assignments[sid]=people[pi].initials
+                    if float(res.x[v])>0.5:
+                        assignments[sid]=people[pi].initials
                 # Return the first feasible structural corridor. Private goals may
                 # improve only within this already-valid fairness corridor; they can
                 # never justify widening the corridor or worsening resident outcomes.
@@ -3136,7 +3391,10 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
     # V2.5.106: 22 s was a knife-edge on the real September model. Give the
     # single-pass work-pattern solve enough room to find its first incumbent so
     # we avoid the slower fail-then-retry path on ordinary cloud workers.
-    work_first=min(35.0,max(30.0,time_limit*0.20))
+    # The Oct-2026+ model has many fixed 12 h / NIGHT rows. A short feasibility
+    # pass is materially faster than asking HiGHS to spend 30+ seconds proving the
+    # strict cosmetic corridor before the certified zero-hard structural fallback.
+    work_first=(12.0 if cohort_october_model(year,month) else min(35.0,max(30.0,time_limit*0.20)))
     pattern=_v2564_work_pattern(year,month,people,slots,targets,fixed_gaps,seconds=work_first,structural_relaxation=False,weekend_spread_cap=1)
     if pattern is None:
         # V2.5.112 ADMIN RAW WEEKEND WATER-FILL: find the tightest feasible raw
@@ -3144,14 +3402,14 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         # this frontier. Lower tiers (Friday/double shaping/ordinary SOFT) may bend.
         pattern=None
         for _cap in (1,2,3,4):
-            _sec=min(26.0,max(14.0,time_limit*0.14))
+            _sec=(12.0 if cohort_october_model(year,month) else min(26.0,max(14.0,time_limit*0.14)))
             retry_trace.append({"phase":"work_pattern_admin_weekend_waterfill","cap":_cap,"seconds":round(_sec,1)})
             pattern=_v2564_work_pattern(year,month,people,slots,targets,fixed_gaps,seconds=_sec,structural_relaxation=True,weekend_spread_cap=_cap)
             if pattern is not None:
                 break
     if pattern is None: return None
 
-    post_first=min(45.0,max(15.0,time_limit*0.35))
+    post_first=(15.0 if cohort_october_model(year,month) else min(45.0,max(15.0,time_limit*0.35)))
     assigned,critical_cap,noncritical_cap,post_log,post_obj=_v25105_assign_posts_resilient(year,month,people,slots,pattern,fixed_gaps,seconds=post_first)
     if assigned is None:
         # A phase-1 incumbent can satisfy every date/block preference yet be awkward
@@ -3161,11 +3419,11 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         # and immediately test its post feasibility. This recovered the real
         # September request set that triggered the production error while keeping
         # VL's requested Sundays and all HARD constraints intact.
-        rescue_work=min(35.0,max(30.0,time_limit*0.20))
+        rescue_work=(12.0 if cohort_october_model(year,month) else min(35.0,max(30.0,time_limit*0.20)))
         retry_trace.append({"phase":"post_feasibility_pattern_rescue","seconds":round(rescue_work,1)})
         rescue_pattern=_v2564_work_pattern(year,month,people,slots,targets,fixed_gaps,seconds=rescue_work,structural_relaxation=bool(pattern.get("structural_relaxation_mode",False)),weekend_spread_cap=int(pattern.get("weekend_spread_cap",1) or 1))
         if rescue_pattern is not None:
-            rescue_post=min(40.0,max(20.0,time_limit*0.20))
+            rescue_post=(15.0 if cohort_october_model(year,month) else min(40.0,max(20.0,time_limit*0.20)))
             assigned2,cc2,nc2,post_log2,post_obj2=_v25105_assign_posts_resilient(
                 year,month,people,slots,rescue_pattern,fixed_gaps,seconds=rescue_post
             )
@@ -3174,7 +3432,7 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
                 pattern=rescue_pattern
                 assigned,critical_cap,noncritical_cap,post_obj=assigned2,cc2,nc2,post_obj2
     if assigned is None:
-        post_retry=min(60.0,max(30.0,time_limit*0.30))
+        post_retry=(20.0 if cohort_october_model(year,month) else min(60.0,max(30.0,time_limit*0.30)))
         retry_trace.append({"phase":"post_assignment_final_retry","seconds":round(post_retry,1)})
         assigned,critical_cap,noncritical_cap,post_log2,post_obj=_v25105_assign_posts_resilient(year,month,people,slots,pattern,fixed_gaps,seconds=post_retry)
         post_log=list(post_log or [])+[{"final_retry":True,"seconds":round(post_retry,1)}]+list(post_log2 or [])
@@ -3279,13 +3537,14 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "double_workstyle_override_allowed":True,
         "double_pattern_counts":pattern.get("double_counts",{}),
         "double_pattern_spread":int(pattern.get("double_spread",0) or 0),
-        "workstyle_input_source":"FROZEN_SYSTEM_REQUEST_SNAPSHOT",
+        "workstyle_input_source":"ACCOUNT_SETTINGS_MODE_NOT_REQUEST_STATS",
+        "account_mode_refinement_applied":bool(pattern.get("account_mode_refinement_applied",False)),
         "prefer12_people":pattern.get("prefer12_people",[]),
         "prefer12_cohort_size":int(pattern.get("prefer12_cohort_size",0) or 0),
         "prefer12_cohort_min":pattern.get("prefer12_cohort_min"),
         "prefer12_cohort_max":pattern.get("prefer12_cohort_max"),
         "workstyle_style_solve_proven":bool(pattern.get("workstyle_style_solve_proven",False)),
-        "workstyle_priority_policy":"V25106_SINGLE_PASS_NEUTRAL_DOUBLE_COST_PLUS_SMALL_WORKSTYLE_TIEBREAK",
+        "workstyle_priority_policy":"V25140_REAL_WISH_OUTCOMES_FIRST_THEN_ACCOUNT_MODE_REFINEMENT_WITH_FIXED_DOUBLE_POOL",
         "friday_structural_waterfill_required":True,
         "friday_structural_spread_ceiling":1,
         "friday_pattern_counts":pattern.get("friday_counts",{}),
@@ -3293,7 +3552,7 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "friday_pattern_floor":int(pattern.get("friday_floor",0) or 0),
         "friday_pattern_ceil":int(pattern.get("friday_ceil",0) or 0),
         "friday_post_coupling":"Phase 1 water-fills Friday work blocks; Phase 2 then jointly water-fills all non-Onko post labels on those fixed blocks.",
-        "double_priority":"V2.5.106 single-pass objective keeps every AM+PM double positively costly and applies 6h/mixed/12h only as a smaller tie-breaker; work-style therefore redistributes preference pressure without creating a second blocking full-model solve. SPS RO / SPS UG are preferred when assigning labels to an already-needed AM+PM double. Onko RO is a separate 9h FULL day, not a double.",
+        "double_priority":"V2.5.142: real resident wish outcomes are optimized first. Then explicit 12 h / 6 h account modes redistribute the already-required AM+PM double pool without changing any actual wish outcome or creating extra doubles. A 12 h requester may receive more doubles than the overall average; mixed/neutral is flexible and does not force a 50/50 split. Onko RO remains a separate 9h FULL day.",
         "baseline_weekend_volunteer_mode":False,
         "baseline_weekend_volunteers":list(pattern.get("baseline_weekend_volunteers") or []),
         "baseline_weekend_volunteer_locks":dict(pattern.get("baseline_weekend_volunteer_locks") or {}),
@@ -3311,7 +3570,7 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
     return SolveResult(True,msg,assigned,targets,stats,obj,request_snapshot=request_snapshot)
 
 
-def solve_schedule(year: int, month: int, people: List[Person], time_limit: float = 45.0) -> SolveResult:
+def solve_schedule(year: int, month: int, people: List[Person], time_limit: float = 45.0, slots_override: Optional[List[Slot]] = None, targets_override: Optional[Dict[str,int]] = None) -> SolveResult:
     # V2.5.96 MONTHLY BASELINE FAIRNESS CONSTITUTION.
     # Every month starts from a clean fairness baseline. Historical ACTUAL/SYSTEM
     # exposure is retained for audit only and MUST NOT create compensatory catch-up
@@ -3332,8 +3591,12 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     request_snapshot=serialize_people_request_snapshot(people)
     # V2.5.64 primary architecture works directly from the resident-entered request
     # model. Legacy normalization remains available only for the legacy rescue path.
-    fast_slots=make_slots(year,month)
-    fast_targets=calculate_targets(year,month,people)
+    fast_slots=list(slots_override) if slots_override is not None else make_slots(year,month)
+    fast_targets=dict(targets_override) if targets_override is not None else calculate_targets(year,month,people)
+    # V2.5.142: the same fairness-first two-phase architecture now models the
+    # Oct+ 12 h FULL weekend duty and, from Nov, 20:00-08:00 NIGHT explicitly in
+    # phase 1. Phase 2 changes only AM/PM post labels; FULL/NIGHT ownership stays
+    # frozen from phase 1 and is counted in the same post-fairness ledger.
     fast_result=_v2564_two_phase_fair_schedule(
         year,month,people,fast_slots,fast_targets,request_snapshot,time_limit=max(90.0,float(time_limit))
     )
@@ -3376,7 +3639,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
             False,
             "PREFERENCE-AWARE GENERATION DID NOT FINISH AFTER AUTOMATIC RETRIES. "
             "The request set was not proven infeasible and no HARD rule is being blamed. "
-            "Existing draft, if any, remains unchanged; run generation again if needed.",
+            "The UI must revalidate any stored draft before treating it as publishable or as an improvement baseline.",
             targets=fast_targets,
             request_snapshot=request_snapshot,
         )
@@ -3384,8 +3647,8 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     # V2.5.27 PRE-SOLVE PREFERENCE NORMALIZATION (legacy rescue path).
     people, preference_normalization = normalize_preferences_against_engine(people,year,month)
 
-    slots = make_slots(year, month)
-    targets = calculate_targets(year,month,people)
+    slots = list(slots_override) if slots_override is not None else make_slots(year, month)
+    targets = dict(targets_override) if targets_override is not None else calculate_targets(year,month,people)
     fixed_gap_ids,gap_plan,gap_plan_errors=plan_distributed_gaps(year,month,people,slots,targets)
     optional_gap_days=set(gap_plan.get("optional_gap_days",[]))
     optional_gap_counts={int(d):int(c) for d,c in (gap_plan.get("optional_gap_counts") or {}).items()}
@@ -3865,11 +4128,10 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
             mb.constraint({hv:1.0,rh_max_honored:-1.0},-np.inf,0.0,
                           f"resident hard waterfill max {people[pi].initials}")
 
-    # HARD Lithuanian labour-law / rest-safety layer — V2.5.2.
-    # Current scheduler hours: AM 08-14 (6h), PM 14-20 (6h), FULL 08-17 (9h).
-    # AM+PM on the same day is legal within this model: exactly 12h.
+    # HARD labour/rest layer. Slot duration is department-aware: old Onko FULL
+    # is 9 h, new weekend FULL and NIGHT are 12 h.
     def _known_hours(s):
-        return 9.0 if s.block == "FULL" else 6.0
+        return scheduled_slot_hours(s)
 
     # Maximum 12h of known scheduled work per workday.
     for pi, p in enumerate(people):
@@ -3880,6 +4142,28 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
                 0, float(rule_value("max_hours_per_day")),
                 f"max hours/day {p.initials} {d}"
             )
+
+    # V2.5.142 NIGHT recovery: a 20:00-08:00 duty cannot be combined with any
+    # daytime assignment on its start date, and the following day must remain free
+    # until at least 19:00 (there are no later-than-14:00 starts in this model).
+    if night_xray_duty_active(year,month):
+        for pi,p in enumerate(people):
+            for d in range(1,ndays+1):
+                nslots=[s for s in by_day[d] if s.block=='NIGHT']
+                if not nslots:
+                    continue
+                nvar={x[(pi,s.idx)]:1.0 for s in nslots}
+                dayvars={x[(pi,s.idx)]:1.0 for s in by_day[d] if s.block!='NIGHT'}
+                if dayvars:
+                    co=dict(nvar)
+                    for v,c in dayvars.items(): co[v]=co.get(v,0.0)+c
+                    mb.constraint(co,0.0,1.0,f"V25142 night no same-day daytime {p.initials} {d}")
+                if d<ndays:
+                    nextvars={x[(pi,s.idx)]:1.0 for s in by_day[d+1] if s.block in ('AM','PM','FULL')}
+                    if nextvars:
+                        for nv in nvar:
+                            for dv in nextvars:
+                                mb.constraint({nv:1.0,dv:1.0},0.0,1.0,f"V25142 night next-day rest {p.initials} {d}")
 
     # V2.5.53 ABSOLUTE FATIGUE FLOOR. Every rolling 7-day window must
     # contain at least one completely free day (<=6 worked days). The active
@@ -4003,15 +4287,15 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     # >=11h uninterrupted rest between separate workdays.
     # With current standard shifts all ordinary adjacent-day combinations
     # already leave >=12h, but pairwise logic is kept as a hard guardrail.
-    start_hour = {"AM": 8, "FULL": 8, "PM": 14}
-    end_hour = {"AM": 14, "FULL": 17, "PM": 20}
     for pi, p in enumerate(people):
         for d in range(1, ndays):
             today_slots = [s for s in slots if s.day == d]
             next_slots = [s for s in slots if s.day == d + 1]
             for a in today_slots:
                 for b in next_slots:
-                    rest = (24 - end_hour[a.block]) + start_hour[b.block]
+                    _astart,_aend=scheduled_slot_clock(a)
+                    _bstart,_bend=scheduled_slot_clock(b)
+                    rest = (24 + _bstart) - _aend
                     if rest < float(rule_value("min_rest_hours")):
                         mb.constraint(
                             {x[(pi, a.idx)]: 1, x[(pi, b.idx)]: 1},
@@ -4139,6 +4423,18 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
                         if _cj: _co[x[(j,sl.idx)]]=_co.get(x[(j,sl.idx)],0.0)-_cj
                     if _co:
                         mb.constraint(_co,-1.0,1.0,f"V25104 volunteer-adjusted {_label} fairness {people[i].initials}-{people[j].initials}")
+
+    # V2.5.142 night-duty water-fill: raw number of NIGHT duties differs by at
+    # most one between residents whenever the night model is active.
+    _night_slots=[s for s in slots if s.block=='NIGHT' and not s.blocked]
+    if _night_slots:
+        for i in range(len(people)):
+            for j in range(i+1,len(people)):
+                _co={}
+                for s in _night_slots:
+                    _co[x[(i,s.idx)]]=_co.get(x[(i,s.idx)],0.0)+1.0
+                    _co[x[(j,s.idx)]]=_co.get(x[(j,s.idx)],0.0)-1.0
+                mb.constraint(_co,-1.0,1.0,f"V25142 night raw waterfill {people[i].initials}-{people[j].initials}")
 
     holiday_days = public_holiday_days_in_month(year,month)
     holiday_slots = [s for s in slots if s.day in holiday_days and not s.blocked]
@@ -4541,22 +4837,10 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
         elif shift_len==3:
             add_soft_tier_term("SOFT3",pi,{dc:1.0/double_denom})
         elif shift_len==2:
-            # Balance 12h double-days against ordinary 6h single-shift days;
-            # 9h Onko FULL days are excluded from this personal 6h/12h preference.
-            mix_abs=mb.var(f"shift_length_mixed_deviation[{p.initials}]",cost=0.0,lb=0.0,ub=ndays,integer=False)
-            expr={dc:2.0}
-            for d in range(1,ndays+1):
-                expr[workday[(pi,d)]]=expr.get(workday[(pi,d)],0.0)-1.0
-            for s in slots:
-                if s.department=="Onko RO centre" and not s.blocked:
-                    expr[x[(pi,s.idx)]]=expr.get(x[(pi,s.idx)],0.0)+1.0
-            cpos={mix_abs:1.0}; cneg={mix_abs:1.0}
-            for v,c in expr.items():
-                cpos[v]=cpos.get(v,0.0)-c
-                cneg[v]=cneg.get(v,0.0)+c
-            mb.constraint(cpos,0.0,np.inf,f"mixed shift length + {p.initials}")
-            mb.constraint(cneg,0.0,np.inf,f"mixed shift length - {p.initials}")
-            add_soft_tier_term("SOFT3",pi,{mix_abs:-1.0/double_denom},const=1.0)
+            # V2.5.141/142: mixed is genuinely flexible, not a 50/50 target.
+            # It therefore adds no objective and cannot compete with an explicit
+            # 12 h account mode.
+            pass
         if p.spread_preference:
             if p.spread_preference>0:
                 add_soft_tier_term("SOFT3",pi,{dc:-1.0/double_denom},const=1.0)
@@ -6151,7 +6435,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
         # V2.5.53 temporal workload diagnostics. Calendar-week hours are shown
         # explicitly so a resident cannot silently receive a 60h first week.
         def _vh(s):
-            return 9.0 if s.block == "FULL" else 6.0
+            return scheduled_slot_hours(s)
         week_hours={}
         for sl in pslots:
             dt=date(year,month,sl.day)
@@ -6224,12 +6508,12 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
         d["max_rolling7_hours"]=round(max(rolling7_values+[0.0]),1)
         d["six_day_streak"]=bool(int(d.get("max_consecutive_days",0) or 0) >= 6)
 
-        start_hour = {"AM": 8, "FULL": 8, "PM": 14}
-        end_hour = {"AM": 14, "FULL": 17, "PM": 20}
         for a in pslots:
             for b in pslots:
                 if b.day == a.day + 1:
-                    rest = (24 - end_hour[a.block]) + start_hour[b.block]
+                    _astart,_aend=scheduled_slot_clock(a)
+                    _bstart,_bend=scheduled_slot_clock(b)
+                    rest = (24 + _bstart) - _aend
                     min_rest=(float(SWAP_MIN_DAILY_REST_HOURS) if voluntary_swap_mode else float(rule_value("min_rest_hours")))
                     if rest < min_rest:
                         errors.append(f"{p.initials}: only {rest}h rest between days {a.day}-{b.day}")
@@ -6245,6 +6529,12 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
         for abs_day in p.justified_absence:
             if any(s.day == abs_day for s in pslots):
                 errors.append(f"{p.initials}: work during justified absence day {abs_day}")
+        for special_day in p.wellness_days:
+            if any(s.day == special_day for s in pslots):
+                errors.append(f"{p.initials}: clinical work during wellness day {special_day}")
+        for special_day in p.qualification_days:
+            if any(s.day == special_day for s in pslots):
+                errors.append(f"{p.initials}: clinical work during qualification day {special_day}")
 
     # V2.5.32 backup-availability validation: WEEKEND + SPS RO + SPS UG.
     for covered in slots:
@@ -6369,6 +6659,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
         pslots=[s for s in slots if assignments.get(s.idx)==p.initials]
         worked_days={s.day for s in pslots}
         components={}
+        mode_components={}
         preferred_satisfied = sum(1 for day in sp.preferred if day in worked_days)
         preferred_satisfied += sum(1 for day in sp.preferred_am if any(sl.day == day and blocks_overlap(sl.block, "AM") for sl in pslots))
         preferred_satisfied += sum(1 for day in sp.preferred_pm if any(sl.day == day and blocks_overlap(sl.block, "PM") for sl in pslots))
@@ -6407,7 +6698,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                 score=100.0*(cur-_group_weekday_min)/max(1,_group_weekday_max-_group_weekday_min)
             else:
                 score=100.0*(_group_weekday_max-cur)/max(1,_group_weekday_max-_group_weekday_min)
-            components["weekday_preference"]=round(max(0.0,min(100.0,score)),1)
+            mode_components["weekday_preference"]=round(max(0.0,min(100.0,score)),1)
         if sp.weekend_preference != 0:
             cur=int(d.get("weekend_assignments",0) or 0)
             if _group_weekend_max==_group_weekend_min:
@@ -6416,11 +6707,11 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                 score=100.0*(cur-_group_weekend_min)/max(1,_group_weekend_max-_group_weekend_min)
             else:
                 score=100.0*(_group_weekend_max-cur)/max(1,_group_weekend_max-_group_weekend_min)
-            components["weekend_preference"]=round(max(0.0,min(100.0,score)),1)
+            mode_components["weekend_preference"]=round(max(0.0,min(100.0,score)),1)
         if sp.spread_preference != 0:
             spread01 = max(0.0, min(1.0, (d["dispersion_index"] - 0.5) / 0.5))
             score = 100.0 * spread01 if sp.spread_preference > 0 else 100.0 * (1.0 - spread01)
-            components["spread_preference"] = round(score, 1)
+            mode_components["spread_preference"] = round(score, 1)
         shift_len=max(0,min(3,int(getattr(sp,"shift_length_preference",0) or 0)))
         workstyle_proof=None
         # Count actual 12 h workdays as non-Onko days containing >=2 normal shifts.
@@ -6440,7 +6731,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             _threshold=min(_group_double_max,_group_double_min+1)
             fulfilled_ws=bool(_double_days<=_threshold)
             score=100.0 if fulfilled_ws else max(0.0,100.0-25.0*(_double_days-_threshold))
-            components["shift_length_preference" if shift_len else "avoid_doubles"] = round(score,1)
+            mode_components["shift_length_preference" if shift_len else "avoid_doubles"] = round(score,1)
             workstyle_proof={
                 "mode":1,"requested":"PREFER_6H","frozen_input":True,
                 "double_days":int(_double_days),"single_days":int(_single_days),
@@ -6454,7 +6745,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             _threshold=max(_group_double_min,_group_double_max-1)
             fulfilled_ws=bool(_double_days>=_threshold)
             score=100.0 if fulfilled_ws else max(0.0,100.0-25.0*(_threshold-_double_days))
-            components["shift_length_preference"] = round(score,1)
+            mode_components["shift_length_preference"] = round(score,1)
             workstyle_proof={
                 "mode":3,"requested":"PREFER_12H","frozen_input":True,
                 "double_days":int(_double_days),"single_days":int(_single_days),
@@ -6464,21 +6755,12 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                 "prefer12_people":list(_pref12_names),
             }
         elif shift_len==2:
-            by_day_normal={}
-            for sl in pslots:
-                if sl.department=="Onko RO centre":
-                    continue
-                by_day_normal[sl.day]=by_day_normal.get(sl.day,0)+1
-            mixed_doubles=sum(1 for n in by_day_normal.values() if n>=2)
-            mixed_singles=sum(1 for n in by_day_normal.values() if n==1)
-            denom=max(1,mixed_doubles+mixed_singles)
-            _mix_diff=abs(mixed_doubles-mixed_singles)
-            # One-day difference is the mathematically closest possible 50/50 mix
-            # when the number of normal workdays is odd, so count it as fully met.
-            score=100.0 if _mix_diff<=1 else 100.0*max(0.0,1.0-(_mix_diff-1)/denom)
-            components["shift_length_preference"] = round(score,1)
+            # Mixed means FLEXIBLE, not equal. Any safe 6 h / 12 h combination is
+            # compatible with this mode, so it never competes with explicit 12 h
+            # requesters and is not judged against an artificial 50/50 target.
+            mode_components["shift_length_preference"] = 100.0
             workstyle_proof={
-                "mode":2,"requested":"MIXED_6H_12H","frozen_input":True,
+                "mode":2,"requested":"FLEXIBLE_6H_12H","frozen_input":True,
                 "double_days":int(_double_days),"single_days":int(_single_days),
                 "onko_9h_days":len(_onko_days),
             }
@@ -6488,12 +6770,14 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
 
         if sp.holiday_preference and public_holiday_days_in_month(year,month):
             hcount=sum(1 for sl in pslots if is_public_holiday(year,month,sl.day))
-            components["holiday_preference"] = 100.0 if ((sp.holiday_preference>0 and hcount>0) or (sp.holiday_preference<0 and hcount==0)) else 0.0
+            mode_components["holiday_preference"] = 100.0 if ((sp.holiday_preference>0 and hcount>0) or (sp.holiday_preference<0 and hcount==0)) else 0.0
         directional_keys={"weekday_preference","weekend_preference","spread_preference","shift_length_preference","avoid_doubles","holiday_preference"}
-        directional_values=[v for k,v in components.items() if k in directional_keys]
-        d["directional_preference_score"]=(
-            round(float(np.mean(directional_values)),1) if directional_values else None
-        )
+        directional_values=[v for k,v in mode_components.items() if k in directional_keys]
+        # Internal diagnostic only: account settings are a scheduling mode, not wishes.
+        d["mode_fit_score"]=(round(float(np.mean(directional_values)),1) if directional_values else None)
+        d["mode_fit_components"]=dict(mode_components)
+        d["directional_preference_score"]=d["mode_fit_score"]  # compatibility-only key
+        # Public preference components now contain only actual monthly/recurring wishes.
         d["preference_components"] = components
 
         items=[dict(x) for x in (sp.request_items or [])]
@@ -6535,6 +6819,11 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                 continue
             included=bool(item.get("included_in_score", tier not in ("ABSOLUTE_HARD","INFO")))
             source=str(item.get("source") or "effective")
+            # V2.5.140: account settings are scheduling-mode inputs, not resident wishes.
+            # Legacy/imported snapshots may still contain these rows under another
+            # source label, so filter both by source AND by directional kind.
+            if source=="account_settings" or kind in directional_keys:
+                continue
             fulfilled=True
             score_value=100.0
             assigned_here=[]
@@ -6584,12 +6873,14 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                     fulfilled=not bool(assigned_here)
                 score_value=100.0 if fulfilled else 0.0
                 category="backup_claim"
+                included=False
             elif kind=="rest_credit":
                 # Invalid redemptions are blocked before generation. A valid frozen
                 # redemption is therefore an explicit honored entitlement.
                 fulfilled=True
                 score_value=100.0
                 category="rest_credit"
+                included=False
             elif kind=="vacation":
                 assigned_here=overlapping(day,"FULL")
                 fulfilled=not bool(assigned_here)
@@ -6717,7 +7008,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
         d["request_detail_rows"]=detail_rows
         d["unhonored_request_details"]=[r for r in detail_rows if r["included_in_score"] and not r["fulfilled"]]
         d["resident_hard_conflicts"]=[r for r in detail_rows if r["kind"]=="resident_hard" and not r["fulfilled"]]
-        d["soft_request_misses"]=[r for r in detail_rows if r["priority"].startswith("SOFT") and not r["fulfilled"]]
+        d["soft_request_misses"]=[r for r in detail_rows if r["included_in_score"] and r["priority"].startswith("SOFT") and not r["fulfilled"]]
         d["honored_request_details"]=[r for r in detail_rows if r["included_in_score"] and r["fulfilled"]]
 
     # V2.5.77 ABSOLUTE SYSTEM Friday water-fill. This is generation-only:
@@ -7572,12 +7863,17 @@ def revalidate_loaded_result(
         objective_value=result.objective_value,
         request_snapshot=result.request_snapshot,
         backup_snapshot=result.backup_snapshot,
+        provenance=dict(result.provenance or {}),
     )
 
 
 def serialize_result(result: SolveResult) -> dict:
     return {
-        "engine_stats_version": "V2.5.77",
+        # V2.5.150: never hard-code a stale historical stats version. The stored
+        # payload now records the actual scheduler API that serialized it.
+        "engine_stats_version": f"V{ENGINE_API_VERSION}",
+        "engine_api_version": str(ENGINE_API_VERSION),
+        "provenance": dict(result.provenance or {}),
         "ok": result.ok,
         "message": result.message,
         "assignments": {str(k): v for k, v in result.assignments.items()},
@@ -7599,4 +7895,12 @@ def deserialize_result(payload: dict) -> SolveResult:
         objective_value=payload.get("objective_value"),
         request_snapshot=payload.get("request_snapshot"),
         backup_snapshot=payload.get("backup_snapshot"),
+        provenance=(
+            dict(payload.get("provenance") or {})
+            or {
+                "stored_engine_api_version": payload.get("engine_api_version"),
+                "stored_engine_stats_version": payload.get("engine_stats_version"),
+                "legacy_payload": True,
+            }
+        ),
     )

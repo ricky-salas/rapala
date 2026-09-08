@@ -1,0 +1,9 @@
+RAPA V2.5.148 RELEASE CHECK
+- Python compile: PASS
+- V2.5.143 core release test: PASS
+- V2.5.144 OPTO research test: PASS
+- V2.5.145 special workdays test: PASS
+- V2.5.146 lifecycle tests: PASS
+- V2.5.148 Swap/handoff registry test: PASS
+- Seniūnės vadovas V2.5.148: rendered 9/9 pages and visually inspected
+- One-way handoff registry: audit only; no automatic ACTUAL mutation

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "extension_id": "lsmu-radiology-new-group",
+  "name": "LSMU radiologija · nauja grupė",
+  "people": [
+    {"initials": "AA", "name": "Rezidentas A"},
+    {"initials": "BB", "name": "Rezidentas B"},
+    {"initials": "CC", "name": "Rezidentas C"},
+    {"initials": "DD", "name": "Rezidentas D"}
+  ],
+  "shift_templates": [
+    {"department":"POSTAS A","fairness_category":"POSTAS A","block":"AM","count":1,"when":"weekdays","from":"2026-10","workload2":2},
+    {"department":"POSTAS A","fairness_category":"POSTAS A","block":"PM","count":1,"when":"weekdays","from":"2026-10","workload2":2},
+    {"department":"BUDĖJIMAS","fairness_category":"BUDĖJIMAI","block":"FULL","count":1,"when":"weekends","from":"2026-10","workload2":4}
+  ],
+  "fairness":{"weekend_spread_target":1,"post_spread_target":1,"max_workdays_rolling7":6},
+  "rules_notes":"Pakeiskite žmones ir postų šablonus pagal naujos grupės taisykles."
+}
