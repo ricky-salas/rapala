@@ -1,4 +1,4 @@
-# RAPA Scheduler — V2.5.144 OPTO TYRIMO WORKBENCH
+# RAPA Scheduler — V2.5.148 SPECIALIOS DIENOS + SWAP REGISTRAS
 
 ## Patvirtintas operacinis modelis nuo 2026 m. spalio
 - CENTRO RO: 4 AM + 4 PM darbo dienomis.
@@ -46,4 +46,34 @@ Visa ši dalis yra izoliuota: ji nekeičia SYSTEM, ACTUAL ar Supabase operacinio
 ## Kreditai ir dubliai
 - Koeficientinis kreditų bankas lieka atskiras nuo pageidavimų statistikos.
 - Nuo spalio savaitgalio dublis yra tik viena pilna 12 h FULL pamaina; 6 h savaitgalio dublio kelio nebėra.
-- Dublio pasirinkimas galimas visą tikslinį mėnesį nepriklausomai nuo grafiko statuso.
+- Dubliai prieš grafiko paskelbimą yra neaktyvūs. Jie atsirakina tik paskelbus preliminarų grafiką ir tada lieka aktyvūs visą likusį tikslinį mėnesį.
+
+
+## Specialios dienos
+- `Specialios dienos` yra atskiras langas, ne Pageidavimų dalis.
+- `Sveikatinimosi dienos` ir `Kvalifikacijos kėlimo dienos` yra apmokamos darbo dienos ne klinikoje. Jos neįeina į pageidavimų statistiką ir viena diena sumažina klinikinį mėnesio krūvį 12 val. ekvivalentu.
+- Šios planuojamos dienos gali būti keičiamos iki preliminaraus grafiko paskelbimo ir kalendoriuje rodomos kaip atskira būsena.
+- `Pateisinamas neatvykimas` atsirakina tik paskelbus preliminarų grafiką. Jis yra post-publication operacinis pakeitimas: pradinis paskelbtas grafikas neperrašomas, koreguojamas faktinis grafikas.
+- `Darbas kitur` lieka Pageidavimų lange kaip atskiras, paprastas išankstinis saugos inputas, kad RAPA žinotų apie ilgą / naktinį darbą, kurio pati nemato.
+
+## Anketa ir Tyrimas
+- Rezidentų anketa pasiekiama visiems rezidentams tiek `Paprastame`, tiek `Išplėstiniame` režime.
+- Paprastame rezidento vaizde navigacijoje ši dalis rodoma kaip `Anketa`.
+- ŠR ir SP Išplėstiniame režime tame pačiame bloke papildomai gauna `Tyrimas` įrankius, įskaitant izoliuotą OPTO/RAPA/human palyginimą.
+
+## Swap
+- Pagrindinis `Apsikeitimai` langas pervadintas į `Swap`.
+- Abipusis swap išlieka request → kito rezidento sutikimas → seniūnės galutinis pritaikymas.
+- Tame pačiame lange pridėtas vienpusio pamainos atidavimo registras:
+  - `Noriu atiduoti` — registruojamas atviras atidavimo įrašas;
+  - `Atidaviau pamainą` — registruojamas gavėjo inicialas ir registracijos laikas.
+- SP ir ŠR mato visos grupės atidavimo registrą. Kiti rezidentai mato tik įrašus, kuriuose jie yra donorai arba gavėjai.
+- Inicialai rodomi tomis pačiomis asmeninėmis spalvomis kaip grafike.
+- Atidavimo registras yra auditinis: pats savaime ACTUAL grafiko nekeičia ir todėl neapeina saugos / patvirtinimo srauto.
+
+## Nustatymų cleanup
+- Rezidento `Nustatymai` neberodo seno el. pašto / SMS / reminder valdymo; esamos backend reikšmės išsaugomos nepakeistos.
+- `Pirma registracija` lieka pašalinta — visi 16 rezidentų naudoja esamas paskyras.
+
+## Paskyrų prieiga
+- `Pirma registracija` pašalinta. Visi esami rezidentai jungiasi per vienintelį `Prisijungimas` srautą.

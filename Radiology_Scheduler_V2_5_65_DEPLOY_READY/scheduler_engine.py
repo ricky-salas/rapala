@@ -200,6 +200,8 @@ class Person:
     unavailable_pm: Set[int] = field(default_factory=set)    # HARD: afternoon block
     vacation: Set[int] = field(default_factory=set)           # ABSOLUTE HARD: approved vacation / leave
     justified_absence: Set[int] = field(default_factory=set)  # ABSOLUTE HARD: other approved no-work date
+    wellness_days: Set[int] = field(default_factory=set)      # paid working day away from clinical rota
+    qualification_days: Set[int] = field(default_factory=set) # paid education / qualification day away from clinical rota
     long_duty: Set[int] = field(default_factory=set)          # start date of >12-24h / 24h duty
     reserved_backup: Set[Tuple[int, str]] = field(default_factory=set)  # self-claimed WEEKEND/SPS backup slots
     soft_free: Set[int] = field(default_factory=set)         # SOFT: would like the whole day off
@@ -481,8 +483,10 @@ def resident_hard_unavailable_for_block(person: Person, day: int, block: str) ->
 
 
 def absolute_unavailable_for_block(person: Person, day: int, block: str) -> bool:
-    """ABSOLUTE HARD no-work state: never relaxable by the solver."""
+    """ABSOLUTE HARD no-clinical-work state: never relaxable by the solver."""
     if day in person.vacation or day in person.justified_absence:
+        return True
+    if day in person.wellness_days or day in person.qualification_days:
         return True
     # A marked >12-24h / 24h duty starts on day N. The following calendar
     # day is conservatively blocked to protect at least 24h post-duty rest.
@@ -512,6 +516,8 @@ def normal_assignment_blocked(person: Person, day: int, block: str, include_resi
             return True
         nxt=day+1
         if nxt in person.vacation or nxt in person.justified_absence:
+            return True
+        if nxt in person.wellness_days or nxt in person.qualification_days:
             return True
         if include_resident_hard and (nxt in person.unavailable or nxt in person.unavailable_am):
             return True
@@ -560,6 +566,8 @@ def normalize_preferences_against_engine(
             unavailable_pm=set(p.unavailable_pm),
             vacation=set(p.vacation),
             justified_absence=set(p.justified_absence),
+            wellness_days=set(p.wellness_days),
+            qualification_days=set(p.qualification_days),
             long_duty=set(p.long_duty),
             reserved_backup=set(p.reserved_backup),
             soft_free=set(p.soft_free),
@@ -669,6 +677,7 @@ def serialize_people_request_snapshot(people: List[Person]) -> dict:
     rows=[]
     set_fields=(
         "unavailable","unavailable_am","unavailable_pm","vacation","justified_absence",
+        "wellness_days","qualification_days",
         "long_duty","soft_free","soft_free_am","soft_free_pm","preferred",
         "preferred_am","preferred_pm",
     )
@@ -719,6 +728,8 @@ def people_from_request_snapshot(snapshot: Optional[dict]) -> List[Person]:
                 unavailable_pm=set(r.get("unavailable_pm") or []),
                 vacation=set(r.get("vacation") or []),
                 justified_absence=set(r.get("justified_absence") or []),
+                wellness_days=set(r.get("wellness_days") or []),
+                qualification_days=set(r.get("qualification_days") or []),
                 long_duty=set(r.get("long_duty") or []),
                 reserved_backup={tuple(x) for x in (r.get("reserved_backup") or []) if len(x)==2},
                 soft_free=set(r.get("soft_free") or []),
@@ -1263,7 +1274,14 @@ def calculate_targets(year: int, month: int, people: List[Person]) -> Dict[str, 
             * float(rule_value("target_daily_hours"))
             / float(rule_value("target_shift_hours"))
         )
-        targets[p.initials]=max(0,adjusted_base+p.target_adjustment)
+        # V2.5.145: wellness / qualification days are PAID working days outside
+        # the clinical rota, not leave and not resident wishes. Until LSMU confirms
+        # a different accounting rule, each marked day removes one 12 h clinical
+        # duty equivalent = 2 standard 6 h target units. This constant is isolated
+        # here so the accounting can be changed without touching fairness logic.
+        special_paid_days=len(set(p.wellness_days) | set(p.qualification_days))
+        special_target_reduction=2 * special_paid_days
+        targets[p.initials]=max(0,adjusted_base+p.target_adjustment-special_target_reduction)
     return targets
 
 
@@ -6509,6 +6527,12 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
         for abs_day in p.justified_absence:
             if any(s.day == abs_day for s in pslots):
                 errors.append(f"{p.initials}: work during justified absence day {abs_day}")
+        for special_day in p.wellness_days:
+            if any(s.day == special_day for s in pslots):
+                errors.append(f"{p.initials}: clinical work during wellness day {special_day}")
+        for special_day in p.qualification_days:
+            if any(s.day == special_day for s in pslots):
+                errors.append(f"{p.initials}: clinical work during qualification day {special_day}")
 
     # V2.5.32 backup-availability validation: WEEKEND + SPS RO + SPS UG.
     for covered in slots:

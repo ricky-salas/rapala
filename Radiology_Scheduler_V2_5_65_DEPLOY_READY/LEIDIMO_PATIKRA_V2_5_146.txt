@@ -1,0 +1,16 @@
+V2.5.146 RELEASE CHECK
+
+PASS — Python compile: app.py, db.py, scheduler_engine.py, extension_core.py, opto_research.py, optus_general_engine.py, solver_runner.py
+PASS — V2.5.143 regression test
+PASS — V2.5.144 regression test
+PASS — V2.5.145 special paid workdays solver test
+PASS — V2.5.146 Specialios dienos / post-publication dubliai lifecycle test
+PASS — October weekend backup catalog = FULL only
+PASS — Specialios dienos separated from Pageidavimai
+PASS — Pateisinamas neatvykimas unlocked only after preliminary publication
+PASS — Dubliai UI + DB RPC guards require published schedule
+PASS — Pirma registracija form removed
+
+DB deployment order:
+1. SUPABASE_MIGRATION_V2_5_145_SPECIAL_PAID_WORKDAYS.sql
+2. SUPABASE_MIGRATION_V2_5_146_SPECIAL_DAYS_AND_POSTPUB_BACKUPS.sql

@@ -1,0 +1,17 @@
+V2.5.149 PASSWORD RECOVERY — LEIDIMO PATIKRA
+
+[PASS] app.py Python syntax
+[PASS] Password recovery request uses Supabase Auth reset_password_email
+[PASS] Recovery response does not reveal whether email exists
+[PASS] Recovery credential read only from browser URL fragment
+[PASS] access_token is NOT moved into Streamlit query params
+[PASS] Password update uses authenticated Supabase Auth /auth/v1/user endpoint
+[PASS] Minimum 8 character + repeat-password validation
+[PASS] URL fragment cleared after successful reset
+[PASS] Post-reset session forced to clean sign-in
+[PASS] resident invite/profile binding code unchanged
+[PASS] No database migration required
+
+PRODUCTION REQUIREMENT:
+SCHEDULER_PUBLIC_URL = https://rapala-6klwqxgg4ggahret5mddla.streamlit.app/
+The same URL must be permitted in Supabase Auth Site URL / Redirect URLs.

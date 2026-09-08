@@ -149,6 +149,8 @@ def _preference_payload_json(payload: dict) -> dict:
         "unavailable_pm": sorted(payload.get("unavailable_pm", [])),
         "justified_absence": sorted(payload.get("justified_absence", [])),
         "vacation": sorted(payload.get("vacation", [])),
+        "wellness_days": sorted(payload.get("wellness_days", [])),
+        "qualification_days": sorted(payload.get("qualification_days", [])),
         "long_duty": sorted(payload.get("long_duty", [])),
         "soft_free": sorted(payload.get("soft_free", [])),
         "soft_free_am": sorted(payload.get("soft_free_am", [])),
@@ -252,6 +254,63 @@ def get_preference(year: int, month: int, initials: str) -> Optional[dict]:
 def all_preferences(year: int, month: int) -> Dict[str, dict]:
     rows = _data(_retry_db(lambda: client().table("preferences").select("*").eq("year", int(year)).eq("month", int(month)).execute()))
     return {r["initials"]: _pref_from_row(r) for r in rows}
+
+
+# ---------------------------------------------------------------------------
+# V2.5.145 paid working days outside the clinical rota.
+# These are deliberately stored OUTSIDE the preferences table so adding a
+# wellness / qualification day never changes preference priority or wish stats.
+# ---------------------------------------------------------------------------
+def _special_workdays_from_row(row: Optional[dict]) -> dict:
+    row=row or {}
+    return {
+        "wellness_days": set(row.get("wellness_days") or []),
+        "qualification_days": set(row.get("qualification_days") or []),
+        "updated_at": row.get("updated_at", ""),
+    }
+
+
+def get_special_workdays_v25145(year: int, month: int, initials: str) -> dict:
+    try:
+        rows=_data(_retry_db(lambda: client().table("resident_special_workdays_v25145")
+            .select("year,month,initials,wellness_days,qualification_days,updated_at")
+            .eq("year",int(year)).eq("month",int(month)).eq("initials",str(initials)).limit(1).execute()))
+        return _special_workdays_from_row(rows[0] if rows else None)
+    except Exception:
+        # Migration may not yet be deployed while a release is being inspected.
+        return _special_workdays_from_row(None)
+
+
+def all_special_workdays_v25145(year: int, month: int) -> Dict[str, dict]:
+    try:
+        rows=_data(_retry_db(lambda: client().table("resident_special_workdays_v25145")
+            .select("year,month,initials,wellness_days,qualification_days,updated_at")
+            .eq("year",int(year)).eq("month",int(month)).execute()))
+        return {str(r.get("initials")):_special_workdays_from_row(r) for r in rows}
+    except Exception:
+        return {}
+
+
+def save_my_special_workdays_v25145(year: int, month: int, wellness_days, qualification_days):
+    payload={
+        "wellness_days": sorted({int(x) for x in (wellness_days or [])}),
+        "qualification_days": sorted({int(x) for x in (qualification_days or [])}),
+    }
+    rows=_data(_retry_db(lambda: client().rpc("save_my_special_workdays_v25145",{
+        "p_year":int(year),"p_month":int(month),"p_payload":payload,
+    }).execute()))
+    return rows[0] if isinstance(rows,list) and rows else (rows if isinstance(rows,dict) else {})
+
+
+def save_special_workdays_for_resident_v25145(year: int, month: int, target_initials: str, wellness_days, qualification_days):
+    payload={
+        "wellness_days": sorted({int(x) for x in (wellness_days or [])}),
+        "qualification_days": sorted({int(x) for x in (qualification_days or [])}),
+    }
+    rows=_data(_retry_db(lambda: client().rpc("save_special_workdays_for_resident_v25145",{
+        "p_year":int(year),"p_month":int(month),"p_target_initials":str(target_initials),"p_payload":payload,
+    }).execute()))
+    return rows[0] if isinstance(rows,list) and rows else (rows if isinstance(rows,dict) else {})
 
 
 def all_preference_priorities(year: int, month: int) -> Dict[str, dict]:
@@ -993,6 +1052,40 @@ def cancel_swap_request(request_id: int) -> dict:
 def cancel_backup_swap_request(request_id: int):
     client().rpc("cancel_backup_swap_request",{"p_request_id":int(request_id)}).execute()
 
+
+
+# --- V2.5.148 one-way shift handoff registry ---
+def create_shift_giveaway_record_v25148(year: int, month: int, donor_initials: str, slot_id: int, record_type: str, recipient_initials: Optional[str]=None, note: str="") -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("create_shift_giveaway_record_v25148",{
+        "p_year":int(year),
+        "p_month":int(month),
+        "p_slot_id":int(slot_id),
+        "p_record_type":str(record_type),
+        "p_recipient_initials":(str(recipient_initials) if recipient_initials else None),
+        "p_note":str(note or ""),
+    }).execute()))
+    if isinstance(rows,dict):
+        return rows
+    return rows[0] if rows else {}
+
+
+def list_shift_giveaway_records_v25148(year: int, month: int) -> List[dict]:
+    return _data(_retry_db(lambda: client().table("shift_giveaway_registry_v25148")
+        .select("*")
+        .eq("year",int(year))
+        .eq("month",int(month))
+        .neq("status","cancelled")
+        .order("registered_at",desc=True)
+        .execute()))
+
+
+def cancel_shift_giveaway_record_v25148(record_id: int) -> dict:
+    rows=_data(_retry_db(lambda: client().rpc("cancel_shift_giveaway_record_v25148",{
+        "p_id":int(record_id)
+    }).execute()))
+    if isinstance(rows,dict):
+        return rows
+    return rows[0] if rows else {}
 
 def sync_backups(year: int, month: int, desired: List[dict]):
     existing={int(r["covered_slot"]):r for r in list_backups(year,month)}
