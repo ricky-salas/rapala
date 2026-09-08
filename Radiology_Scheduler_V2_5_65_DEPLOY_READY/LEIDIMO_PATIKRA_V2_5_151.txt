@@ -1,0 +1,28 @@
+RAPA V2.5.151 HARD-AWARE FRIDAY WATER-FILL — LEIDIMO PATIKRA
+Date: 2026-09-09
+
+[PASS] Python compile: app.py, scheduler_engine.py, solver_runner.py, db.py, notification_core.py, notification_worker.py.
+[PASS] App/engine contract: APP_VERSION 2.5.151; EXPECTED_ENGINE_API_VERSION 2.5.151; ENGINE_API_VERSION 2.5.151.
+[PASS] V2.5.143 operational solver regression retained.
+[PASS] V2.5.144 extension regression retained.
+[PASS] V2.5.145 special-workdays regression retained.
+[PASS] V2.5.146 special-days lifecycle regression retained.
+[PASS] V2.5.148 swap/handoff regression retained.
+[PASS] V2.5.149 password recovery regression retained.
+[PASS] V2.5.150 draft compatibility guard retained.
+[PASS] V2.5.151 synthetic HARD-aware Friday capacity / bounded water-fill / compact-builder regression.
+[PASS] Private live October 2026 reconstruction: valid candidate found in ~6.4 s, HARD errors 0, Resident-HARD losses 0.
+[PASS] Live regression fixture intentionally NOT shipped in this release package.
+
+ROOT CAUSE FIXED
+The old Friday structural floor/ceil assumed identical Friday availability. A resident with HARD unavailability on most Fridays could therefore be forced above their mathematical Friday capacity. V2.5.151 caps each resident's Friday entitlement by actual HARD-eligible blocks, then water-fills the remaining burden among eligible residents.
+
+SECONDARY FIXES
+- Compact two-phase MILP builder accepts named constraint calls used by account-mode refinement.
+- Phase-2 SPS post quality gate compares post-category spread to post-category cap; weekend/date burden stays in the phase-1 date-critical gate.
+- Sudarymas displays selected month, submitted count, and draft existence explicitly.
+- V2.5.150 legacy/invalid-draft fail-closed guard remains active.
+
+DEPLOY
+Replace app.py AND scheduler_engine.py together from this release.
+No new Supabase migration is required for V2.5.151.

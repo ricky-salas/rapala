@@ -1,5 +1,15 @@
-# RAPA Scheduler — V2.5.150 DRAFT COMPATIBILITY GUARD
+# RAPA Scheduler — V2.5.151 HARD-AWARE FRIDAY WATER-FILL
 
+
+
+## V2.5.151 — HARD-aware penktadienių water-fill
+
+- `Negaliu dirbti` dabar visada riboja penktadienio fairness talpą prieš skaičiuojant floor/ceil.
+- Jei rezidentas dėl HARD gali dirbti tik mažą dalį penktadienių blokų, sistema nebereikalauja neįmanomo cohort-wide penktadienio minimumo.
+- Likęs penktadienio krūvis water-fill'inamas tarp realiai tinkamų rezidentų.
+- 0 Resident-HARD pažeidimų išlieka publikavimo vartai.
+- Pataisytas compact two-phase builder account-mode refinement API crashas.
+- V2.5.150 legacy draft guard išlieka aktyvus.
 
 ## V2.5.150 — juodraščio suderinamumo saugiklis
 - DB įrašo egzistavimas nebelaikomas įrodymu, kad juodraštis galiojantis.

@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.150"
+ENGINE_API_VERSION = "2.5.151"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -1723,7 +1723,10 @@ class _V2564FastMB:
         self.c=[]; self.lb=[]; self.ub=[]; self.integrality=[]; self.rows=[]
     def var(self, lb=0.0, ub=1.0, integer=True, cost=0.0):
         i=len(self.c); self.c.append(float(cost)); self.lb.append(float(lb)); self.ub.append(float(ub)); self.integrality.append(1 if integer else 0); return i
-    def constraint(self, coeffs, low=-np.inf, high=np.inf):
+    def constraint(self, coeffs, low=-np.inf, high=np.inf, name=None):
+        # ``name`` is accepted for API parity with the legacy ModelBuilder.  The
+        # compact two-phase builder does not store row labels, but accepting them
+        # prevents account-mode refinement from crashing when it adds a named lock.
         self.rows.append((coeffs,float(low),float(high)))
     def solve(self, seconds=60.0, mip_gap=0.0):
         n=len(self.c); m=len(self.rows)
@@ -1741,6 +1744,63 @@ class _V2564FastMB:
             options={"time_limit":float(max(2.0,seconds)),"presolve":True,"mip_rel_gap":float(max(0.0,mip_gap))},
         )
 
+
+
+def _bounded_waterfill_bounds(total: int, capacities) -> Tuple[List[int], List[int]]:
+    """Eligibility-aware floor/ceil water-fill with per-resident capacity caps.
+
+    ``total`` assignments are shared as evenly as possible, but a resident who is
+    HARD-unavailable on most dates is never forced above their mathematical maximum.
+    Example: if one resident can work at most two Friday blocks while everyone else
+    can work seven, that resident receives a 2..2 entitlement and the remaining
+    Friday load is water-filled across the eligible cohort.
+    """
+    caps=[max(0,int(x or 0)) for x in capacities]
+    total=max(0,int(total or 0))
+    if not caps:
+        return [],[]
+    total=min(total,sum(caps))
+    level=0
+    max_cap=max(caps+[0])
+    while level < max_cap and sum(min(c,level+1) for c in caps) <= total:
+        level += 1
+    lo=[min(c,level) for c in caps]
+    remaining=max(0,total-sum(lo))
+    hi=list(lo)
+    if remaining>0:
+        for i,c in enumerate(caps):
+            if c>lo[i]:
+                hi[i]=lo[i]+1
+    return lo,hi
+
+
+def _friday_assignment_capacity(person: Person, year: int, month: int, slots: List[Slot], fixed_gaps: Optional[Set[int]] = None) -> int:
+    """Maximum Friday assignment count allowed by HARD availability only.
+
+    Counts distinct work blocks rather than post rows: on an ordinary Friday AM+PM
+    gives capacity 2, while a FULL/NIGHT-only Friday gives capacity 1.  This is a
+    safe upper bound used only to prevent structural water-fill from demanding work
+    on dates/blocks the resident explicitly cannot work.
+    """
+    fixed=set(fixed_gaps or set())
+    friday_days=sorted({s.day for s in slots if s.weekday==4 and not s.blocked and s.idx not in fixed})
+    cap=0
+    for d in friday_days:
+        blocks={str(s.block or '').upper() for s in slots if s.day==d and not s.blocked and s.idx not in fixed}
+        day_cap=0
+        if 'AM' in blocks and not hard_unavailable_for_block(person,d,'AM'):
+            day_cap += 1
+        if 'PM' in blocks and not hard_unavailable_for_block(person,d,'PM'):
+            day_cap += 1
+        long_ok=False
+        if 'FULL' in blocks and not hard_unavailable_for_block(person,d,'FULL'):
+            long_ok=True
+        if 'NIGHT' in blocks and not normal_assignment_blocked(person,d,'NIGHT'):
+            long_ok=True
+        if long_ok:
+            day_cap=max(day_cap,1)
+        cap += day_cap
+    return int(cap)
 
 def _v2564_choose_fixed_gaps(year, month, slots, gap_meta, seconds=5.0):
     """Choose the exact optional gaps before scheduling and distribute them across posts."""
@@ -1931,8 +1991,15 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         1 for s in slots
         if s.day in friday_days and not s.blocked and s.idx not in fixed_gaps
     )
-    friday_lo=total_friday_assignments//max(1,n)
-    friday_hi=int(math.ceil(float(total_friday_assignments)/float(max(1,n))))
+    # V2.5.151 HARD-AWARE FRIDAY WATER-FILL.
+    # The old universal floor/ceil assumed every resident was eligible on every
+    # Friday. That made a perfectly valid `Negaliu dirbti` pattern mathematically
+    # impossible (e.g. a resident available on only one of five Fridays was still
+    # forced to receive the cohort-wide 6-7 Friday assignments). Water-fill is now
+    # performed WITH per-resident HARD eligibility caps. Resident-HARD remains zero-
+    # loss mandatory; fairness is maximized only inside the actually eligible pool.
+    _friday_caps=[_friday_assignment_capacity(p,year,month,slots,fixed_gaps) for p in people]
+    _friday_lo,_friday_hi=_bounded_waterfill_bounds(total_friday_assignments,_friday_caps)
     _friday_expr=[]
     for pi,p in enumerate(people):
         co={}
@@ -1944,13 +2011,12 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             co[night[(pi,d)]]=co.get(night[(pi,d)],0.0)+1.0
         _friday_expr.append(co)
         if not structural_relaxation:
-            mb.constraint(co,float(friday_lo),float(friday_hi))
+            mb.constraint(co,float(_friday_lo[pi]),float(_friday_hi[pi]))
     if structural_relaxation and _friday_expr:
-        # September regression showed that strict 4-5 each can conflict with the
-        # mandatory availability layer. Permit a bounded 2-unit entitlement
-        # expansion before sacrificing any hard wish.
-        for expr in _friday_expr:
-            mb.constraint(expr,float(max(0,friday_lo-2)),float(friday_hi+2))
+        # Last-resort zero-HARD mode may widen the eligibility-aware entitlement,
+        # but never above actual HARD capacity. This is a FAIRNESS relaxation only.
+        for pi,expr in enumerate(_friday_expr):
+            mb.constraint(expr,float(max(0,_friday_lo[pi]-2)),float(min(_friday_caps[pi],_friday_hi[pi]+2)))
 
     # V2.5.97 mandatory backup-capacity reservation for the two-phase solver.
     # A required backup must be a distinct ABSOLUTE-HARD-safe resident who is free
@@ -2579,7 +2645,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         # then maximize their group total. This prevents one 12 h requester from
         # taking every double while another remains below average.
         if _pref12:
-            _m12=mb.var("V25140_pref12_min",cost=-10000.0,lb=0.0,ub=ndays,integer=False)
+            _m12=mb.var(cost=-10000.0,lb=0.0,ub=ndays,integer=False)
             for _pi in _pref12:
                 _co={_m12:-1.0}
                 for _d in range(1,ndays+1):
@@ -2589,7 +2655,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
 
         # 6 h mode gets the mirror treatment: lower the HIGHEST double count first.
         if _pref6:
-            _m6=mb.var("V25140_pref6_max",cost=10000.0,lb=0.0,ub=ndays,integer=False)
+            _m6=mb.var(cost=10000.0,lb=0.0,ub=ndays,integer=False)
             for _pi in _pref6:
                 _co={_m6:-1.0}
                 for _d in range(1,ndays+1):
@@ -2741,6 +2807,10 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     pattern["friday_spread"]=int(max(fvals)-min(fvals)) if fvals else 0
     pattern["friday_floor"]=int(min(fvals)) if fvals else 0
     pattern["friday_ceil"]=int(max(fvals)) if fvals else 0
+    pattern["friday_hard_capacity"]={people[pi].initials:int(_friday_caps[pi]) for pi in range(n)}
+    pattern["friday_entitlement_lo"]={people[pi].initials:int(_friday_lo[pi]) for pi in range(n)}
+    pattern["friday_entitlement_hi"]={people[pi].initials:int(_friday_hi[pi]) for pi in range(n)}
+    pattern["friday_waterfill_mode"]="HARD_ELIGIBILITY_AWARE_V25151"
     return pattern
 
 
@@ -3488,7 +3558,13 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
     # V2.5.107: mandatory hard wishes outrank date-burden fairness. Post-label
     # corridors remain certified by phase 2, while Friday/weekend spreads are
     # allowed to exceed 1 only when the zero-hard structural fallback was needed.
-    _post_critical=max(int(critical_spreads.get("SPS RO",0)),int(critical_spreads.get("SPS UG",0)))
+    # V2.5.151: phase-2 post quality must compare like with like.  The validator's
+    # fairness-adjusted SPS RO counter can include weekend SPS RO duty, which belongs
+    # to the phase-1 date/weekend burden and may legitimately widen under a zero-HARD
+    # availability fallback.  The post-label solver certifies weekday/post-category
+    # SPS RO and SPS UG via rotation_monthly_spreads; weekend/Sat/Sun/Friday stay in
+    # the separate date-critical gate below.
+    _post_critical=max(int(rotation_spreads.get("SPS RO",0)),int(rotation_spreads.get("SPS UG",0)))
     _date_critical=max(int(critical_spreads.get("SATURDAYS",0)),int(critical_spreads.get("SUNDAYS",0)),int(critical_spreads.get("FRIDAYS",0)))
     _relaxed=bool(pattern.get("structural_relaxation_mode",False))
     quality=bool(_post_critical<=int(critical_cap) and worst_noncritical<=int(noncritical_cap) and (_relaxed or _date_critical<=int(critical_cap)))
@@ -3546,7 +3622,11 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "workstyle_style_solve_proven":bool(pattern.get("workstyle_style_solve_proven",False)),
         "workstyle_priority_policy":"V25140_REAL_WISH_OUTCOMES_FIRST_THEN_ACCOUNT_MODE_REFINEMENT_WITH_FIXED_DOUBLE_POOL",
         "friday_structural_waterfill_required":True,
-        "friday_structural_spread_ceiling":1,
+        "friday_structural_spread_ceiling":1 if not pattern.get("structural_relaxation_mode",False) else None,
+        "friday_structural_waterfill_mode":"HARD_ELIGIBILITY_AWARE_V25151",
+        "friday_hard_capacity":pattern.get("friday_hard_capacity",{}),
+        "friday_entitlement_lo":pattern.get("friday_entitlement_lo",{}),
+        "friday_entitlement_hi":pattern.get("friday_entitlement_hi",{}),
         "friday_pattern_counts":pattern.get("friday_counts",{}),
         "friday_pattern_spread":int(pattern.get("friday_spread",0) or 0),
         "friday_pattern_floor":int(pattern.get("friday_floor",0) or 0),
@@ -7020,19 +7100,25 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
     friday_structural_n=max(1,len(friday_structural_vals))
     friday_structural_floor=int(friday_structural_total//friday_structural_n)
     friday_structural_ceil=int((friday_structural_total+friday_structural_n-1)//friday_structural_n)
-    friday_structural_entitlement_gate=bool(
-        friday_structural_vals
-        and all(friday_structural_floor <= int(v) <= friday_structural_ceil for v in friday_structural_vals)
-        and friday_structural_spread<=1
-    )
+    _friday_caps_validate=[_friday_assignment_capacity(p,year,month,slots,set()) for p in people]
+    _friday_lo_validate,_friday_hi_validate=_bounded_waterfill_bounds(friday_structural_total,_friday_caps_validate)
+    _friday_by_initials={p.initials:i for i,p in enumerate(people)}
+    friday_structural_entitlement_gate=bool(friday_structural_vals)
+    for _ini,_row in pdata.items():
+        _pi=_friday_by_initials.get(_ini)
+        if _pi is None:
+            continue
+        _obs=int(_row.get("friday_assignments",0) or 0)
+        if not (_friday_lo_validate[_pi] <= _obs <= _friday_hi_validate[_pi]):
+            friday_structural_entitlement_gate=False
+            break
     if (not voluntary_swap_mode) and not friday_structural_entitlement_gate:
         structural_warnings.append(
-            "Friday structural water-fill target not reached: "
-            f"total {friday_structural_total} across {len(friday_structural_vals)} residents normally targets "
-            f"{friday_structural_floor}-{friday_structural_ceil} each, observed "
+            "Friday HARD-eligibility-aware water-fill target not reached: "
+            f"total {friday_structural_total}; raw observed range "
             f"{min(friday_structural_vals) if friday_structural_vals else 0}-"
-            f"{max(friday_structural_vals) if friday_structural_vals else 0} "
-            f"(raw spread {friday_structural_spread})"
+            f"{max(friday_structural_vals) if friday_structural_vals else 0}. "
+            "Residents with HARD Friday unavailability are capped at their actual eligible capacity."
         )
 
     # Group fairness metrics.
@@ -7330,6 +7416,10 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             "friday_structural_entitlement_ceil": int(friday_structural_ceil),
             "friday_structural_spread_raw": int(friday_structural_spread),
             "friday_structural_spread_ceiling": 1,
+            "friday_structural_waterfill_mode": "HARD_ELIGIBILITY_AWARE_V25151",
+            "friday_hard_capacity": {p.initials:int(_friday_caps_validate[i]) for i,p in enumerate(people)},
+            "friday_entitlement_lo": {p.initials:int(_friday_lo_validate[i]) for i,p in enumerate(people)},
+            "friday_entitlement_hi": {p.initials:int(_friday_hi_validate[i]) for i,p in enumerate(people)},
             "friday_structural_gate_passed": bool(friday_structural_entitlement_gate),
             "double_monthly_spread": monthly_double_spread,
             "weekday_day_monthly_spread": monthly_weekday_day_spread,
