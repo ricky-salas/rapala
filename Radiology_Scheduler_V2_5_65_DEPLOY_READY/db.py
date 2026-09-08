@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 from datetime import date, datetime, timezone
 from typing import Dict, List, Optional
 import time
@@ -162,12 +163,29 @@ def _preference_payload_json(payload: dict) -> dict:
     }
 
 
+def _validate_one_weekend_work_wish(year: int, month: int, payload: dict):
+    """V2.5.140: at most one concrete Sat/Sun positive-work date per month."""
+    import datetime as _dt
+    days=set(payload.get("preferred",[]) or []) | set(payload.get("preferred_am",[]) or []) | set(payload.get("preferred_pm",[]) or [])
+    weekend=[]
+    for d in days:
+        try:
+            di=int(d)
+            if _dt.date(int(year),int(month),di).weekday()>=5:
+                weekend.append(di)
+        except Exception:
+            continue
+    if len(set(weekend))>1:
+        raise ValueError("WEEKEND_WORK_WISH_LIMIT_ONE_DATE")
+
+
 def save_preference(year: int, month: int, initials: str, payload: dict):
     """Save the authenticated resident's own preferences before the server cutoff.
 
     `initials` is retained in the Python signature for compatibility, but the RPC
     resolves identity from auth.uid() and rejects any cross-account write.
     """
+    _validate_one_weekend_work_wish(year,month,payload)
     rows=_data(_retry_db(lambda: client().rpc("save_my_preferences_v2595", {
         "p_year": int(year),
         "p_month": int(month),
@@ -181,6 +199,7 @@ def save_preference_for_resident_v2595(year: int, month: int, target_initials: s
 
     The backend authorizes SP/ŠR, preserves account identity, and writes an audit row.
     """
+    _validate_one_weekend_work_wish(year,month,payload)
     rows=_data(_retry_db(lambda: client().rpc("save_preferences_for_resident_v2595", {
         "p_year": int(year),
         "p_month": int(month),

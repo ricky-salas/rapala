@@ -1,0 +1,6 @@
+V2.5.139 IMPORT COMPAT FIX
+- Python compile: PASS
+- Packaged scheduler_engine named-import check: PASS
+- V2.5.121 direct-import compatibility: PASS
+- Credit formula smoke check: PASS
+- __pycache__/pyc excluded from release: PASS

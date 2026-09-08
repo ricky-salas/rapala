@@ -1,0 +1,8 @@
+V2.5.141 LEIDIMO PATIKRA
+
+Python compile: PASS
+Release tests: 8 passed in 0.52s
+Failu skaicius pakete: 47
+Pagrindine taisykle: 12 h pasirinkimas gali virsyti grupes vidurki; misrus/neutralus rezimas neprivercia 50/50.
+Tikru pageidavimu rezultatai pries rezimo refinement yra uzrakinami.
+Savaitgalio Pageidauju dirbti limitas: 1 konkreti sestadienio ARBA sekmadienio data per menesi.

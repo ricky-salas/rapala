@@ -1,0 +1,14 @@
+V2.5.144 OPTO TYRIMO WORKBENCH — LEIDIMO PATIKRA
+
+PASS — Python compile: app.py, scheduler_engine.py, extension_core.py, opto_research.py.
+PASS — OPTO tyrimas yra viename Tyrimas lange; atskiro RAPA Extension / OPTUS General lango nėra.
+PASS — 3 metodai: RANKA Excel, RAPA izoliuotas extension run, OPTO Excel.
+PASS — galimi pairwise ir visų trijų palyginimai.
+PASS — vienodos metrikos visiems metodams: coverage, HARD, Dirbti negaliu, realių pageidavimų %, workload, savaitgaliai, postų spread.
+PASS — extension JSON/Excel importas; Word/PDF juodraščio parseris su privaloma žmogaus patikra.
+PASS — realių pageidavimų Excel įvestis naudojama tam pačiam frozen extension visiems metodams.
+PASS — RAPA extension solver smoke test: 2026-10 dabartinė I kurso extension, 427/427 slotų, 0 HARD, workload spread <= 1, weekend spread <= 1.
+PASS — RAPA grafiko Excel round-trip importas 427/427.
+PASS — nuo 2026-10 weekend dublis tik FULL 12 h; nėra AM/PM savaitgalio dublio kataloge.
+PASS — nepatvirtinti NIGHT budėjimai lieka fail-closed.
+PASS — tyrimo workbench nerašo į SYSTEM / ACTUAL ir neturi production commit veiksmo.

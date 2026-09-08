@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "extension_id": "unique-group-id",
+  "name": "Grupės pavadinimas",
+  "people": [
+    {"initials": "AA", "name": "Vardas Pavardė"},
+    {"initials": "BB", "name": "Vardas Pavardė"}
+  ],
+  "holidays": ["2026-12-25"],
+  "shift_templates": [
+    {
+      "department": "POSTAS A",
+      "fairness_category": "POSTAS A",
+      "block": "AM",
+      "count": 2,
+      "when": "weekdays",
+      "from": "2026-10",
+      "workload2": 2
+    },
+    {
+      "department": "BUDĖJIMAS",
+      "fairness_category": "BUDĖJIMAI",
+      "block": "FULL",
+      "count": 1,
+      "when": "weekends",
+      "from": "2026-10",
+      "workload2": 4
+    }
+  ],
+  "fairness": {
+    "weekend_spread_target": 1,
+    "post_spread_target": 1,
+    "max_workdays_rolling7": 6
+  },
+  "rules_notes": "Žmogiškai aprašytos papildomos taisyklės. Jos saugomos kartu su extension ir vėliau gali būti sukompiliuotos į struktūrinius laukus."
+}
