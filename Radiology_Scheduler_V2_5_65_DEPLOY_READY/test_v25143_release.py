@@ -11,7 +11,7 @@ def people():
 
 
 def run():
-    assert se.ENGINE_API_VERSION == '2.5.143'
+    assert se.ENGINE_API_VERSION == '2.5.150'
     assert not se.night_xray_duty_active(2026,11)
     assert not se.night_xray_duty_active(2026,12)
 
@@ -52,7 +52,7 @@ def run():
     g=(res.stats or {}).get('global',{})
     assert int(g.get('hard_errors',999))==0
     assert int(g.get('resident_hard_total_losses',999) or 0)==0
-    print('V2.5.143 release checks PASS')
+    print('V2.5.143 regression checks PASS on V2.5.150')
 
 if __name__=='__main__':
     run()

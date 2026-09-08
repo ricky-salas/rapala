@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.143"
+ENGINE_API_VERSION = "2.5.150"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -288,6 +288,8 @@ class SolveResult:
     # Planned backup duties frozen at publication. CURRENT/ACTUAL revalidation may
     # override this with the live backup table, while SYSTEM baseline keeps it.
     backup_snapshot: Optional[List[dict]] = None
+    # V2.5.150: immutable generation provenance for draft compatibility/audit.
+    provenance: Optional[dict] = None
 
 
 DEFAULT_PEOPLE = [
@@ -3637,7 +3639,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
             False,
             "PREFERENCE-AWARE GENERATION DID NOT FINISH AFTER AUTOMATIC RETRIES. "
             "The request set was not proven infeasible and no HARD rule is being blamed. "
-            "Existing draft, if any, remains unchanged; run generation again if needed.",
+            "The UI must revalidate any stored draft before treating it as publishable or as an improvement baseline.",
             targets=fast_targets,
             request_snapshot=request_snapshot,
         )
@@ -7861,12 +7863,17 @@ def revalidate_loaded_result(
         objective_value=result.objective_value,
         request_snapshot=result.request_snapshot,
         backup_snapshot=result.backup_snapshot,
+        provenance=dict(result.provenance or {}),
     )
 
 
 def serialize_result(result: SolveResult) -> dict:
     return {
-        "engine_stats_version": "V2.5.77",
+        # V2.5.150: never hard-code a stale historical stats version. The stored
+        # payload now records the actual scheduler API that serialized it.
+        "engine_stats_version": f"V{ENGINE_API_VERSION}",
+        "engine_api_version": str(ENGINE_API_VERSION),
+        "provenance": dict(result.provenance or {}),
         "ok": result.ok,
         "message": result.message,
         "assignments": {str(k): v for k, v in result.assignments.items()},
@@ -7888,4 +7895,12 @@ def deserialize_result(payload: dict) -> SolveResult:
         objective_value=payload.get("objective_value"),
         request_snapshot=payload.get("request_snapshot"),
         backup_snapshot=payload.get("backup_snapshot"),
+        provenance=(
+            dict(payload.get("provenance") or {})
+            or {
+                "stored_engine_api_version": payload.get("engine_api_version"),
+                "stored_engine_stats_version": payload.get("engine_stats_version"),
+                "legacy_payload": True,
+            }
+        ),
     )

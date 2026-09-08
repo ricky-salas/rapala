@@ -1,0 +1,18 @@
+V2.5.150 DRAFT COMPATIBILITY GUARD — LEIDIMO PATIKRA
+
+[PASS] app.py / scheduler_engine.py Python syntax
+[PASS] Scheduler API = 2.5.150; app expects exactly 2.5.150
+[PASS] engine_stats_version is dynamic; stale hard-coded V2.5.77 removed
+[PASS] SolveResult provenance survives serialize / deserialize / revalidate
+[PASS] New GENERATE and IMPROVE candidates receive app/engine/timestamp provenance
+[PASS] Stored draft is CURRENT-engine revalidated before use
+[PASS] 0 HARD + 0 Cannot-work required
+[PASS] Changed request snapshot / targets mark draft outdated
+[PASS] Invalid/outdated draft cannot be IMPROVE baseline
+[PASS] Invalid/outdated draft cannot enable SYSTEM freeze
+[PASS] Invalid/outdated draft cannot enable PRELIMINARY publication
+[PASS] Invalid/outdated draft cannot enable FINAL
+[PASS] Timeout/no-incumbent never rebrands stale invalid DB row as valid
+[PASS] V2.5.143 operational solver regression passes on V2.5.150
+[PASS] V2.5.144 / 145 / 146 / 148 / 149 regression checks pass
+[PASS] No DB migration required

@@ -1,4 +1,14 @@
-# RAPA Scheduler — V2.5.148 SPECIALIOS DIENOS + SWAP REGISTRAS
+# RAPA Scheduler — V2.5.150 DRAFT COMPATIBILITY GUARD
+
+
+## V2.5.150 — juodraščio suderinamumo saugiklis
+- DB įrašo egzistavimas nebelaikomas įrodymu, kad juodraštis galiojantis.
+- Kiekvienas juodraštis prieš GERINTI, preliminarų paskelbimą, SYSTEM užšaldymą ar FINAL tikrinamas su dabartiniu engine.
+- 0 HARD ir 0 `Negaliu dirbti` pažeidimų yra privaloma; pasenę inputai/targetai taip pat blokuoja publikavimą.
+- Negaliojantis senas juodraštis paliekamas tik auditui, bet negali būti naudojamas kaip kokybės baseline.
+- Solverio timeout / no-incumbent niekada nebepateikia seno invalid juodraščio kaip dabartinio kandidato.
+- Nauji kandidatai saugo tikrą `app_version`, `engine_api_version`, sugeneravimo laiką ir generation source.
+- Pašalintas istorinis hard-coded `engine_stats_version = V2.5.77`; serialization dabar naudoja realią engine API versiją.
 
 ## Patvirtintas operacinis modelis nuo 2026 m. spalio
 - CENTRO RO: 4 AM + 4 PM darbo dienomis.
