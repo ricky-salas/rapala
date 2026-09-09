@@ -6,7 +6,7 @@ ENGINE=(ROOT/'scheduler_engine.py').read_text()
 
 
 def test_release_contract():
-    assert 'APP_VERSION = "2.5.154 SURVEY ALL MODES"' in APP
+    assert 'APP_VERSION = "2.5.155 DEPLOY-SYNC HOTFIX"' in APP
     assert 'EXPECTED_ENGINE_API_VERSION = "2.5.153"' in APP
     assert 'COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.153"}' in APP
     assert 'ENGINE_API_VERSION = "2.5.153"' in ENGINE
@@ -32,4 +32,4 @@ def test_special_days_remain_separate():
 
 if __name__=='__main__':
     test_release_contract(); test_survey_tab_is_unconditional(); test_privileged_tools_stay_gated(); test_special_days_remain_separate()
-    print('V2.5.154 survey-all-modes regression PASS')
+    print('V2.5.155 survey-all-modes regression PASS')

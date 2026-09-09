@@ -7,7 +7,7 @@ APP=(ROOT/'app.py').read_text(encoding='utf-8')
 
 def run():
     assert se.ENGINE_API_VERSION == '2.5.153'
-    assert 'APP_VERSION = "2.5.154 SURVEY ALL MODES"' in APP
+    assert 'APP_VERSION = "2.5.155 DEPLOY-SYNC HOTFIX"' in APP
     assert 'EXPECTED_ENGINE_API_VERSION = "2.5.153"' in APP
     assert 'COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.153"}' in APP
 

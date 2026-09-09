@@ -67,7 +67,7 @@ from opto_research import (
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.154 SURVEY ALL MODES"
+APP_VERSION = "2.5.155 DEPLOY-SYNC HOTFIX"
 EXPECTED_ENGINE_API_VERSION = "2.5.153"
 COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.153"}
 
