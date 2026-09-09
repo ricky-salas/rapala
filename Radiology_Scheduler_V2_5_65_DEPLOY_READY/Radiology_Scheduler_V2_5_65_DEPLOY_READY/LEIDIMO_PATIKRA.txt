@@ -1,10 +1,17 @@
-V2.5.137 PAGEIDAVIMŲ EXCEL — LEIDIMO PATIKRA
+RAPA Scheduler V2.5.152 STRICT FAIRNESS + WISH AUDIT — LEIDIMO PATIKRA
 
-PASS — app.py / scheduler_engine.py versijos sutampa: 2.5.137
+PASS — app.py / scheduler_engine.py versijos sutampa: 2.5.152
 PASS — Python kompiliacija
-PASS — 6/6 V2.5.137 leidimo testų
-PASS — Pageidavimų Excel eksportas pasiekiamas nepriklausomai nuo termino būsenos
-PASS — CSV eksportas paliktas šalia
-PASS — prioritetinė vieta iki 14 d. 00:00 neeksportuojama
-PASS — Excel turi Pageidavimai + Suvestinė lapus, spalvas, filtrus ir fiksuotas antraštes
-PASS — bandomasis .xlsx sugeneruotas ir patikrintas
+PASS — V2.5.143–V2.5.151 retained regresijos patikros
+PASS — V2.5.152 strict fairness + wish audit integracinė patikra
+PASS — 0 HARD / 0 Resident-HARD dabartiniam 2026-10 scenarijui artimame fixture
+PASS — HARD konfliktuojantis SOFT lieka audite, bet ne score denominator
+PASS — weekend SOFT2 konfliktai optimizuojami; max-count prieš pateikimo ranking
+PASS — timeout nebeatlaisvina structural fairness; widening tik po proven infeasible
+PASS — Friday fairness tikrinamas pagal HARD-eligible entitlement
+PASS — generatoriaus / validatoriaus raw weekend semantika sutampa
+PASS — missed preferred paaiškinimas skiria occupied matching shift nuo no active shift
+
+Išsami patikra: LEIDIMO_PATIKRA_V2_5_152.txt
+Supabase migracijos šiai laidai nereikia.
+Diegti app.py + scheduler_engine.py kartu.

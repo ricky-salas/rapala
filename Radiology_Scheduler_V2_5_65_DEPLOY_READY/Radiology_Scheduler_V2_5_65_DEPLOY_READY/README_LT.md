@@ -1,5 +1,27 @@
-# RAPA Scheduler — V2.5.150 DRAFT COMPATIBILITY GUARD
+# RAPA Scheduler — V2.5.152 STRICT FAIRNESS + WISH AUDIT
 
+
+
+## V2.5.152 — strict fairness + wish audit
+
+- HARD ir SOFT konfliktai normalizuojami prieš primary solverį: HARD laimi, o konfliktuojantis SOFT lieka audite, bet ne score denominator.
+- Savaitgalio SOFT1/SOFT2 pageidavimai dabar yra tikri optimizer inputs, ne vien post-hoc statistika.
+- Konfliktuose pirmiausia užrakinamas maksimalus įvykdytų pageidavimų skaičius, tik tada taikomas pateikimo prioritetas.
+- Timeout / no-incumbent nebeleidžia automatiškai praplėsti fairness; praplėtimas galimas tik po solverio įrodyto `infeasible`.
+- Penktadienio fairness tikrinamas pagal HARD-eligible entitlement; raw max–min lieka auditinis rodiklis.
+- Generatorius ir validatorius dabar vienodai taiko raw weekend fairness.
+- Neįvykdyto `Pageidauju dirbti` paaiškinimas atskiria „pamaina neegzistuoja“ nuo „pamaina egzistuoja, bet paskirta kitam“.
+- Supabase migracijos nereikia; `app.py` ir `scheduler_engine.py` diegiami kartu.
+
+
+## V2.5.151 — HARD-aware penktadienių water-fill
+
+- `Negaliu dirbti` dabar visada riboja penktadienio fairness talpą prieš skaičiuojant floor/ceil.
+- Jei rezidentas dėl HARD gali dirbti tik mažą dalį penktadienių blokų, sistema nebereikalauja neįmanomo cohort-wide penktadienio minimumo.
+- Likęs penktadienio krūvis water-fill'inamas tarp realiai tinkamų rezidentų.
+- 0 Resident-HARD pažeidimų išlieka publikavimo vartai.
+- Pataisytas compact two-phase builder account-mode refinement API crashas.
+- V2.5.150 legacy draft guard išlieka aktyvus.
 
 ## V2.5.150 — juodraščio suderinamumo saugiklis
 - DB įrašo egzistavimas nebelaikomas įrodymu, kad juodraštis galiojantis.

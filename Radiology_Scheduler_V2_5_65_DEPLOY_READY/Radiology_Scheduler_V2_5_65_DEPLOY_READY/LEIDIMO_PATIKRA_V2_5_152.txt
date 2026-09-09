@@ -1,0 +1,31 @@
+RAPA Scheduler V2.5.152 — LEIDIMO PATIKRA
+
+Build: 2.5.152 STRICT FAIRNESS + WISH AUDIT
+Engine API: 2.5.152
+Supabase migration: NEREIKIA
+Deploy pair: app.py + scheduler_engine.py
+
+PATIKROS
+[PASS] Python compile: app.py, scheduler_engine.py, test_v25152_release.py
+[PASS] V2.5.143 retained regression checks
+[PASS] V2.5.144 retained release checks
+[PASS] V2.5.145 special-workdays checks
+[PASS] V2.5.146 retained release + special-days lifecycle checks
+[PASS] V2.5.148 swap / handoff checks
+[PASS] V2.5.149 password-recovery checks
+[PASS] V2.5.150 draft-compatibility guard checks
+[PASS] V2.5.151 HARD-aware Friday checks
+[PASS] V2.5.152 strict fairness + wish audit integration regression
+
+V2.5.152 INTEGRATION REGRESSION
+- 16-resident current-like 2026-10 fixture solved successfully.
+- 0 HARD errors.
+- 0 Resident-HARD losses.
+- Friday entitlement gate PASS with relaxation radius 0.
+- PV day-20 preferred-work request conflicting with FULL HARD is inactive for scoring but retained for audit.
+- Oct-4 weekend SOFT2 conflict is optimized; max-count is locked before submission-rank tie-break.
+- Missed preferred-work conflict reports existing competing assignment rather than claiming no shift exists.
+- Revalidation preserves validity and normalization semantics.
+
+NOTE
+The retained-suite loop reached the environment timeout only after all V2.5.143–V2.5.151 scripts had printed PASS and immediately before the V2.5.152 integration test. V2.5.152 was run separately and passed in ~30 s.

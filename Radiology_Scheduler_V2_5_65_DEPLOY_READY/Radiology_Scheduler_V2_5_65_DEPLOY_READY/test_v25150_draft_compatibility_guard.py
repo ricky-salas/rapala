@@ -8,9 +8,9 @@ ENGINE=(ROOT/'scheduler_engine.py').read_text(encoding='utf-8')
 
 def run():
     # Release/API provenance is no longer the stale V2.5.77 marker.
-    assert 'APP_VERSION = "2.5.150 DRAFT COMPATIBILITY GUARD"' in APP
-    assert 'EXPECTED_ENGINE_API_VERSION = "2.5.150"' in APP
-    assert 'ENGINE_API_VERSION = "2.5.150"' in ENGINE
+    assert 'APP_VERSION = "2.5.152 STRICT FAIRNESS + WISH AUDIT"' in APP
+    assert 'EXPECTED_ENGINE_API_VERSION = "2.5.152"' in APP
+    assert 'ENGINE_API_VERSION = "2.5.152"' in ENGINE
     assert '"engine_stats_version": f"V{ENGINE_API_VERSION}"' in ENGINE
     assert '"engine_api_version": str(ENGINE_API_VERSION)' in ENGINE
     assert '"engine_stats_version": "V2.5.77"' not in ENGINE
@@ -51,15 +51,15 @@ def run():
     # Runtime serialization smoke test without importing the Streamlit app.
     sys.path.insert(0,str(ROOT))
     import scheduler_engine as mod
-    r=mod.SolveResult(True,'ok',provenance={'app_version':'2.5.150 test'})
+    r=mod.SolveResult(True,'ok',provenance={'app_version':'2.5.152 test'})
     raw=mod.serialize_result(r)
-    assert raw['engine_stats_version']=='V2.5.150'
-    assert raw['engine_api_version']=='2.5.150'
-    assert raw['provenance']['app_version']=='2.5.150 test'
+    assert raw['engine_stats_version']=='V2.5.152'
+    assert raw['engine_api_version']=='2.5.152'
+    assert raw['provenance']['app_version']=='2.5.152 test'
     r2=mod.deserialize_result(raw)
-    assert r2.provenance['app_version']=='2.5.150 test'
+    assert r2.provenance['app_version']=='2.5.152 test'
 
-    print('V2.5.150 Draft Compatibility Guard PASS')
+    print('V2.5.150 Draft Compatibility Guard retained on V2.5.152 PASS')
 
 
 if __name__=='__main__':
