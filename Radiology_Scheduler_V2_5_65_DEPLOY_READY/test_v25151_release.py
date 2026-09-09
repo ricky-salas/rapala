@@ -11,10 +11,10 @@ ENGINE=(ROOT/'scheduler_engine.py').read_text(encoding='utf-8')
 
 def run():
     # Release contract: app and optimizer move together.
-    assert se.ENGINE_API_VERSION == '2.5.151'
-    assert 'APP_VERSION = "2.5.151 HARD-AWARE FRIDAY WATER-FILL"' in APP
-    assert 'EXPECTED_ENGINE_API_VERSION = "2.5.151"' in APP
-    assert 'COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.151"}' in APP
+    assert se.ENGINE_API_VERSION == '2.5.153'
+    assert 'APP_VERSION = "2.5.154 SURVEY ALL MODES"' in APP
+    assert 'EXPECTED_ENGINE_API_VERSION = "2.5.153"' in APP
+    assert 'COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.153"}' in APP
 
     # Regression 1: bounded water-fill respects a hard capacity bottleneck.
     # 100 Friday assignments, one resident can accept only 2, peers can accept 10.
@@ -47,14 +47,15 @@ def run():
     # Regression 4: post-label gate compares weekday/post-category SPS spreads,
     # not weekend-inclusive SPS RO burden. Date burden stays in its own phase-1 gate.
     assert '_post_critical=max(int(rotation_spreads.get("SPS RO",0)),int(rotation_spreads.get("SPS UG",0)))' in ENGINE
-    assert '_date_critical=max(int(critical_spreads.get("SATURDAYS",0)),int(critical_spreads.get("SUNDAYS",0)),int(critical_spreads.get("FRIDAYS",0)))' in ENGINE
-    assert 'HARD_ELIGIBILITY_AWARE_V25151' in ENGINE
+    assert '_weekend_structural=max(int(critical_spreads.get("SATURDAYS",0)),int(critical_spreads.get("SUNDAYS",0)))' in ENGINE
+    assert '_friday_entitlement_dev=int(critical_spreads.get("FRIDAYS",0))' in ENGINE
+    assert 'TIGHTEST_PROVEN_FEASIBLE_HARD_ELIGIBILITY_V25152' in ENGINE
 
     # UI now states the actual selected month / submissions / draft existence.
     assert 'pateikė {_submitted_count}/{len(DEFAULT_PEOPLE)} · juodraštis:' in APP
     assert '("yra" if state.get("has_draft") else "nėra")' in APP
 
-    print('V2.5.151 HARD-aware Friday water-fill release checks PASS')
+    print('V2.5.151 hard-aware Friday behavior retained on V2.5.153 PASS')
 
 
 if __name__=='__main__':

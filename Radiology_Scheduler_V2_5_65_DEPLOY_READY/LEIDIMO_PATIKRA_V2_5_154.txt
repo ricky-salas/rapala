@@ -1,0 +1,32 @@
+RAPA Scheduler V2.5.154 — release verification
+
+PASS — Python compile
+- app.py
+- db.py
+- scheduler_engine.py
+- solver_runner.py
+- notification_core.py
+- notification_worker.py
+- opto_research.py
+- optus_general_engine.py
+- extension_core.py
+
+PASS — V2.5.154 targeted regression
+- Anketa navigation label is unconditional for all accounts/modes.
+- Anketa heading is unconditional for all accounts/modes.
+- ŠR research workbench remains gated by researcher role + advanced mode.
+- ŠR/SP aggregate research dashboard remains gated by privileged role + advanced mode.
+- Specialios dienos remain a separate operational window.
+
+PASS — inherited V2.5.153 regression
+- Centro UG remains restored/active.
+- Inactive Mammography remains hidden.
+
+PASS — scheduling brain unchanged
+- scheduler_engine.py SHA-256 identical to V2.5.153.
+- db.py SHA-256 identical to V2.5.153.
+- solver_runner.py SHA-256 identical to V2.5.153.
+- ENGINE API intentionally remains 2.5.153.
+
+NOTE
+A long V2.5.152 integration test exceeded the available execution window. Because scheduler_engine.py, db.py and solver_runner.py are byte-identical to the already-tested V2.5.153 baseline, V2.5.154 is intentionally limited to the Anketa UI/navigation change.

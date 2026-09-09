@@ -1,5 +1,31 @@
-# RAPA Scheduler — V2.5.151 HARD-AWARE FRIDAY WATER-FILL
+# RAPA Scheduler — V2.5.154 SURVEY ALL MODES
 
+## V2.5.154
+- Anketa matoma visiems rezidentams tiek paprastame, tiek išplėstiniame režime.
+- ŠR/SP papildomi tyrimo įrankiai lieka prieinami tik pagal rolę ir tik išplėstiniame režime.
+- Scheduling engine nepakeistas: naudojamas stabilus V2.5.153 engine API.
+- Paveldėti V2.5.153 Centro UG / neaktyvių postų / fairness pataisymai išsaugoti.
+
+
+## V2.5.153
+
+- Centro UG 120kab [Rytas] nuo 2026-10 yra aktyvus svarbus darbo postas.
+- Mamografijos nuo 2026-10 lieka išjungta ir nebėra rodoma kaip BLOCK eilutės grafike / Excel.
+- Vidiniai Mamografijos tombstone slotai palikti tik slot_id stabilumui.
+- Supabase migracijos nereikia; po deploy spalio juodraštį pergeneruokite.
+
+---
+
+## V2.5.152 — strict fairness + wish audit
+
+- HARD ir SOFT konfliktai normalizuojami prieš primary solverį: HARD laimi, o konfliktuojantis SOFT lieka audite, bet ne score denominator.
+- Savaitgalio SOFT1/SOFT2 pageidavimai dabar yra tikri optimizer inputs, ne vien post-hoc statistika.
+- Konfliktuose pirmiausia užrakinamas maksimalus įvykdytų pageidavimų skaičius, tik tada taikomas pateikimo prioritetas.
+- Timeout / no-incumbent nebeleidžia automatiškai praplėsti fairness; praplėtimas galimas tik po solverio įrodyto `infeasible`.
+- Penktadienio fairness tikrinamas pagal HARD-eligible entitlement; raw max–min lieka auditinis rodiklis.
+- Generatorius ir validatorius dabar vienodai taiko raw weekend fairness.
+- Neįvykdyto `Pageidauju dirbti` paaiškinimas atskiria „pamaina neegzistuoja“ nuo „pamaina egzistuoja, bet paskirta kitam“.
+- Supabase migracijos nereikia; `app.py` ir `scheduler_engine.py` diegiami kartu.
 
 
 ## V2.5.151 — HARD-aware penktadienių water-fill

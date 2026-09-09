@@ -35,7 +35,7 @@ import scheduler_engine as _scheduler_engine
 from scheduler_engine import (
     Person, Slot, SolveResult, DEFAULT_PEOPLE, PERSON_COLORS, next_month, weekday_count, round_half_up,
     standard_target, make_slots, solve_schedule, attempt_swap, preview_swap, validate_schedule,
-    cohort_october_model, night_xray_duty_active, scheduled_slot_hours, scheduled_slot_clock, ANNUAL_EXAM_DATES,
+    cohort_october_model, night_xray_duty_active, slot_visible_in_schedule, scheduled_slot_hours, scheduled_slot_clock, ANNUAL_EXAM_DATES,
     lithuanian_public_holidays, public_holiday_days_in_month, is_public_holiday,
     serialize_result, deserialize_result, revalidate_loaded_result, calculate_targets, blocks_overlap, hard_unavailable_for_block,
     resident_hard_unavailable_for_block, absolute_unavailable_for_block,
@@ -67,9 +67,9 @@ from opto_research import (
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.151 HARD-AWARE FRIDAY WATER-FILL"
-EXPECTED_ENGINE_API_VERSION = "2.5.151"
-COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.151"}
+APP_VERSION = "2.5.154 SURVEY ALL MODES"
+EXPECTED_ENGINE_API_VERSION = "2.5.153"
+COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.153"}
 
 # V2.5.139: import-safe reward credit compatibility. Older deployed engines used
 # by the same app already contain the scheduling API but predate the credit helpers.
@@ -2043,6 +2043,8 @@ def _parse_iso_dt(value):
 def schedule_grid(y,m,result,status_rows=None):
     _,ndays=calendar.monthrange(y,m); rows={}
     for s in make_slots(y,m):
+        if not slot_visible_in_schedule(s,y,m):
+            continue
         key=f"{s.department} [{block_label(s.block)}]"; rows.setdefault(key,{d:"" for d in range(1,ndays+1)})
         rows[key][s.day]="BLOCK" if s.blocked else result.assignments.get(s.idx,"")
 
@@ -3083,7 +3085,13 @@ def _plain_request_sentence(r, initials=""):
         if r.get("kind") in ("resident_hard","soft_free"):
             return f"{who}{date_txt} {block}: „{typ}“ — NEĮVYKDYTA, nes grafike šiame bloke yra paskyrimas: {station}."
         if r.get("kind")=="preferred":
-            return f"{who}{date_txt} {block}: „{typ}“ — NEĮVYKDYTA, nes grafike nėra tinkamos darbo pamainos šiame bloke."
+            if r.get("unmet_reason_code")=="PREFERRED_CONFLICT_ASSIGNED_TO_OTHER":
+                owners=", ".join(sorted({str(x.get("assigned_to")) for x in (r.get("competing_assignments") or []) if x.get("assigned_to")}))
+                return (
+                    f"{who}{date_txt} {block}: „{typ}“ — NEĮVYKDYTA. Tinkama darbo pamaina šiame bloke EGZISTUOJA, "
+                    f"bet šiame SYSTEM variante ji paskirta {owners or 'kitam rezidentui'}. Tai pageidavimų paskirstymo konfliktas, ne pamainos nebuvimas."
+                )
+            return f"{who}{date_txt} {block}: „{typ}“ — NEĮVYKDYTA, nes šiame bloke nėra aktyvios darbo pamainos, kuri galėtų išpildyti prašymą."
         return f"{who}{date_txt} {block}: „{typ}“ — NEĮVYKDYTA pagal parodytą rezultatą ({station})."
     if r.get("kind") in ("shift_length_preference","avoid_doubles") and r.get("workstyle_proof"):
         wp=r.get("workstyle_proof") or {}
@@ -3107,7 +3115,10 @@ def _plain_request_sentence(r, initials=""):
     if r.get("kind") in ("resident_hard","soft_free"):
         return f"{who}{date_txt} {block}: '{typ}' — NOT HONORED because the grafikas contains: {station}."
     if r.get("kind")=="preferred":
-        return f"{who}{date_txt} {block}: '{typ}' — NOT HONORED because no eligible assignment exists in that block."
+        if r.get("unmet_reason_code")=="PREFERRED_CONFLICT_ASSIGNED_TO_OTHER":
+            owners=", ".join(sorted({str(x.get("assigned_to")) for x in (r.get("competing_assignments") or []) if x.get("assigned_to")}))
+            return f"{who}{date_txt} {block}: '{typ}' — NOT HONORED. A matching shift exists, but this SYSTEM solution assigned it to {owners or 'another resident'}; this is a preference-allocation conflict, not a missing shift."
+        return f"{who}{date_txt} {block}: '{typ}' — NOT HONORED because no active scheduled shift exists in that block."
     return f"{who}{date_txt} {block}: '{typ}' — NOT HONORED ({station})."
 
 
@@ -3120,14 +3131,18 @@ def _plain_verify_instruction(r, initials=""):
         if r.get("kind") in ("resident_hard","soft_free") and not r.get("fulfilled"):
             return f"Atverk {date_txt}, rask {initials or 'rezidentą'} ir {block} bloką. Ten turi matytis {station}. Jei tokio paskyrimo nėra, įrankio teiginys klaidingas."
         if r.get("kind")=="preferred" and not r.get("fulfilled"):
-            return f"Atverk {date_txt}, rask {initials or 'rezidentą'} ir {block} bloką. Tame bloke neturi būti tinkamos darbo pamainos. Jei ji yra, įrankio teiginys klaidingas."
+            if r.get("unmet_reason_code")=="PREFERRED_CONFLICT_ASSIGNED_TO_OTHER":
+                return f"Atverk {date_txt} {block} bloką. Patikrink, kad tinkama pamaina egzistuoja, bet ji paskirta kitam rezidentui; tada tai yra pageidavimų konfliktas."
+            return f"Atverk {date_txt} {block} bloką ir patikrink, kad jame tikrai nėra aktyvios tinkamos darbo pamainos."
         if r.get("fulfilled"):
             return f"Atverk {date_txt}, rask {initials or 'rezidentą'} ir {block} bloką ir patikrink, ar grafikas atitinka sakinį kairėje."
         return "Patikrink konkretų nurodytą įrašą prieš SYSTEM grafiką / Post Matrix."
     if r.get("kind") in ("resident_hard","soft_free") and not r.get("fulfilled"):
         return f"Open {date_txt}, find {initials or 'the resident'} and the {block} block. {station} must be present; otherwise the tool statement is wrong."
     if r.get("kind")=="preferred" and not r.get("fulfilled"):
-        return f"Open {date_txt}, find {initials or 'the resident'} and the {block} block. There should be no eligible assignment in that block."
+        if r.get("unmet_reason_code")=="PREFERRED_CONFLICT_ASSIGNED_TO_OTHER":
+            return f"Open {date_txt} {block}. Verify that a matching shift exists but is assigned to another resident; that confirms a preference-allocation conflict."
+        return f"Open {date_txt} {block} and verify that no active matching shift exists."
     return "Verify the specific statement against the SYSTEM grid / Post Matrix."
 
 
@@ -3211,11 +3226,19 @@ def request_details_df(rows, initials=""):
             if is_workstyle else
             f"{r.get('type','—')} · {r.get('date','—')} · {r.get('block','—')}"
         )
-        shown=(
-            _workstyle_schedule_text(r)
-            if is_workstyle else
-            (r.get("station","—") if r.get("station","—")!="—" else ("Nėra persidengiančio paskyrimo" if lang=="LT" else "No overlapping assignment"))
-        )
+        if is_workstyle:
+            shown=_workstyle_schedule_text(r)
+        elif r.get("station","—")!="—":
+            shown=r.get("station","—")
+        elif r.get("unmet_reason_code")=="PREFERRED_CONFLICT_ASSIGNED_TO_OTHER":
+            _parts=[]
+            for _x in (r.get("competing_assignments") or []):
+                _parts.append(f"{_x.get('department')} ({_x.get('block')}) → {_x.get('assigned_to')}")
+            shown="; ".join(_parts) or ("Tinkama pamaina paskirta kitam rezidentui" if lang=="LT" else "Matching shift assigned to another resident")
+        elif r.get("kind")=="preferred" and not fulfilled:
+            shown=("Nėra aktyvios tinkamos pamainos" if lang=="LT" else "No active matching shift")
+        else:
+            shown=("Nėra persidengiančio paskyrimo" if lang=="LT" else "No overlapping assignment")
         verify=(
             _workstyle_verify_text(r,initials)
             if is_workstyle else
@@ -3282,6 +3305,8 @@ def workplace_exposure_df(y,m,result):
 def schedule_list_df(y,m,result):
     out=[]
     for s in make_slots(y,m):
+        if not slot_visible_in_schedule(s,y,m):
+            continue
         who=result.assignments.get(s.idx,"")
         if not who and not s.blocked:
             continue
@@ -3676,7 +3701,7 @@ def build_xlsx(y,m,result,document_status=None,backup_rows_override=None):
     _,nd=calendar.monthrange(y,m); last=1+nd; status_prefix=(str(document_status).strip()+" — ") if document_status else ""
     ws.merge_range(0,0,0,last,status_prefix+("Rezidentų grafikas — " if lang=="LT" else "Resident grafikas — ")+month_label(y,m),title); ws.write(1,0,tr("department"),header); ws.write(1,1,tr("shift"),header)
     for d in range(1,nd+1): ws.write(1,1+d,f"{d:02d}\n{WEEKDAYS[lang][date(y,m,d).weekday()]}",wh if date(y,m,d).weekday()>=5 else header)
-    rowkeys=[]; slots=make_slots(y,m)
+    rowkeys=[]; slots=[s for s in make_slots(y,m) if slot_visible_in_schedule(s,y,m)]
     for s in slots:
         k=(s.department,s.block)
         if k not in rowkeys: rowkeys.append(k)
@@ -5328,7 +5353,10 @@ if advanced_mode:
 # Credits are operational, not merely diagnostic: every resident can see the
 # rest-credit bank; SP/ŠR additionally see their mirrored WESTON balance here.
 names.append(tr("credits_debts"))
-research_nav_label = tr("research") if (advanced_mode and active_user in (RESEARCHER_INITIALS,SENIOR_INITIALS)) else tr("research_survey")
+# V2.5.154: the resident research questionnaire is a first-class operational tab.
+# It is visible to every resident in both simple and advanced modes. Advanced
+# ŠR/SP users still receive their additional research tools inside the same tab.
+research_nav_label = tr("research_survey")
 names += [tr("backups"),tr("swaps"),tr("calendar"),research_nav_label]
 if advanced_mode:
     names.append(tr("proof"))
@@ -6530,9 +6558,9 @@ if senior_mode:
                 render_invalid_draft_guard(_display_health)
             elif _display_health.get("kind")=="valid_legacy_provenance":
                 st.warning(
-                    "LEGACY PROVENANCE, BET CURRENT ENGINE VALIDUS — 0 HARD / 0 „Negaliu dirbti“. Juodraštis gali būti skelbiamas, tačiau pirmas naujas GENERUOTI / GERINTI jį perrašys su dabartinio V2.5.151 engine provenance."
+                    "LEGACY PROVENANCE, BET CURRENT ENGINE VALIDUS — 0 HARD / 0 „Negaliu dirbti“. Juodraštis gali būti skelbiamas, tačiau pirmas naujas GENERUOTI / GERINTI jį perrašys su dabartinio V2.5.153 engine provenance."
                     if lang=="LT" else
-                    "LEGACY PROVENANCE, BUT CURRENT-ENGINE VALID — 0 HARD / 0 Cannot-work. It can be published; the next GENERATE / IMPROVE will restamp it with current V2.5.151 engine provenance."
+                    "LEGACY PROVENANCE, BUT CURRENT-ENGINE VALID — 0 HARD / 0 Cannot-work. It can be published; the next GENERATE / IMPROVE will restamp it with current V2.5.153 engine provenance."
                 )
             _prov=dict(getattr(deserialize_result(draftp),"provenance",None) or {})
             if _prov:
@@ -6558,9 +6586,9 @@ if senior_mode:
             wd.metric(("Negaliu dirbti pažeidimai" if lang=="LT" else "Cannot-work violations"),_wish["hard_missed"])
             if _wish["hard_missed"]:
                 st.error(
-                    "KRITINĖ KLAIDA: sugeneruotas juodraštis turi „Negaliu dirbti“ pažeidimą. V2.5.151 tokio juodraščio skelbti negalima."
+                    "KRITINĖ KLAIDA: sugeneruotas juodraštis turi „Negaliu dirbti“ pažeidimą. V2.5.153 tokio juodraščio skelbti negalima."
                     if lang=="LT" else
-                    "CRITICAL ERROR: the generated draft contains a Cannot-work violation. V2.5.151 must not publish such a draft."
+                    "CRITICAL ERROR: the generated draft contains a Cannot-work violation. V2.5.153 must not publish such a draft."
                 )
             elif _wish["missed"]==0:
                 st.success(
@@ -12889,7 +12917,8 @@ def render_opto_research_workbench():
 
 # --- Research ---
 with tabs[pos]:
-    st.subheader(tr("research_title") if (advanced_mode and active_user in (RESEARCHER_INITIALS,SENIOR_INITIALS)) else tr("research_survey"))
+    # V2.5.154: keep the questionnaire identity stable for every account/mode.
+    st.subheader(tr("research_survey"))
     st.caption(tr("research_privacy"))
     if active_user==RESEARCHER_INITIALS and advanced_mode:
         with st.expander("OPTO tyrimas", expanded=True):

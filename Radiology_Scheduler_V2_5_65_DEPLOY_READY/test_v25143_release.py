@@ -11,7 +11,7 @@ def people():
 
 
 def run():
-    assert se.ENGINE_API_VERSION == '2.5.151'
+    assert se.ENGINE_API_VERSION == '2.5.153'
     assert not se.night_xray_duty_active(2026,11)
     assert not se.night_xray_duty_active(2026,12)
 
@@ -21,8 +21,8 @@ def run():
     assert not [s for s in active if s.block=='NIGHT']
     # Mammography is absent from active cohort work
     assert not [s for s in active if s.department.startswith('Mamografijos')]
-    # 120 AM remains closed; PM capacity may remain in the historical catalog
-    assert not [s for s in active if s.department.startswith('Centro UG 120') and s.block=='AM']
+    # V2.5.153 correction: Centro UG 120 AM remains active in the Oct cohort.
+    assert [s for s in active if s.department.startswith('Centro UG 120') and s.block=='AM']
     # Every open weekday: 4+4 Centro, 1+1 Onko/TBL, SPS RO AM+PM
     for d in range(1,32):
         try: wd=date(2026,10,d).weekday()
@@ -52,7 +52,7 @@ def run():
     g=(res.stats or {}).get('global',{})
     assert int(g.get('hard_errors',999))==0
     assert int(g.get('resident_hard_total_losses',999) or 0)==0
-    print('V2.5.143 regression checks PASS on V2.5.151')
+    print('V2.5.143 regression checks PASS on V2.5.153')
 
 if __name__=='__main__':
     run()

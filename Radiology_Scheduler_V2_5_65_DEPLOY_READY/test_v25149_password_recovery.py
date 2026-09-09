@@ -5,7 +5,7 @@ APP=(ROOT/'app.py').read_text(encoding='utf-8')
 
 
 def run():
-    assert 'APP_VERSION = "2.5.151 HARD-AWARE FRIDAY WATER-FILL"' in APP
+    assert 'APP_VERSION = "2.5.154 SURVEY ALL MODES"' in APP
 
     # Request side: privacy-preserving email reset from the existing login gate.
     assert '"forgot_password":"Pamiršau slaptažodį?"' in APP
