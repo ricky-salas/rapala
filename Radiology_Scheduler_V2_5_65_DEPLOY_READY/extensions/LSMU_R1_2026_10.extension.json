@@ -90,20 +90,12 @@
     {
       "department": "Onkologinė/TBL",
       "fairness_category": "Onko/TBL",
-      "block": "AM",
+      "block": "FULL",
       "count": 1,
       "when": "weekdays",
       "from": "2026-10",
-      "workload2": 2
-    },
-    {
-      "department": "Onkologinė/TBL",
-      "fairness_category": "Onko/TBL",
-      "block": "PM",
-      "count": 1,
-      "when": "weekdays",
-      "from": "2026-10",
-      "workload2": 2
+      "workload2": 3,
+      "hours": "08:00-17:00"
     },
     {
       "department": "SPS RO d.d.",
@@ -127,6 +119,15 @@
       "department": "SPS UG 1035kab",
       "fairness_category": "SPS UG",
       "block": "AM",
+      "count": 1,
+      "when": "weekdays",
+      "from": "2026-10",
+      "workload2": 2
+    },
+    {
+      "department": "SPS UG 1035kab",
+      "fairness_category": "SPS UG",
+      "block": "PM",
       "count": 1,
       "when": "weekdays",
       "from": "2026-10",
@@ -225,5 +226,5 @@
     "post_spread_target": 1,
     "max_workdays_rolling7": 6
   },
-  "rules_notes": "Patvirtinta 2026-09-10 pagal SP/admin: MUST — CENTRO RO 4+4, SPS RO AM+PM, Centro UG 120 AM, Onkologinė/TBL, Skopijos ir budėjimai. II prioritetas — Vaikų UG AM, ADC AM, Centro UG 120 PM. III prioritetas — ADC PM ir SPS UG AM. SPS UG PM pašalintas. Skopijos: I–IV 08:00–14:00; įprastai Centras 0153, 2026-10-13 — konsultacinė poliklinika 209. Naktinis SPS RO lieka neaktyvus, kol nėra patvirtintų pilnų operacinių parametrų."
+  "rules_notes": "Patvirtinta 2026-09-10 pagal naujausią SP/admin žinutę: Onko/TBL yra viena 08:00–17:00 FULL pamaina (1,5 pamainos vieneto), ne AM+PM; vienas Onko rezidentas dirba 2 Onko dienas per mėnesį. 2026-10 Onko skiriamas tik rugsėjį Onko nedirbusiems rezidentams pagal ankstesnio mėnesio ACTUAL grafiką. SPS UG 1035 PM grąžintas. Centro UG AM+PM vizualiai rodomi greta. Schedule lentelėje naudojama vienoda balta raidžių spalva. Naktinių SPS RO budėjimų eilutė rodoma kaip vizualus scaffold; operacinės naktinių pamainų datos/valandos negeneruojamos, kol jos nepatvirtintos. Esamas HARD budėjimų modelis nekeistas. BLOCK vartotojui nerodomas."
 }

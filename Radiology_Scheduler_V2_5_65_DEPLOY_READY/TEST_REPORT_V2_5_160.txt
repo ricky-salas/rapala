@@ -1,0 +1,38 @@
+V2.5.160 AUTH RECOVERY + PERSISTENT SESSION — TEST REPORT
+
+PASS: Python compile
+- app.py
+- scheduler_engine.py
+- db.py
+- solver_runner.py
+- notification_core.py
+- notification_worker.py
+
+PASS: Auth static regression
+- password recovery request supports current reset_password_for_email and legacy reset_password_email API names
+- recovery redirect derives current RAPA URL if explicit SCHEDULER_PUBLIC_URL is absent
+- recovery link -> verified user -> password update -> fresh password login -> persisted access/refresh session
+- recovery completion does NOT call sign_out
+- auth tokens are never copied into Streamlit query parameters
+- logout marks persistent auth cookies for deletion
+
+PASS: Browser reload persistence design
+- st.context.cookies reads saved RAPA auth session on a new Streamlit session
+- supabase.auth.set_session restores/refreshes it
+- rotated tokens are written back to Secure SameSite=Lax cookies
+- 30-day browser persistence unless user signs out or Supabase invalidates session
+
+PASS: Inherited V2.5.159 solver regression
+- September Onko cohort seed retained
+- October waiting cohort receives first-priority Onko pairs
+- Onko pair cycle and Suvestinė ledger retained
+- HARD errors = 0 in October regression
+
+PASS: Inherited station/UI regression
+- Onko/TBL = 08:00–17:00 FULL, workload 1.5 normal shifts
+- SPS UG 1035 PM remains active
+- no visible BLOCK sentinel in schedule grid
+- SPS RO night-duty scaffold remains
+
+SCHEDULER POLICY CHANGE: NONE.
+Only auth/session behavior changed; scheduler engine behavior is inherited from V2.5.159.
