@@ -1,0 +1,9 @@
+RAPA V2.5.163 TEST REPORT
+
+PASS — Python compile: app.py, scheduler_engine.py, db.py, solver_runner.py, opto_research.py, extension_core.py
+PASS — V2.5.162 guardrails + VERY HARD duty regression retained
+PASS — ŠR RESEARCH retained and isolated
+PASS — Scandinavian missed-wish audit regression
+PASS — Friday wishes cannot bypass structural Friday water-fill
+PASS — October smoke solve: 0 HARD errors; Friday entitlement deviation = 0
+PASS — Reda-style smoke test with all 5 Fridays requested free: engine keeps Friday structural fairness and fulfills only the maximal feasible subset in the test scenario

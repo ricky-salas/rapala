@@ -189,3 +189,10 @@ Grafikų sudarymo metodų palyginimas yra perkeltas į **Tyrimo** langą ir nėr
 | Nuo 16 d. | Rezidentų savitarna užrakinta; galutinė rankinė patikra; paskelbiamas galutinis grafikas. |
 | Visada | Tikslas 100 % pageidavimų, 0 „Dirbti negaliu“ pažeidimų, saugus ir kuo lygesnis privalomas krūvis. |
 | Pateikimo vieta | Tik paskutinis vienodai gero neišsprendžiamo konflikto kriterijus. |
+
+## V2.5.162 — pageidavimų ir budėjimų HARD taisyklės
+- Validūs konkretūs rezidentų pageidavimai generuojant turi 100 % tikslą; jie nusileidžia tik tikroms HARD saugos, privalomo padengimo, tikslaus krūvio ir kitoms aukštesnėms konstitucinėms taisyklėms.
+- Rezidento savitarna neleidžia aiškaus gaming: >=5 efektyviai pilnų laisvų dienų iš eilės, visų mėnesio šeštadienių ar visų sekmadienių blokavimo, arba daugiau nei vienos savaitgalio `Pageidauju dirbti` datos. Realų poreikį Seniūnė gali įvesti su audito priežastimi.
+- VERY HARD: budėjimo dieną tam rezidentui negali būti jokios kitos RAPA pamainos.
+- VERY HARD: po bet kokio SPS RO dieninio ar naktinio budėjimo visa sekanti kalendorinė diena yra laisva, įskaitant mėnesio ribą. Jokio swap ACK override.
+- 2026-10-30 SPS RO naktinis budėjimas yra HARD priskirtas GE (Gertui Ernestui); 2026-10-31 jam privalomai laisva.
