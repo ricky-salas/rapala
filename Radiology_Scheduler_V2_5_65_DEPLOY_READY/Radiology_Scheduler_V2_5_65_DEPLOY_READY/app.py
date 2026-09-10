@@ -35,7 +35,7 @@ import scheduler_engine as _scheduler_engine
 from scheduler_engine import (
     Person, Slot, SolveResult, DEFAULT_PEOPLE, PERSON_COLORS, next_month, weekday_count, round_half_up,
     standard_target, make_slots, solve_schedule, attempt_swap, preview_swap, validate_schedule,
-    cohort_october_model, night_xray_duty_active, scheduled_slot_hours, scheduled_slot_clock, ANNUAL_EXAM_DATES,
+    cohort_october_model, night_xray_duty_active, slot_visible_in_schedule, scheduled_slot_hours, scheduled_slot_clock, ANNUAL_EXAM_DATES,
     lithuanian_public_holidays, public_holiday_days_in_month, is_public_holiday,
     serialize_result, deserialize_result, revalidate_loaded_result, calculate_targets, blocks_overlap, hard_unavailable_for_block,
     resident_hard_unavailable_for_block, absolute_unavailable_for_block,
@@ -67,9 +67,9 @@ from opto_research import (
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.152 STRICT FAIRNESS + WISH AUDIT"
-EXPECTED_ENGINE_API_VERSION = "2.5.152"
-COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.152"}
+APP_VERSION = "2.5.157 ADMIN STATIONS + NO BLOCK"
+EXPECTED_ENGINE_API_VERSION = "2.5.157"
+COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.157"}
 
 # V2.5.139: import-safe reward credit compatibility. Older deployed engines used
 # by the same app already contain the scheduling API but predate the credit helpers.
@@ -762,6 +762,19 @@ def slot_time_text(sl):
     if sl.block=="NIGHT": return "20:00–08:00"
     if sl.block=="FULL": return "08:00–17:00" if sl.department=="Onko RO centre" else "08:00–20:00"
     return block_label(sl.block)
+
+
+def slot_department_text(y,m,sl,grid=False):
+    """Human-facing station label, including the Oct-13 Skopijos room exception."""
+    if str(sl.department).startswith("Skopijos"):
+        if grid:
+            if int(y)==2026 and int(m)==10:
+                return "Skopijos · Centras 0153 (10-13 → KP 209)"
+            return "Skopijos · Centras 0153"
+        if int(y)==2026 and int(m)==10 and int(sl.day)==13:
+            return "Skopijos · Konsultacinė poliklinika 209 · žarnų skopijos"
+        return "Skopijos · Centras 0153 · skrandžio skopijos"
+    return sl.department
 
 def slot_datetime_bounds(y,m,sl,tz):
     d0=date(y,m,sl.day)
@@ -2043,8 +2056,11 @@ def _parse_iso_dt(value):
 def schedule_grid(y,m,result,status_rows=None):
     _,ndays=calendar.monthrange(y,m); rows={}
     for s in make_slots(y,m):
-        key=f"{s.department} [{block_label(s.block)}]"; rows.setdefault(key,{d:"" for d in range(1,ndays+1)})
-        rows[key][s.day]="BLOCK" if s.blocked else result.assignments.get(s.idx,"")
+        if not slot_visible_in_schedule(s,y,m):
+            continue
+        key=f"{slot_department_text(y,m,s,grid=True)} [{block_label(s.block)}]"
+        rows.setdefault(key,{d:"" for d in range(1,ndays+1)})
+        rows[key][s.day]=result.assignments.get(s.idx,"")
 
     # V2.5.145: paid workdays outside the clinical rota are visible directly in
     # the schedule calendar as an away/status row, while remaining separate from
@@ -2081,7 +2097,6 @@ def schedule_grid(y,m,result,status_rows=None):
 
 def style_schedule(df):
     def cs(v):
-        if v=="BLOCK": return "background-color:#D9D9D9;color:#555;font-weight:700;"
         c=PERSON_COLORS.get(str(v)); return "" if not c else f"background-color:{c};color:{contrast_text(c)};font-weight:700;text-align:center;"
     return df.style.map(cs)
 
@@ -2623,6 +2638,22 @@ def backup_counts(y,m,result=None):
     return planned,effective
 
 
+def display_rotation_categories(y,m):
+    """Return only workplace categories that actually exist in this month's visible cohort model.
+
+    This prevents retired/future post columns from appearing as misleading all-zero columns
+    (e.g. legacy Onko RO in Oct-2026+, or Onko/TBL before Oct-2026).
+    """
+    active=set()
+    for s in make_slots(y,m):
+        if s.blocked or not slot_visible_in_schedule(s,y,m):
+            continue
+        cat=rotation_category(s)
+        if cat in ROTATION_CATEGORIES:
+            active.add(cat)
+    return [cat for cat in ROTATION_CATEGORIES if cat in active]
+
+
 def summary_df(result,y,m):
     planned,effective=backup_counts(y,m,result); rows=[]
     for i,d in result.stats.get("people",{}).items():
@@ -2653,7 +2684,7 @@ def summary_df(result,y,m):
             row[("ACTUAL slotų svoris (ne target)" if lang=="LT" else "ACTUAL placement workload (not target)")]=d.get("actual_assignment_workload",d.get("workload"))
         # V2.5.15: exact monthly number of assignments in every workplace.
         rotation_counts=d.get("rotation_counts") or {}
-        for cat in ROTATION_CATEGORIES:
+        for cat in display_rotation_categories(y,m):
             row[cat]=int(rotation_counts.get(cat,0) or 0)
         rows.append(row)
     return pd.DataFrame(rows)
@@ -2742,7 +2773,7 @@ def resident_wishes_audit_df(result):
             ("Sekmadieniai" if lang=="LT" else "Sundays"):int(d.get("sundays",0) or 0),
             ("12h dienos (AM+PM)" if lang=="LT" else "12h workdays (AM+PM)"):int(d.get("doubles",0) or 0),
             (("Teoriniai savaitgalio dubliai" if lang=="LT" else "Theoretical weekend backups") if weekend_fcfs_backup_mode(year,month) else ("Teoriniai AUTO dubliai" if lang=="LT" else "Theoretical AUTO backups")):int(theoretical_backup_count),
-            "Onko RO":int(rotation_counts.get("Onko RO",0) or 0),
+            (("Onko/TBL" if cohort_october_model(year,month) else "Onko RO")):int(rotation_counts.get(("Onko/TBL" if cohort_october_model(year,month) else "Onko RO"),0) or 0),
             "SPS RO":int(rotation_counts.get("SPS RO",0) or 0),
             "SPS UG":int(rotation_counts.get("SPS UG",0) or 0),
             ("Neįvykdyta" if lang=="LT" else "Missed"):len(missed),
@@ -3279,7 +3310,8 @@ def workplace_exposure_df(y,m,result):
     names={p["initials"]:p["name"] for p in DEFAULT_PEOPLE}
     rows=[]
     for i in [p["initials"] for p in DEFAULT_PEOPLE]:
-        counts={cat:0 for cat in ROTATION_CATEGORIES}
+        _display_cats=display_rotation_categories(y,m)
+        counts={cat:0 for cat in _display_cats}
         for sid,who in result.assignments.items():
             if who!=i:
                 continue
@@ -3293,7 +3325,7 @@ def workplace_exposure_df(y,m,result):
             tr("person"):i,
             tr("name"):names.get(i,""),
         }
-        for cat in ROTATION_CATEGORIES:
+        for cat in _display_cats:
             row[cat]=int(counts[cat])
         row[("Skirtingi postai" if lang=="LT" else "Distinct workplaces")]=sum(1 for v in counts.values() if v>0)
         rows.append(row)
@@ -3303,13 +3335,15 @@ def workplace_exposure_df(y,m,result):
 def schedule_list_df(y,m,result):
     out=[]
     for s in make_slots(y,m):
+        if not slot_visible_in_schedule(s,y,m):
+            continue
         who=result.assignments.get(s.idx,"")
         if not who and not s.blocked:
             continue
         out.append({
             tr("date"):f"{y}-{m:02d}-{s.day:02d}",
             tr("day"):WEEKDAY_FULL[lang][s.weekday],
-            tr("department"):s.department,
+            tr("department"):slot_department_text(y,m,s),
             tr("shift"):block_label(s.block),
             tr("workload"):s.workload2/2,
             tr("person"):who if who else "—",
@@ -3447,7 +3481,7 @@ def personal_schedule_df(y,m,result,initials):
             tr("date"):f"{y}-{m:02d}-{sl.day:02d}",
             tr("day"):WEEKDAY_FULL[lang][sl.weekday],
             tr("time"):slot_time_text(sl),
-            tr("department"):sl.department,
+            tr("department"):slot_department_text(y,m,sl),
             tr("shift"):block_label(sl.block),
         })
     special=db.get_special_workdays_v25145(y,m,initials)
@@ -3503,7 +3537,7 @@ def build_ics(y,m,result,initials):
         _start_dt,_end_dt=slot_datetime_bounds(y,m,s,tz)
         start=_start_dt.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         end=_end_dt.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        title=("Radiologija — " if lang=="LT" else "Radiology — ")+s.department
+        title=("Radiologija — " if lang=="LT" else "Radiology — ")+slot_department_text(y,m,s)
         lines += [
             "BEGIN:VEVENT",
             f"UID:{y}{m:02d}{s.day:02d}-{sid}-{safe_filename(initials)}@radiology-scheduler",
@@ -3621,7 +3655,7 @@ def build_calendar_subscription_ics(initials, published_rows=None):
             start=_start_dt.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             end=_end_dt.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             block_txt=(block_txt_lt if cal_lang=="LT" else block_txt_en).get(sl.block,sl.block)
-            title=("Radiologija — " if cal_lang=="LT" else "Radiology — ")+sl.department
+            title=("Radiologija — " if cal_lang=="LT" else "Radiology — ")+slot_department_text(yy,mm,sl)
             lines += [
                 "BEGIN:VEVENT",
                 f"UID:{yy}{mm:02d}{sl.day:02d}-{sid}-{safe_filename(initials)}@radiology-scheduler",
@@ -3697,17 +3731,16 @@ def build_xlsx(y,m,result,document_status=None,backup_rows_override=None):
     _,nd=calendar.monthrange(y,m); last=1+nd; status_prefix=(str(document_status).strip()+" — ") if document_status else ""
     ws.merge_range(0,0,0,last,status_prefix+("Rezidentų grafikas — " if lang=="LT" else "Resident grafikas — ")+month_label(y,m),title); ws.write(1,0,tr("department"),header); ws.write(1,1,tr("shift"),header)
     for d in range(1,nd+1): ws.write(1,1+d,f"{d:02d}\n{WEEKDAYS[lang][date(y,m,d).weekday()]}",wh if date(y,m,d).weekday()>=5 else header)
-    rowkeys=[]; slots=make_slots(y,m)
+    rowkeys=[]; slots=[s for s in make_slots(y,m) if slot_visible_in_schedule(s,y,m)]
     for s in slots:
-        k=(s.department,s.block)
+        k=(slot_department_text(y,m,s,grid=True),s.block)
         if k not in rowkeys: rowkeys.append(k)
-    by={(s.department,s.block,s.day):s for s in slots}
+    by={(slot_department_text(y,m,s,grid=True),s.block,s.day):s for s in slots}
     for r,(dept,block) in enumerate(rowkeys,start=2):
         ws.write(r,0,dept,cell); ws.write(r,1,block_label(block),cell)
         for d in range(1,nd+1):
             s=by.get((dept,block,d))
             if not s: ws.write_blank(r,1+d,None,cell)
-            elif s.blocked: ws.write(r,1+d,"—",blocked)
             else:
                 who=result.assignments.get(s.idx,""); ws.write(r,1+d,who,pf[who] if who else cell)
     ws.set_column(0,0,23); ws.set_column(1,1,13); ws.set_column(2,last,7); ws.freeze_panes(2,2)
@@ -5349,7 +5382,10 @@ if advanced_mode:
 # Credits are operational, not merely diagnostic: every resident can see the
 # rest-credit bank; SP/ŠR additionally see their mirrored WESTON balance here.
 names.append(tr("credits_debts"))
-research_nav_label = tr("research") if (advanced_mode and active_user in (RESEARCHER_INITIALS,SENIOR_INITIALS)) else tr("research_survey")
+# V2.5.154: the resident research questionnaire is a first-class operational tab.
+# It is visible to every resident in both simple and advanced modes. Advanced
+# ŠR/SP users still receive their additional research tools inside the same tab.
+research_nav_label = tr("research_survey")
 names += [tr("backups"),tr("swaps"),tr("calendar"),research_nav_label]
 if advanced_mode:
     names.append(tr("proof"))
@@ -6551,9 +6587,9 @@ if senior_mode:
                 render_invalid_draft_guard(_display_health)
             elif _display_health.get("kind")=="valid_legacy_provenance":
                 st.warning(
-                    "LEGACY PROVENANCE, BET CURRENT ENGINE VALIDUS — 0 HARD / 0 „Negaliu dirbti“. Juodraštis gali būti skelbiamas, tačiau pirmas naujas GENERUOTI / GERINTI jį perrašys su dabartinio V2.5.152 engine provenance."
+                    "LEGACY PROVENANCE, BET CURRENT ENGINE VALIDUS — 0 HARD / 0 „Negaliu dirbti“. Juodraštis gali būti skelbiamas, tačiau pirmas naujas GENERUOTI / GERINTI jį perrašys su dabartinio V2.5.153 engine provenance."
                     if lang=="LT" else
-                    "LEGACY PROVENANCE, BUT CURRENT-ENGINE VALID — 0 HARD / 0 Cannot-work. It can be published; the next GENERATE / IMPROVE will restamp it with current V2.5.152 engine provenance."
+                    "LEGACY PROVENANCE, BUT CURRENT-ENGINE VALID — 0 HARD / 0 Cannot-work. It can be published; the next GENERATE / IMPROVE will restamp it with current V2.5.153 engine provenance."
                 )
             _prov=dict(getattr(deserialize_result(draftp),"provenance",None) or {})
             if _prov:
@@ -6579,9 +6615,9 @@ if senior_mode:
             wd.metric(("Negaliu dirbti pažeidimai" if lang=="LT" else "Cannot-work violations"),_wish["hard_missed"])
             if _wish["hard_missed"]:
                 st.error(
-                    "KRITINĖ KLAIDA: sugeneruotas juodraštis turi „Negaliu dirbti“ pažeidimą. V2.5.152 tokio juodraščio skelbti negalima."
+                    "KRITINĖ KLAIDA: sugeneruotas juodraštis turi „Negaliu dirbti“ pažeidimą. V2.5.153 tokio juodraščio skelbti negalima."
                     if lang=="LT" else
-                    "CRITICAL ERROR: the generated draft contains a Cannot-work violation. V2.5.152 must not publish such a draft."
+                    "CRITICAL ERROR: the generated draft contains a Cannot-work violation. V2.5.153 must not publish such a draft."
                 )
             elif _wish["missed"]==0:
                 st.success(
@@ -7299,7 +7335,7 @@ if advanced_mode:
                 spread_rows=[]
                 sys_spreads=(system_live.get("global",{}).get("rotation_monthly_spreads") or {})
                 act_spreads=((actual_live or system_live).get("global",{}).get("rotation_monthly_spreads") or {})
-                for cat in ROTATION_CATEGORIES:
+                for cat in display_rotation_categories(year,month):
                     spread_rows.append({
                         ("Postas" if lang=="LT" else "Workplace"):cat,
                         "SYSTEM spread":sys_spreads.get(cat,0),
@@ -11518,13 +11554,10 @@ def _research_write_schedule_grid(writer,sheet_name,y,m,result):
             "valign":"vcenter",
             "border":1,
         })
-    block_fmt=wb.add_format({"bg_color":"#D9D9D9","font_color":"#555555","bold":True,"align":"center","border":1})
     for r_idx,row in enumerate(grid.itertuples(index=False),start=1):
         for c_idx,value in enumerate(row,start=1):
             if value in resident_formats:
                 ws.write(r_idx,c_idx,value,resident_formats[value])
-            elif value=="BLOCK":
-                ws.write(r_idx,c_idx,value,block_fmt)
 
 
 def research_shadow_xlsx(y,m,case,people,runs):
@@ -12910,7 +12943,8 @@ def render_opto_research_workbench():
 
 # --- Research ---
 with tabs[pos]:
-    st.subheader(tr("research_title") if (advanced_mode and active_user in (RESEARCHER_INITIALS,SENIOR_INITIALS)) else tr("research_survey"))
+    # V2.5.154: keep the questionnaire identity stable for every account/mode.
+    st.subheader(tr("research_survey"))
     st.caption(tr("research_privacy"))
     if active_user==RESEARCHER_INITIALS and advanced_mode:
         with st.expander("OPTO tyrimas", expanded=True):
@@ -13261,16 +13295,14 @@ def explanatory_manual_only(content: str) -> str:
 with tabs[pos]:
     st.subheader(tr("rules_title"))
     st.info(
-        ("LOCKED V2.5.40 — PADENGIMAS IR SKYLĖS. Mandatory administraciniai postai lieka SPS RO d.d., SPS UG ir savaitgalio SPS RO budėjimai. "
-         "Kiti neuždaryti postai gali likti neužpildyti tik tiek, kiek matematiškai reikia tiksliam mėnesio targetui išlaikyti. "
-         "Gap dienos pirmiausia tolygiai išdėstomos per visą mėnesį; vieną kalendorinę dieną gali būti daugiausia 1 reali skylė, įskaitant leidžiamą Onko išimtį. "
-         "Konkretų optional postą tą dieną parenka solveris, o gap'ų pasiskirstymo tarp postų grupių spread negali viršyti 2. "
-         "Aiškios uždarymo išimtys, pvz. Mamografijos PM penktadieniais, nėra skylės ir lieka uždarytos."
+        ("V2.5.157 — SP / ADMIN PADENGIMO TVARKA NUO SPALIO. MUST: CENTRO RO 4+4, SPS RO rytas+vakaras, Centro UG 120 rytas, Onkologinė/TBL, Skopijos ir budėjimai. "
+         "II prioritetas: Vaikų UG rytas, ADC rytai, Centro UG 120 vakaras. III / paskutinis prioritetas: ADC vakarai ir SPS UG rytas. "
+         "Kai tiksliam mėnesio krūviui reikia palikti neužpildytų optional vietų, sistema pirmiausia palieka III prioriteto vietas ir tik tada II prioriteto. "
+         "SPS UG vakaro eilutė nuo spalio neaktyvi. Mammografiją pakeičia viena Skopijų AM eilutė I–IV 08:00–14:00. BLOCK žmogui rodomame grafike neberodomas."
          if lang=="LT" else
-         "LOCKED V2.5.40 — COVERAGE AND GAPS. Mandatory administrative posts remain SPS RO d.d., SPS UG and weekend SPS RO duty. "
-         "Other open posts may remain unfilled only as mathematically required by the exact monthly target. "
-         "Gap dates are first spread evenly across the month; at most one real gap is allowed per calendar day, including the Onko exception. "
-         "The solver chooses the concrete optional row on each gap date, while workplace gap-count spread may not exceed 2. Explicit closures are not gaps.")
+         "V2.5.157 — SP / ADMIN COVERAGE ORDER FROM OCTOBER. MUST: CENTRO RO 4+4, SPS RO AM+PM, Centro UG 120 AM, Oncology/TBL, Endoscopy and duties. "
+         "Second tier: Pediatric US AM, ADC AM, Centro UG 120 PM. Last tier: ADC PM and SPS UG AM. "
+         "When exact monthly workload requires optional gaps, last-tier rows are sacrificed before second-tier rows. SPS UG PM is inactive from October; Mammography is replaced by one Mon–Thu Endoscopy AM row. Human-facing schedules no longer display BLOCK cells.")
     )
 
     if lang=="LT":
@@ -13292,12 +13324,12 @@ with tabs[pos]:
         st.markdown("### Supaprastinta vertikali prioritetų lentelė")
         st.dataframe(pd.DataFrame([
             {"Rangas":"1. TRUE ABSOLUTE HARD","Kas įeina":"Sauga, patvirtinta liga/atostogos, fizinis neįmanomumas, coverage; generatoriui ≤48 val./7 d. ir bent 1 laisva diena/7 d.","Kaip sprendžiama":"Generuojant 100%. Po publikavimo tik 48h riba gali būti savanoriškai viršyta normaliu bilateral swapu su aiškiu asmens sutikimu; kiti HARD lieka"},
-            {"Rangas":"2. CRITICAL STRUCTURAL","Kas įeina":"SPS RO + SPS UG + šeštadieniai + sekmadieniai + penktadieniai","Kaip sprendžiama":"SPS UG water-fillinamas 0–1; šeštadienių, sekmadienių ir savaitgalio SPS RO 0–1 taikomas nesavanoriškam krūviui. Aiškiai pageidautos savaitgalio pamainos gali RAW spread padidinti. Vengiama clustering."},
+            {"Rangas":"2. CRITICAL STRUCTURAL","Kas įeina":"SPS RO + šeštadieniai + sekmadieniai + penktadieniai","Kaip sprendžiama":"SPS RO ir savaitgalio našta saugoma struktūriškai; tai nepakeičia atskiros V2.5.157 postų padengimo hierarchijos, kur SPS UG AM yra paskutiniame optional prioritete."},
             {"Rangas":"3. RESIDENT HARD","Kas įeina":"Negaliu dirbti — data / AM / PM / recurring","Kaip sprendžiama":"0 pažeidimų privaloma; jei tokio SYSTEM grafiko nėra, juodraštis negrąžinamas"},
             {"Rangas":"4. WEEKLY LOAD + RECOVERY","Kas įeina":"Valandos per slenkančias 7 d., kalendorinės savaitės, 12 val. dvigubų dienų seka","Kaip sprendžiama":"Taikosi į ~40 val./7 d.; lygina savaitinį krūvį. Po 1 double vengia kito double; po 2 doubles kita diena PM arba laisva, preferuojama laisva"},
             {"Rangas":"5. ŠVENČIŲ WATER-FILL","Kas įeina":"Oficialios Lietuvos švenčių dienos ir ilgalaikis pasirinkimas: noriu dirbti / neutralu / noriu ilsėtis","Kaip sprendžiama":"Pirmiausia norintys dirbti, tada neutralūs, o norintys ilsėtis — tik kai reikia. Kiekvienoje grupėje 1 visiems → 2 visiems; žiūrima ankstesnė SYSTEM švenčių našta ir mėnesio krūvis."},
             {"Rangas":"6. Kitas struktūrinis krūvis","Kas įeina":"Dvigubų pamainų bendras skaičius ir kitas consecutive/fatigue","Kaip sprendžiama":"Lyginama grupėje nebloginant aukštesnių užraktų; penktadieniai jau užrakinti aukščiau raw 0–1"},
-            {"Rangas":"7. OTHER POST CORE","Kas įeina":"CENTRO RO, Onko RO, Centro UG, ADC 144, ADC 145, Vaikų UG, Mamografijos","Kaip sprendžiama":"Struktūrinis water-filling; target 0–1. Mamografija pildoma paskutinė; rezidentams su 0 Onko RO pirmiausia stengiamasi duoti bent vieną likusią Mamografijos ekspoziciją. 0–2 / 0–3 tik solveriui įrodžius, kad siauresnis koridorius neįmanomas"},
+            {"Rangas":"7. POSTŲ PADENGIMO PRIORITETAI","Kas įeina":"MUST: CENTRO RO 4+4, SPS RO AM+PM, Centro UG 120 AM, Onkologinė/TBL, Skopijos, budėjimai. II: Vaikų UG AM, ADC AM, Centro UG 120 PM. III: ADC PM, SPS UG AM.","Kaip sprendžiama":"Nuo 2026-10 privalomas MUST padengimas užrakinamas. Jei dėl bendro mėnesio krūvio reikia palikti tuščių optional vietų, jos pirmiausia imamos iš III prioriteto ir tik tada iš II prioriteto."},
             {"Rangas":"8. SOFT-1","Kas įeina":"Noriu laisvos; struktūruotas recovery / vengti dublių","Kaip sprendžiama":"Horizontalus water-filling: bendras sluoksnis visiems prieš papildomus vieno žmogaus prašymus"},
             {"Rangas":"9. SOFT-2","Kas įeina":"Pageidauju dirbti konkrečią datą / AM / PM","Kaip sprendžiama":"Horizontalus water-filling"},
             {"Rangas":"10. SOFT-3","Kas įeina":"Išsklaidymas / koncentracija","Kaip sprendžiama":"Tik po aukštesnių rangų"},
@@ -13405,7 +13437,7 @@ with tabs[pos]:
         st.markdown("### Simplified vertical-priority table")
         st.dataframe(pd.DataFrame([
             {"Rank":"1. TRUE ABSOLUTE HARD","Includes":"Safety/rest, approved absence, physical impossibility, coverage; generation <=48h/rolling7 and >=1 free day/7d","Method":"100% during generation. Post-publication voluntary swaps use consequence + ACK warnings, but ABSOLUTE/operational and labour-time blockers remain hard"},
-            {"Rank":"2. CRITICAL STRUCTURAL","Includes":"SPS RO + SPS UG + Saturday + Sunday + Fridays","Method":"Saturday and Sunday water-fill independently; raw spread 0–1; reduce temporal clustering"},
+            {"Rank":"2. CRITICAL STRUCTURAL","Includes":"SPS RO + Saturday + Sunday + Fridays","Method":"Structural SPS RO/weekend load fairness; separate V2.5.157 service-coverage tiers govern which optional stations may be left unfilled"},
             {"Rank":"3. RESIDENT HARD","Includes":"Unavailable date / AM / PM / recurring","Method":"Zero violations are mandatory in SYSTEM generation; if impossible, no draft is returned"},
             {"Rank":"4. WEEKLY LOAD + RECOVERY","Includes":"Rolling-7 hours, calendar-week load, double-shift sequences","Method":"Aim ~40h/7d; equalize weekly load; after 2 consecutive doubles next day PM-only or off, preferring off"},
             {"Rank":"5. OTHER STRUCTURAL","Includes":"Total doubles and other consecutive/fatigue","Method":"Balance without worsening higher locks; Fridays are already structurally locked at raw 0–1"},

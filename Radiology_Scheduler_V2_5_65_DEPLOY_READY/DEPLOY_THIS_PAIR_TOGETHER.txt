@@ -1,0 +1,16 @@
+RAPA V2.5.157 DEPLOY PAIR ONLY
+
+The deployed screenshot showed:
+- app.py expects 2.5.157
+- loaded scheduler_engine.py is 2.5.153
+
+Replace BOTH files in the existing GitHub folder:
+Radiology_Scheduler_V2_5_65_DEPLOY_READY/app.py
+Radiology_Scheduler_V2_5_65_DEPLOY_READY/scheduler_engine.py
+
+Do not upload them to repo root. Overwrite the files inside the folder used by Streamlit.
+Then commit and reboot the Streamlit app.
+
+Expected after reboot:
+APP_VERSION = 2.5.157 ADMIN STATIONS + NO BLOCK
+ENGINE_API_VERSION = 2.5.157
