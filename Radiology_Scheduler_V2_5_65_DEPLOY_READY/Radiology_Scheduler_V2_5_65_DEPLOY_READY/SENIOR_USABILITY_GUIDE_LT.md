@@ -194,5 +194,13 @@ Grafikų sudarymo metodų palyginimas yra perkeltas į **Tyrimo** langą ir nėr
 - Validūs konkretūs rezidentų pageidavimai generuojant turi 100 % tikslą; jie nusileidžia tik tikroms HARD saugos, privalomo padengimo, tikslaus krūvio ir kitoms aukštesnėms konstitucinėms taisyklėms.
 - Rezidento savitarna neleidžia aiškaus gaming: >=5 efektyviai pilnų laisvų dienų iš eilės, visų mėnesio šeštadienių ar visų sekmadienių blokavimo, arba daugiau nei vienos savaitgalio `Pageidauju dirbti` datos. Realų poreikį Seniūnė gali įvesti su audito priežastimi.
 - VERY HARD: budėjimo dieną tam rezidentui negali būti jokios kitos RAPA pamainos.
-- VERY HARD: po bet kokio SPS RO dieninio ar naktinio budėjimo visa sekanti kalendorinė diena yra laisva, įskaitant mėnesio ribą. Jokio swap ACK override.
+- VERY HARD: po SPS RO naktinio budėjimo visa sekanti kalendorinė diena yra laisva, įskaitant mėnesio ribą. Jokio swap ACK override.
 - 2026-10-30 SPS RO naktinis budėjimas yra HARD priskirtas GE (Gertui Ernestui); 2026-10-31 jam privalomai laisva.
+
+
+## V2.5.165 — SPS RO budėjimų konstitucinės taisyklės
+
+- **Visi SPS RO budėjimai water-fill'inami kartu.** Savaitgalio / šventinis FULL ir NIGHT yra vieno budėjimų skaitiklio dalys. Niekas negauna antro budėjimo, kol kitas HARD-tinkamas rezidentas dar neturi pirmo. Tikslus mėnesio floor/ceil koridorius yra HARD ir neplečiamas fallback režime.
+- **Budėjimo diena yra išskirtinė.** Bet koks SPS RO budėjimas tą pačią kalendorinę dieną negali sutapti su jokia kita RAPA pamaina.
+- **Kita diena laisva tik po NIGHT.** Po SPS RO naktinio budėjimo visa sekanti kalendorinė diena yra ABSOLUTE OFF, taip pat per mėnesio ribą. Dieninis / savaitgalio 08:00–20:00 budėjimas šios automatinės taisyklės nesukuria.
+- **2026-10-30 GE NIGHT → 2026-10-31 GE OFF** lieka HARD.

@@ -147,5 +147,13 @@ Visa ši dalis yra izoliuota: ji nekeičia SYSTEM, ACTUAL ar Supabase operacinio
 - VALIDŪS konkretūs mėnesio pageidavimai optimizuojami su 100 % tikslu prieš penktadienių / dublių / paprastų postų kosmetinį fairness. Safety, RESIDENT HARD, mandatory coverage, exact workload ir Onko HARD lieka aukščiau.
 - Anti-gaming guardrail rezidentui blokuoja tik aiškius savitarnos išnaudojimo raštus: >=5 efektyviai pilnas laisvas dienas iš eilės (skaičiuojant ir `Dirbti negaliu`, ir `Noriu laisvos` kombinacijas), visus mėnesio šeštadienius arba visus sekmadienius, bei >1 savaitgalio `Pageidauju dirbti` datą. Keturių dienų ilgas savaitgalis savaime nėra blokuojamas. Tik Seniūnė/operatorius gali įvesti išimtį su audito priežastimi; oficialiam neatvykimui naudojamos atostogų / specialių dienų funkcijos.
 - VERY HARD: bet kokio RAPA budėjimo dieną negali būti jokios kitos pamainos tam pačiam rezidentui.
-- VERY HARD: po bet kokio SPS RO dieninio ar naktinio budėjimo visa kita kalendorinė diena yra LAISVA. Taisyklė galioja ir per mėnesio ribą ir nėra voluntary-swap ACK išimtis.
+- VERY HARD: po SPS RO naktinio budėjimo visa kita kalendorinė diena yra LAISVA. Taisyklė galioja ir per mėnesio ribą ir nėra voluntary-swap ACK išimtis.
 - 2026-10-30 `SPS RO naktinis budėjimas` HARD priskirtas GE (Gertas Ernestas); 2026-10-31 GE privalomai laisva.
+
+
+## V2.5.165 — SPS RO budėjimų konstitucinės taisyklės
+
+- **Visi SPS RO budėjimai water-fill'inami kartu.** Savaitgalio / šventinis FULL ir NIGHT yra vieno budėjimų skaitiklio dalys. Niekas negauna antro budėjimo, kol kitas HARD-tinkamas rezidentas dar neturi pirmo. Tikslus mėnesio floor/ceil koridorius yra HARD ir neplečiamas fallback režime.
+- **Budėjimo diena yra išskirtinė.** Bet koks SPS RO budėjimas tą pačią kalendorinę dieną negali sutapti su jokia kita RAPA pamaina.
+- **Kita diena laisva tik po NIGHT.** Po SPS RO naktinio budėjimo visa sekanti kalendorinė diena yra ABSOLUTE OFF, taip pat per mėnesio ribą. Dieninis / savaitgalio 08:00–20:00 budėjimas šios automatinės taisyklės nesukuria.
+- **2026-10-30 GE NIGHT → 2026-10-31 GE OFF** lieka HARD.

@@ -67,9 +67,9 @@ from opto_research import (
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.163 SCANDI AUDIT + FRIDAY FAIR"
-EXPECTED_ENGINE_API_VERSION = "2.5.163"
-COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.163"}
+APP_VERSION = "2.5.165 DUTY WATERFILL + NIGHT REST"
+EXPECTED_ENGINE_API_VERSION = "2.5.165"
+COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.165"}
 
 # V2.5.139: import-safe reward credit compatibility. Older deployed engines used
 # by the same app already contain the scheduling API but predate the credit helpers.
@@ -167,7 +167,7 @@ TR = {
 "generation_title":"Grafiko sudarymas ir paskelbimas","senior_only":"Šią funkciją gali atlikti tik seniūnė.","generate_draft":"GENERUOTI / PERKURTI JUODRAŠTĮ","solver_wait":"Sistema ieško geriausio sprendinio...",
 "draft_saved":"Juodraštis sukurtas. Oficialus grafikas dar nepakeistas.","no_solution":"Pagal dabartines kietas taisykles tinkamo grafiko rasti nepavyko.","publish":"PASKELBTI IR UŽRAKINTI",
 "published":"Grafikas paskelbtas ir pradinė versija užrakinta.","publication_mail":"Paskelbimo laiškai","no_draft":"Nėra juodraščio, kurį būtų galima paskelbti.","draft_outdated":"Po juodraščio sukūrimo pasikeitė pageidavimai, ilgalaikės taisyklės arba bonusų pasirinkimas. Perkurkite juodraštį prieš paskelbiant.","state":"Būsena","draft":"Juodraštis","published_state":"Paskelbtas","not_created":"Nesukurtas",
-"hard_errors":"Privalomų taisyklių klaidos","fairness_score":"Teisingumo rodiklis","monthly_fairness":"Mėnesio teisingumas","cumulative_fairness":"Kaupiamasis teisingumas","fairness_hierarchy":"Grafiko vertinimo hierarchija","fairness_hierarchy_intro":"1) sauga, budėjimų VERY HARD taisyklės, įmanomumas, privalomas padengimas ir tikslus krūvis; 2) „Dirbti negaliu“ – 0 pažeidimų; 3) visi guardrail praėję konkretūs pageidavimai – tikslas 100 %; 4) tik užrakinus maksimalų pageidavimų rezultatą lyginami penktadieniai, dubliai ir postai; 5) tik vienodai gerų likusių konfliktų atveju – pateikimo eilė. Po paskelbimo savanoriški apsikeitimai keičia faktinį grafiką tik po abiejų rezidentų sutikimo ir seniūnės patvirtinimo.","hard_validity":"Privalomų saugos taisyklių atitiktis","hard_validity_pass":"0 privalomų saugos klaidų – tinkama","hard_validity_fail":"Yra privalomų saugos klaidų – skelbti negalima","fairness_monthly_explain":"Mėnesio teisingumas vertina tik pasirinktą mėnesį. Ankstesni mėnesiai rodomi istorijai ir auditui, bet nesukuria automatinės „skolos“, kurią naujas mėnuo privalėtų grąžinti.","fairness_cumulative_explain":"Kaupiamasis teisingumas sumuoja visus sistemoje paskelbtus ankstesnius mėnesius ir šį mėnesį. Tai pagrindinis ilgalaikio grupės lygumo rodiklis.","fairness_100_note":"100% reiškia, kad pradinis grafikas pagal galiojančias privalomas taisykles yra optimaliai subalansuotas. Vien noras dirbti savaitgalį nesuteikia teisės gauti neproporcingai daugiau savaitgalių. Po paskelbimo faktinis balansas gali pasikeisti tik per savanorišką abiejų žmonių suderintą apsikeitimą ir seniūnės patvirtinimą.","fairness_formula_month":"Mėnesio formulė: 100 − 18× savaitgalių skirtumas − 7× penktadienių skirtumas − 4× dublių skirtumas − 2× darbo dienų skirtumas.","fairness_formula_cumulative":"Kaupiamojo teisingumo formulė tokia pati, bet kiekvienas skirtumas skaičiuojamas iš visų paskelbtų mėnesių sukauptų sumų.","fairness_breakdown":"Teisingumo išskaidymas","fairness_penalty":"Baudos taškai","fairness_scope":"Apimtis","fairness_metric":"Komponentas","fairness_spread":"Skirtumas (didž.−maž.)","fairness_history":"Teisingumo istorija","fairness_history_help":"Grafike mėnesio teisingumas parodo konkretaus mėnesio lygumą, o kaupiamasis teisingumas — ar sistema laikui bėgant artėja prie lygaus bendro krūvio.","fairness_ledger":"Sistemos teisingumo apskaita","actual_ledger":"Faktinio darbo apskaita","fairness_swap_neutral":"Abipusis savanoriškas apsikeitimas nekeičia teisingumo apskaitos: keičiasi faktinis darbas, bet ne algoritmo paskirstymo vertinimas.","fairness_forced_change":"Pateisinamas pakeitimas po paskelbimo (liga, atostogos, nenumatytas įvykis ar kritinės SPS vietos padengimas) registruojamas faktinio grafiko audite, tačiau nekeičia pradinio paskirstymo teisingumo istorijos. Savanoriški apsikeitimai taip pat keičia tik faktinį grafiką ir galutinį pageidavimų išpildymą.","fairness_no_history":"Dar nėra pakankamai paskelbtų mėnesių teisingumo istorijai.","fairness_priority_table":"Ką reiškia hierarchija","fairness_level":"Lygis","fairness_goal":"Tikslas","fairness_interpretation":"Kaip interpretuoti","fairness_hard_goal":"Privaloma: 0 saugos ir fiziškai neįmanomų paskyrimų","voluntary_unpopular_goal":"Atsižvelgti į aiškiai savanoriškai pasirinktą nepopuliarų darbą, kai tai nepažeidžia saugos ir privalomo padengimo. Likęs nesavanoriškas krūvis vis tiek paskirstomas kuo tolygiau.","voluntary_unpopular_explain":"Savaitgalio „Pageidauju dirbti“ yra savanoriškas pasirinkimas. Sistema stengiasi į jį atsižvelgti, jei leidžia poilsio ir padengimo taisyklės, tačiau kitų rezidentų savaitgalių krūvis vis tiek saugomas nuo nelygaus paskirstymo. Po paskelbimo balansą gali keisti tik savanoriški apsikeitimai.","other_preferences_goal":"Pageidavimai: pirmiausia apsaugomi svarbesni norai, tada maksimaliai didinamas bendras įmanomas išpildymas","other_preferences_explain":"Pageidavimai optimizuojami tik po privalomų saugos, darbo krūvio ir teisingo paskirstymo taisyklių. Sistema visada siekia 100% pageidavimų išpildymo; jei dėl realių konfliktų tai neįmanoma, išsaugo geriausią bendrą rezultatą ir tik tada vienodai geriems likusiems variantams taiko pateikimo eilę.","fairness_cumulative_goal":"Ilgalaikė suvestinė: stebėti, kaip laikui bėgant išsilaiko grupės darbo krūvio lygumas","fairness_monthly_goal":"SPS UG, SPS RO, savaitgaliai, penktadieniai ir kitos darbo vietos pirmiausia paskirstomos kuo tolygiau. Platesnis skirtumas leidžiamas tik tada, kai siauresnis paskirstymas matematiškai neįmanomas dėl svarbesnių apribojimų.","preference_avg":"Vidutinis pageidavimų išpildymas","weekend_spread":"Savaitgalių skirtumas",
+"hard_errors":"Privalomų taisyklių klaidos","fairness_score":"Teisingumo rodiklis","monthly_fairness":"Mėnesio teisingumas","cumulative_fairness":"Kaupiamasis teisingumas","fairness_hierarchy":"Grafiko vertinimo hierarchija","fairness_hierarchy_intro":"1) sauga, SPS RO budėjimų HARD water-fill, privalomas padengimas ir tikslus krūvis; 2) „Dirbti negaliu“ – 0 pažeidimų; 3) struktūrinis penktadienių / savaitgalių balansas; 4) jo viduje maksimaliai pildomi visi guardrail praėję konkretūs pageidavimai – tikslas 100 %; 5) tik vienodai gerų likusių konfliktų atveju – pateikimo eilė. Po paskelbimo savanoriški apsikeitimai keičia faktinį grafiką tik po abiejų rezidentų sutikimo ir seniūnės patvirtinimo.","hard_validity":"Privalomų saugos taisyklių atitiktis","hard_validity_pass":"0 privalomų saugos klaidų – tinkama","hard_validity_fail":"Yra privalomų saugos klaidų – skelbti negalima","fairness_monthly_explain":"Mėnesio teisingumas vertina tik pasirinktą mėnesį. Ankstesni mėnesiai rodomi istorijai ir auditui, bet nesukuria automatinės „skolos“, kurią naujas mėnuo privalėtų grąžinti.","fairness_cumulative_explain":"Kaupiamasis teisingumas sumuoja visus sistemoje paskelbtus ankstesnius mėnesius ir šį mėnesį. Tai pagrindinis ilgalaikio grupės lygumo rodiklis.","fairness_100_note":"100% reiškia, kad pradinis grafikas pagal galiojančias privalomas taisykles yra optimaliai subalansuotas. Vien noras dirbti savaitgalį nesuteikia teisės gauti neproporcingai daugiau savaitgalių. Po paskelbimo faktinis balansas gali pasikeisti tik per savanorišką abiejų žmonių suderintą apsikeitimą ir seniūnės patvirtinimą.","fairness_formula_month":"Mėnesio formulė: 100 − 18× savaitgalių skirtumas − 7× penktadienių skirtumas − 4× dublių skirtumas − 2× darbo dienų skirtumas.","fairness_formula_cumulative":"Kaupiamojo teisingumo formulė tokia pati, bet kiekvienas skirtumas skaičiuojamas iš visų paskelbtų mėnesių sukauptų sumų.","fairness_breakdown":"Teisingumo išskaidymas","fairness_penalty":"Baudos taškai","fairness_scope":"Apimtis","fairness_metric":"Komponentas","fairness_spread":"Skirtumas (didž.−maž.)","fairness_history":"Teisingumo istorija","fairness_history_help":"Grafike mėnesio teisingumas parodo konkretaus mėnesio lygumą, o kaupiamasis teisingumas — ar sistema laikui bėgant artėja prie lygaus bendro krūvio.","fairness_ledger":"Sistemos teisingumo apskaita","actual_ledger":"Faktinio darbo apskaita","fairness_swap_neutral":"Abipusis savanoriškas apsikeitimas nekeičia teisingumo apskaitos: keičiasi faktinis darbas, bet ne algoritmo paskirstymo vertinimas.","fairness_forced_change":"Pateisinamas pakeitimas po paskelbimo (liga, atostogos, nenumatytas įvykis ar kritinės SPS vietos padengimas) registruojamas faktinio grafiko audite, tačiau nekeičia pradinio paskirstymo teisingumo istorijos. Savanoriški apsikeitimai taip pat keičia tik faktinį grafiką ir galutinį pageidavimų išpildymą.","fairness_no_history":"Dar nėra pakankamai paskelbtų mėnesių teisingumo istorijai.","fairness_priority_table":"Ką reiškia hierarchija","fairness_level":"Lygis","fairness_goal":"Tikslas","fairness_interpretation":"Kaip interpretuoti","fairness_hard_goal":"Privaloma: 0 saugos ir fiziškai neįmanomų paskyrimų","voluntary_unpopular_goal":"Atsižvelgti į aiškiai savanoriškai pasirinktą nepopuliarų darbą, kai tai nepažeidžia saugos ir privalomo padengimo. Likęs nesavanoriškas krūvis vis tiek paskirstomas kuo tolygiau.","voluntary_unpopular_explain":"Savaitgalio „Pageidauju dirbti“ yra savanoriškas pasirinkimas. Sistema stengiasi į jį atsižvelgti, jei leidžia poilsio ir padengimo taisyklės, tačiau kitų rezidentų savaitgalių krūvis vis tiek saugomas nuo nelygaus paskirstymo. Po paskelbimo balansą gali keisti tik savanoriški apsikeitimai.","other_preferences_goal":"Pageidavimai: pirmiausia apsaugomi svarbesni norai, tada maksimaliai didinamas bendras įmanomas išpildymas","other_preferences_explain":"Pageidavimai optimizuojami tik po privalomų saugos, darbo krūvio ir teisingo paskirstymo taisyklių. Sistema visada siekia 100% pageidavimų išpildymo; jei dėl realių konfliktų tai neįmanoma, išsaugo geriausią bendrą rezultatą ir tik tada vienodai geriems likusiems variantams taiko pateikimo eilę.","fairness_cumulative_goal":"Ilgalaikė suvestinė: stebėti, kaip laikui bėgant išsilaiko grupės darbo krūvio lygumas","fairness_monthly_goal":"SPS UG, SPS RO, savaitgaliai, penktadieniai ir kitos darbo vietos pirmiausia paskirstomos kuo tolygiau. Platesnis skirtumas leidžiamas tik tada, kai siauresnis paskirstymas matematiškai neįmanomas dėl svarbesnių apribojimų.","preference_avg":"Vidutinis pageidavimų išpildymas","weekend_spread":"Savaitgalių skirtumas",
 "published_schedule":"Galiojantis paskelbtas grafikas","not_published":"Šiam mėnesiui oficialus grafikas dar nepaskelbtas.","colors":"Nuolatinės žmonių spalvos","download_xlsx":"ATSISIŲSTI SPALVOTĄ GRAFIKĄ (.xlsx)","download_csv":"Atsisiųsti duomenų sąrašą (.csv)",
 "summary_title":"Žmonių suvestinė","frozen_fairness":"Paskelbimo teisingumas","current_after_changes":"Dabartinė būsena po savanoriškų pakeitimų","fairness_frozen_note":"Pradinio paskirstymo teisingumo apskaita fiksuojama paskelbimo momentu. Vėlesni abipusiai apsikeitimai ir pateisinami pakeitimai dėl ligos, atostogų ar nenumatytų įvykių keičia faktinį grafiką, bet neperrašo pradinio algoritmo teisingumo istorijos. Faktinis darbas ir galutinis pageidavimų išpildymas rodomi atskirai.",
 "person":"Žmogus","name":"Vardas","target":"Tikslas","workload":"Krūvis","weekday_assignments":"Darbo dienų paskyrimai","weekday_days":"Atskiros darbo dienos","weekend_assignments":"Savaitgalio pamainos","saturday_assignments":"Šeštadienio pamainos","sunday_assignments":"Sekmadienio pamainos","prior_weekends":"Ankstesni savaitgaliai","cumulative_weekends":"Sukaupti savaitgaliai","fridays":"Penktadieniai","double_shifts":"12h darbo dienos (AM+PM)","max_consecutive":"Daugiausia dienų iš eilės","max_rolling7_hours":"Daugiausia val. per 7 d.","max_calendar_week_hours":"Daugiausia val. kalendorinę savaitę","free_days":"Laisvos dienos","preference_score":"Bendras prašymų išpildymas, %","planned_backups":"Planuoti dubliai","effective_backups":"Galiojantys pavadavimai / dubliai",
@@ -1971,7 +1971,11 @@ def historical_previous_last_day_onko_before(y,m):
 
 
 def historical_previous_last_day_duty_before(y,m):
-    """Prior-month ACTUAL last-day internal duty for mandatory next-day OFF."""
+    """Prior-month ACTUAL last-day internal NIGHT duty for mandatory next-day OFF.
+
+    Compatibility name retained; from V2.5.165 a daytime/weekend FULL duty does
+    not automatically block the following day.
+    """
     out={p["initials"]:False for p in DEFAULT_PEOPLE}
     py,pm,ass=_previous_month_effective_actual_assignments(y,m)
     if not ass:
@@ -1981,7 +1985,7 @@ def historical_previous_last_day_duty_before(y,m):
         last_day=calendar.monthrange(py,pm)[1]
         for sid,ini in ass.items():
             sl=slot_map.get(int(sid))
-            if sl is not None and ini in out and sl.day==last_day and is_duty_slot(sl):
+            if sl is not None and ini in out and sl.day==last_day and is_duty_slot(sl) and sl.block=="NIGHT":
                 out[ini]=True
     except Exception:
         return {p["initials"]:False for p in DEFAULT_PEOPLE}
@@ -3588,8 +3592,22 @@ def _friendly_station_text(text):
     if txt=="—":
         return txt
     if lang=="LT":
-        txt=txt.replace(" (AM)"," (rytas)").replace(" (PM)"," (vakaras)").replace(" (FULL)"," (visa diena)").replace(" (NIGHT)"," (naktis)")
+        txt=(txt.replace("CENTRO RO","Centro RO")
+                .replace(" (AM)"," · rytas")
+                .replace(" (PM)"," · vakaras")
+                .replace(" (FULL)"," · visa diena")
+                .replace(" (NIGHT)"," · naktis")
+                .replace("1035kab","1035 kab.")
+                .replace("120kab","120 kab.")
+                .replace("144kab","144 kab.")
+                .replace("145kab","145 kab."))
     return txt
+
+
+def _friendly_resident_label(initials, name):
+    parts=[x for x in str(name or "").split() if x]
+    short=parts[-1] if parts else str(initials or "")
+    return f"{short} · {initials}" if initials else short
 
 
 def _missed_outcome_short(r):
@@ -3623,21 +3641,25 @@ def _missed_reason_scandi(r, initials=""):
 
     if lang=="LT":
         if kind=="resident_hard":
-            return "Tai neturėtų nutikti. „Negaliu dirbti“ yra privaloma taisyklė — grafiką reikia taisyti."
+            return "Klaida. „Negaliu dirbti“ negali būti pažeistas — grafiką reikia taisyti."
         if kind=="soft_free":
             if wd==4:
-                return "Penktadienių balansas — sistema bandė palikti šį penktadienį laisvą, bet negali visų penktadienių perkelti kitiems. Laisvi penktadieniai dalijami kiek įmanoma sąžiningai."
+                return "Penktadienių balansas. Jei paliktume ir šį penktadienį laisvą, daugiau penktadienių tektų kitiems."
             if wd in (5,6):
-                return "Savaitgalio balansas — šį kartą laisva diena nesuderėjo su būtinu savaitgalio padengimu ir sąžiningu savaitgalių pasidalijimu."
-            return "Būtinas padengimas — šį bloką teko užpildyti, kad neliktų neuždengtų darbo vietų ir per daug darbo nepersikeltų kitiems."
+                return "Savaitgalio balansas. Šią dieną reikėjo palikti darbui, kad savaitgaliai pasiskirstytų tolygiai."
+            return "Reikėjo padengti darbą. Kitu atveju ši pamaina būtų likusi neuždengta arba krūvis persikeltų kitam."
         if kind=="preferred":
             if r.get("unmet_reason_code")=="NO_ACTIVE_SHIFT_IN_BLOCK":
-                return "Tuo metu grafike nėra aktyvios pamainos, kuri galėtų išpildyti šį norą."
+                return "Tuo metu nėra pamainos, kuri atitiktų šį norą."
+            _comp=list(r.get("competing_assignments") or [])
+            _is_duty=any("budėj" in str(x.get("department") or "").lower() for x in _comp)
             if wd==4:
-                return "Penktadienių balansas — tinkama pamaina buvo, bet jos paskyrimas tau būtų išbalansavęs penktadienių krūvį tarp rezidentų."
+                return "Penktadienių balansas. Šią pamainą skyrus tau, penktadienių krūvis taptų nelygesnis."
+            if wd in (5,6) and _is_duty:
+                return "Budėjimų balansas. Šis budėjimas skirtas kitam, kad kiekvienas gautų savo sąžiningą dalį."
             if wd in (5,6):
-                return "Savaitgalio balansas — tinkama pamaina buvo, bet ją reikėjo skirti kitam, kad būtų išlaikytas privalomas budėjimų ir savaitgalių pasidalijimas."
-            return "Tinkama pamaina buvo, bet ją gavo kitas rezidentas. Taip buvo išlaikyta daugiau svarbesnių taisyklių ir geresnis bendras pageidavimų rezultatas."
+                return "Savaitgalio balansas. Ši pamaina skirta kitam, kad savaitgaliai pasiskirstytų tolygiai."
+            return "Šią pamainą reikėjo skirti kitam, kad būtų išlaikytos svarbesnės taisyklės ir bendras balansas."
         return "Šis noras susikirto su svarbesne grafiko taisykle."
 
     if kind=="resident_hard":
@@ -3674,6 +3696,56 @@ def missed_requests_scandi_df(rows, initials=""):
             ("Kodėl" if lang=="LT" else "Why"):_missed_reason_scandi(r,initials),
         })
     return pd.DataFrame(out)
+
+
+def all_missed_requests_scandi_df(result):
+    """One calm, readable table for every missed scored wish in a generated schedule."""
+    out=[]
+    for initials,d in (result.stats.get("people",{}) or {}).items():
+        name=d.get("name","")
+        for r in (d.get("request_detail_rows") or []):
+            if not _is_actual_wish_row(r) or bool(r.get("fulfilled")):
+                continue
+            out.append({
+                ("Rezidentas" if lang=="LT" else "Resident"):_friendly_resident_label(initials,name),
+                ("Data" if lang=="LT" else "Date"):_friendly_date_text(r.get("date")),
+                ("Noras" if lang=="LT" else "Wish"):f"{r.get('type','—')} · {_friendly_block_text(r.get('block'))}",
+                ("Kas gavosi" if lang=="LT" else "Outcome"):_missed_outcome_short(r),
+                ("Kodėl" if lang=="LT" else "Why"):_missed_reason_scandi(r,initials),
+            })
+    return pd.DataFrame(out)
+
+
+def render_all_missed_requests_scandi(result):
+    df=all_missed_requests_scandi_df(result)
+    if df.empty:
+        st.success("Visi aktyvūs pageidavimai įvykdyti." if lang=="LT" else "All active wishes were honored.")
+        return
+    st.caption(
+        "Tik neįvykdyti norai. Viena eilutė = vienas noras. Be kodų, lygių ir techninių paaiškinimų."
+        if lang=="LT" else
+        "Missed wishes only. One row = one wish. No codes, levels, or technical explanations."
+    )
+    if lang=="LT":
+        cfg={
+            "Rezidentas":st.column_config.TextColumn("Rezidentas",width="small"),
+            "Data":st.column_config.TextColumn("Data",width="small"),
+            "Noras":st.column_config.TextColumn("Noras",width="medium"),
+            "Kas gavosi":st.column_config.TextColumn("Kas gavosi",width="large"),
+            "Kodėl":st.column_config.TextColumn("Kodėl",width="large"),
+        }
+    else:
+        cfg={
+            "Resident":st.column_config.TextColumn("Resident",width="small"),
+            "Date":st.column_config.TextColumn("Date",width="small"),
+            "Wish":st.column_config.TextColumn("Wish",width="medium"),
+            "Outcome":st.column_config.TextColumn("Outcome",width="large"),
+            "Why":st.column_config.TextColumn("Why",width="large"),
+        }
+    st.dataframe(
+        df,use_container_width=True,hide_index=True,
+        height=min(620,74+82*max(1,len(df))),column_config=cfg,
+    )
 
 
 def render_missed_requests_scandi(rows, initials="", *, key_suffix=""):
@@ -7146,8 +7218,8 @@ if senior_mode:
                     if lang=="LT" else
                     f"{_wish['missed']} of {_wish['total']} active wishes were not met. Cannot-work violations: 0. The exact misses are shown below."
                 )
-                st.markdown("#### NEĮVYKDYTI PAGEIDAVIMAI" if lang=="LT" else "#### UNMET WISHES")
-                st.dataframe(_wish["table"],use_container_width=True,hide_index=True)
+                st.markdown("#### Neįvykdyti pageidavimai" if lang=="LT" else "#### Unmet wishes")
+                render_all_missed_requests_scandi(dr)
 
             # Privataus operatorių refinemento detalės sąmoningai nerodomos bendrame
             # Sudarymo lange. Jos redaguojamos tiesiai „Pageidavimai“ lange.
@@ -13896,7 +13968,8 @@ with tabs[pos]:
             {"Taisyklė":"≤12 val. per darbo dieną","Veikimas":"AM+PM = 12 h galima; >12 h atmetama. Nauja 12 h diena prieš sutikimą aiškiai parodoma.","Statusas":"BLOCK + ACK ties 12 h"},
             {"Taisyklė":"≥11 val. nepertraukiamo paros poilsio","Veikimas":"Jei tarp darbo dienų / pamainų po swapo lieka <11 h, swapas atmetamas.","Statusas":"BLOCK"},
             {"Taisyklė":"BUDEJIMO DIENA = TIK BUDEJIMAS","Veikimas":"Jei rezidentas tą kalendorinę dieną turi bet kokį RAPA budėjimą (SPS RO dieninį ar naktinį), jokios kitos AM / PM / FULL / Onko pamainos tą dieną negali būti.","Statusas":"VERY HARD / BLOCK"},
-            {"Taisyklė":"PO BET KOKIO BUDEJIMO KITA DIENA = LAISVA","Veikimas":"Po SPS RO dieninio ar naktinio budėjimo visa sekanti kalendorinė diena privalomai laisva. Taisyklė galioja ir per mėnesio ribą; jos negalima apeiti swap ACK.","Statusas":"VERY HARD / BLOCK"},
+            {"Taisyklė":"PO NAKTINIO BUDEJIMO KITA DIENA = LAISVA","Veikimas":"Visa sekanti kalendorinė diena privalomai laisva TIK po SPS RO NAKTINIO budėjimo. Po dieninio / savaitgalio 08:00–20:00 budėjimo automatinės kitos laisvos dienos nėra. Taisyklė galioja ir per mėnesio ribą; jos negalima apeiti swap ACK.","Statusas":"VERY HARD / BLOCK"},
+            {"Taisyklė":"VISI SPS RO BUDEJIMAI = WATER-FILL","Veikimas":"Visi SPS RO budėjimai skaičiuojami viename atskirame budėjimų skaitiklyje: dieniniai savaitgalio / šventiniai ir naktiniai. Niekas negauna antro budėjimo, kol kitas tinkamas rezidentas dar neturi pirmo. Leidžiamas tik matematiškai būtinas 0–1 skirtumas; jei HARD apribojimai to neleidžia, grafikas nestatomas, o ne tyliai iškreipiamas.","Statusas":"HARD WATER-FILL"},
             {"Taisyklė":"Po 6 darbo dienų — poilsis","Veikimas":"Negalima >6 darbo dienų per 7 paeiliui einančias dienas. 6 dienų seka leidžiama ir rodoma kaip perspėjimas.","Statusas":"7-a diena = BLOCK"},
             {"Taisyklė":"Recovery po doubles","Veikimas":"Generatorius po dviejų doubles kitą dieną riboja. Savanoriškame swape tai tampa ACK perspėjimu, jei 11 h / 12 h / 6 d. / 60 h ribos išlaikytos.","Statusas":"GENERATION HARD → SWAP ACK"},
             {"Taisyklė":"RESIDENT HARD per savanorišką swapą","Veikimas":"Jei rezidentas pats priima darbą per savo ankstesnį „Negaliu dirbti“, sistema rodo override ir prašo jo ACK; ORIGINAL pageidavimas istorijoje lieka.","Statusas":"SWAP ACK"},
@@ -13904,7 +13977,7 @@ with tabs[pos]:
 
         st.markdown("### Kas swapą BLOKUOJA ir kas tik PERSPĖJA")
         st.dataframe(pd.DataFrame([
-            {"Tipas":"BLOKUOJA","Pavyzdžiai":"ABSOLUTE HARD / pateisinamas neatvykimas; overlap; >12 h/d.; <11 h poilsio; >6 darbo dienų/7 d.; >60 h/7 d.; 24 h post-duty rest; neįmanomas backup/coverage; mėnesio target ≠ tikslus; Onko 1/3/5","ACK":"Negali apeiti"},
+            {"Tipas":"BLOKUOJA","Pavyzdžiai":"ABSOLUTE HARD / pateisinamas neatvykimas; overlap; >12 h/d.; <11 h poilsio; >6 darbo dienų/7 d.; >60 h/7 d.; post-NIGHT full-day rest; neįmanomas backup/coverage; mėnesio target ≠ tikslus; Onko 1/3/5","ACK":"Negali apeiti"},
             {"Tipas":"PERSPĖJA + ACK","Pavyzdžiai":"Nauja 12 h double; >40 ar >48 h/7 d.; 6 darbo dienų seka; consecutive doubles; darbas po 2 doubles; consecutive Onko; savo RESIDENT HARD override","ACK":"Kiekvienas paveiktas rezidentas patvirtina atskirai"},
             {"Tipas":"NEBLOKUOJA VOLUNTARY SWAP","Pavyzdžiai":"SYSTEM post spread, weekend/double fairness, SOFT satisfaction","ACK":"SYSTEM baseline frozen; ACTUAL perskaičiuojamas"},
         ]),use_container_width=True,hide_index=True)
@@ -13912,10 +13985,10 @@ with tabs[pos]:
         st.info("V2.5.66 — vienas rezidentas gali turėti kelis laukiančius apsikeitimus, jei jie liečia skirtingas pamainas. Ta pati konkreti pamaina vienu metu gali būti tik viename aktyviame pasiūlyme. Ta pati taisyklė taikoma dublių apsikeitimams. Savo dar nepriimtą pasiūlymą galima atšaukti. Jau pritaikytas ar atmestas pasiūlymas pamainos neberezervuoja.")
         st.info("V2.5.67 — mėnesio darbo krūvio targetas yra ABSOLIUTUS: 28 reiškia tiksliai 28.0, 26 reiškia tiksliai 26.0. Onko diena = 1.5 pamainos, todėl Onko skiriamas poromis (0, 2, 4...) ir mėnesio skirtumas tarp rezidentų negali viršyti 2. Kas šį mėnesį gauna mažiau Onko, turi catch-up prioritetą kitais mėnesiais pagal publikuotą istoriją.")
         st.info("V2.5.68 — Onko RO atsigavimo taisyklė yra ABSOLIUTI: tas pats rezidentas negali būti Onko RO dvi kalendorines dienas iš eilės. Jei dirbo Onko paskutinę ankstesnio mėnesio dieną, naujo mėnesio 1 d. Onko jam taip pat blokuojamas. Taisyklė negali būti paaukota dėl postų lygybės ar SOFT pageidavimų.")
-        st.info("V2.5.162 — BUDEJIMAI VERY HARD: (1) budėjimo dieną negali būti jokios kitos RAPA pamainos; (2) po bet kokio SPS RO dieninio ar naktinio budėjimo visa kita kalendorinė diena yra LAISVA; (3) 2026-10-30 SPS RO naktinis budėjimas HARD priskirtas GE — Gertui Ernestui, todėl 2026-10-31 jam privalomai laisva. Šių taisyklių negali apeiti nei fairness, nei pageidavimas, nei voluntary swap ACK.")
+        st.info("V2.5.165 — BUDEJIMAI: (1) VISI SPS RO budėjimai water-fill'inami viename HARD skaitiklyje — niekas negauna antro, kol kitas tinkamas rezidentas neturi pirmo; (2) bet kokio budėjimo dieną negali būti jokios kitos RAPA pamainos; (3) kita kalendorinė diena privalomai LAISVA TIK po NAKTINIO budėjimo; po dieninio / savaitgalio budėjimo automatinės laisvos dienos nėra; (4) 2026-10-30 SPS RO naktinis budėjimas HARD priskirtas GE — Gertui Ernestui, todėl 2026-10-31 jam privalomai laisva.")
         st.info("V2.5.73 — ONKO PORŲ ABSOLIUTI TAISYKLĖ: kiekvieno rezidento Onko skaičius SYSTEM ir ACTUAL grafike turi būti tik 0, 2, 4, 6... Kadangi viena Onko diena = 1.5 pamainos, nelyginis 1/3/5 sukurtų 0.5 krūvio trupmeną ir yra BLOKUOJAMAS net savanoriškame swape. Jei aktyvių mėnesio Onko dienų skaičius nelyginis, viena Onko diena paliekama neužpildyta, kad bendras užpildytų Onko skaičius būtų lyginis. Consecutive Onko po publikavimo gali likti tik ACK išimtis; parity ir tikslus mėnesio targetas — niekada.")
         st.info("V2.5.74 — VISŲ POSTŲ STRUCTURAL WATER-FILL: SYSTEM generavime, kai datos ir AM/PM blokai jau parinkti, visi ne-Onko postų labeliai sprendžiami kartu. Kiekvienam postui pirmiausia bandomas floor/ceil pasiskirstymas raw spread 0–1. Pvz., 38 Mamografijos vietos / 16 rezidentų → 10 rezidentų po 2 ir 6 rezidentai po 3; 1-vs-3 negali likti, jei egzistuoja validus postų perkeitimas ar kelių žmonių ciklas. Po publikavimo savanoriški ACTUAL swapai gali išbalansuoti postų ekspoziciją — fairness / UG / Mamografijos kiekiai swapo NEBLOKUOJA; SYSTEM fairness lieka užšaldytas.")
-        st.info("V2.5.163 — PENKTADIENIŲ FAIRNESS YRA STRUKTŪRINĖ: rezidentas gali prašyti vieno ar visų penktadienių laisvų, tačiau SYSTEM negali dėl to neproporcingai perkelti penktadienio darbo kitiems. Pirmiausia apskaičiuojamas kiekvieno rezidento pagal HARD tinkamumą sąžiningas penktadienių koridorius; tada jo viduje maksimaliai pildomi konkretūs pageidavimai. Taigi prašymas nėra ignoruojamas — sistema suteikia maksimalų laisvų penktadienių skaičių, kurį leidžia visos grupės balansas. Po publikavimo abipusis ACTUAL swapas gali balansą pakeisti; SYSTEM baseline lieka užšaldytas.")
+        st.info("V2.5.164 — PENKTADIENIŲ FAIRNESS YRA STRUKTŪRINĖ: rezidentas gali prašyti vieno ar visų penktadienių laisvų, tačiau SYSTEM negali dėl to neproporcingai perkelti penktadienio darbo kitiems. Pirmiausia apskaičiuojamas kiekvieno rezidento pagal HARD tinkamumą sąžiningas penktadienių koridorius; tada jo viduje maksimaliai pildomi konkretūs pageidavimai. Taigi prašymas nėra ignoruojamas — sistema suteikia maksimalų laisvų penktadienių skaičių, kurį leidžia visos grupės balansas. Po publikavimo abipusis ACTUAL swapas gali balansą pakeisti; SYSTEM baseline lieka užšaldytas.")
 
         st.markdown("### Emergency — jau įvykusio pakeitimo registravimas")
         st.dataframe(pd.DataFrame([
@@ -13934,7 +14007,7 @@ with tabs[pos]:
             {"Situacija":"Po dublio 7 dienų krūvis viršija ~40 / 48 val.","Ką mato žmogus":"Tikslus skaičius ir konkrečios 7 dienos, pvz. 54 val. (12–18 d.)","Veiksmas":"Savanoriškas ACK. 48 val. nėra tyliai ignoruojama — žmogus aiškiai mato pasekmę."},
             {"Situacija":"Rezidentas pats perima dublį per savo RESIDENT HARD laiką","Ką mato žmogus":"Kuri data / blokas buvo pažymėtas „Negaliu dirbti“","Veiksmas":"Galima tik aiškiai savanoriškai patvirtinus; ORIGINAL pageidavimas istorijoje lieka."},
             {"Situacija":"Po dublio būtų >12 val./d., aktyvios 7 d. ribos viršijimas, <11 val. paros poilsio arba >6 darbo dienos/7 d.","Ką mato žmogus":"Tikslus apskaičiuotas pažeidimas ir riba skliausteliuose","Veiksmas":"BLOKUOJAMA — šių ribų manual ACK neapeina."},
-            {"Situacija":"Pateisinamas neatvykimas / privalomas post-duty poilsis / persidengianti pamaina","Ką mato žmogus":"Konkreti priežastis","Veiksmas":"BLOKUOJAMA."},
+            {"Situacija":"Pateisinamas neatvykimas / privalomas po-naktinio budėjimo poilsis / persidengianti pamaina","Ką mato žmogus":"Konkreti priežastis","Veiksmas":"BLOKUOJAMA."},
         ]),use_container_width=True,hide_index=True)
         st.caption("Principas paprastas: jei dublis tik pablogina planavimo komfortą, žmogus gali sąmoningai sutikti. Jei atsiranda tikras saugos / teisinis blokatorius, sistema jo nevadina „override“ ir neleidžia patvirtinti.")
 

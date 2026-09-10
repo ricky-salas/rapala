@@ -1,0 +1,18 @@
+RAPA V2.5.165 — DUTY WATER-FILL + NIGHT-ONLY REST
+
+PASS — Python compile: app.py, scheduler_engine.py, db.py, solver_runner.py
+PASS — October slot audit: 10 SPS RO duties = 9 weekend FULL + 1 explicit NIGHT (2026-10-30)
+PASS — neutral 16-resident October solve: 10 duties assigned to 10 different residents; counts only 0/1; spread=1; HARD errors=0
+PASS — GE receives 2026-10-30 NIGHT and no assignment on 2026-10-31
+PASS — daytime/weekend FULL duty does NOT trigger next-day OFF
+PASS — NIGHT duty DOES trigger complete next-day OFF
+PASS — any duty remains same-day exclusive from every other RAPA assignment
+PASS — RESEARCH tab isolation retained
+PASS — Scandinavian missed-wish audit retained
+PASS — structural Friday fairness regression retained
+
+Constitutional behavior:
+- all SPS RO duties are exact HARD floor/ceil water-filled in one ledger;
+- duty water-fill is never loosened by structural fallback;
+- same-day exclusivity applies to every duty;
+- next-day OFF applies only after NIGHT duty.

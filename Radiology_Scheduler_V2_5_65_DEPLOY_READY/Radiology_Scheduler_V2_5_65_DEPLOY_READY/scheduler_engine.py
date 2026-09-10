@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.163"
+ENGINE_API_VERSION = "2.5.165"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -211,7 +211,7 @@ def explicit_night_duty_owner(year: int, month: int, day: int) -> Optional[str]:
 
 
 def is_duty_slot(slot: "Slot") -> bool:
-    """Internal RAPA duty requiring same-day exclusivity + next-day OFF."""
+    """Internal RAPA SPS RO duty. Every duty is same-day exclusive; only NIGHT requires next-day OFF."""
     d=str(getattr(slot,"department","") or "")
     return d.startswith("SPS RO budėjimai") or d.startswith("SPS RO naktinis budėjimas")
 
@@ -334,8 +334,9 @@ class Person:
     # Whether the resident worked Onko on the immediately preceding calendar
     # day (the last day of the previous published month). Used only for recovery.
     prior_last_day_onko: bool = False
-    # V2.5.162: whether the immediately preceding calendar day (previous month's
-    # last day) was an internal RAPA duty. Any duty requires the following day OFF.
+    # V2.5.165 compatibility field: whether the immediately preceding calendar day
+    # (previous month's last day) was an internal RAPA NIGHT duty. Only NIGHT
+    # requires the following calendar day completely OFF.
     prior_last_day_duty: bool = False
     # Immediate prior-month Onko count. Retained for audit/cross-month context.
     # V2.5.159 no longer hard-excludes prior-month Onko workers; longitudinal
@@ -2084,16 +2085,16 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
                 mb.constraint({long[(pi,d)]:1.0},0.0,0.0)
             if normal_assignment_blocked(p,d,"NIGHT"):
                 mb.constraint({night[(pi,d)]:1.0},0.0,0.0)
-        # V2.5.162 VERY HARD DUTY RULES:
-        # 1) A duty day is exclusive: no other AM/PM/Onko/FULL/NIGHT assignment.
-        #    The aggregate AM/PM/FULL/NIGHT constraints above already enforce this;
-        #    these named rows make the invariant explicit and regression-testable.
-        # 2) The entire calendar day after ANY internal RAPA duty is OFF. No AM, PM,
-        #    Onko, another FULL duty, or another NIGHT is allowed. No ACK/soft override.
+        # V2.5.165 VERY HARD DUTY SAFETY:
+        # 1) ANY SPS RO duty is exclusive on its calendar day: no AM/PM/Onko/other
+        #    FULL/NIGHT assignment may coexist. The aggregate rows above enforce it.
+        # 2) NEXT-DAY OFF applies ONLY after an internal RAPA NIGHT duty. A daytime
+        #    / weekend FULL duty does NOT automatically block the following day.
+        #    prior_last_day_duty is retained as a compatibility field but now means
+        #    prior-month LAST-DAY NIGHT duty only. No ACK/soft override.
         if bool(getattr(p,"prior_last_day_duty",False)):
             mb.constraint({work[(pi,1)]:1.0},0.0,0.0)
         for _duty_day in range(1,ndays):
-            mb.constraint({long[(pi,_duty_day)]:1.0,work[(pi,_duty_day+1)]:1.0},-np.inf,1.0)
             mb.constraint({night[(pi,_duty_day)]:1.0,work[(pi,_duty_day+1)]:1.0},-np.inf,1.0)
         co={}
         for d in range(1,ndays+1):
@@ -2312,16 +2313,37 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         # V2.5.162: next-day OFF after NIGHT is enforced above via work[d+1]==0.
         # This is intentionally stronger than the old 11 h rest-only rule and also
         # forbids a consecutive NIGHT on the following calendar day.
-    # V2.5.142 NIGHT raw water-fill: one 20:00-08:00 duty per calendar day
-    # is shared as evenly as mathematically possible.
-    if night_xray_duty_active(year,month):
-        for i in range(n):
-            for j in range(i+1,n):
-                _co={}
-                for d in range(1,ndays+1):
-                    _co[night[(i,d)]]=_co.get(night[(i,d)],0.0)+1.0
-                    _co[night[(j,d)]]=_co.get(night[(j,d)],0.0)-1.0
-                mb.constraint(_co,-1.0,1.0)
+    # V2.5.165 ABSOLUTE SPS RO DUTY WATER-FILL. ALL internal SPS RO duties
+    # (weekend/holiday FULL + NIGHT) share one raw burden ledger. This corridor is
+    # NEVER relaxed by the structural fallback: nobody gets a second duty while an
+    # eligible peer remains on zero when total supply is below resident count.
+    # If the exact floor/ceil corridor is infeasible under HARD eligibility, generation
+    # fails closed instead of silently concentrating duties.
+    _duty_full_days=sorted({s.day for s in slots if is_duty_slot(s) and s.block=="FULL" and not s.blocked and s.idx not in fixed_gaps})
+    _duty_night_days=sorted({s.day for s in slots if is_duty_slot(s) and s.block=="NIGHT" and not s.blocked and s.idx not in fixed_gaps})
+    _duty_total=len([s for s in slots if is_duty_slot(s) and not s.blocked and s.idx not in fixed_gaps])
+    _duty_lo=_duty_total//max(1,n)
+    _duty_hi=int(math.ceil(float(_duty_total)/float(max(1,n))))
+    duty_raw_expr={}
+    for pi,p in enumerate(people):
+        _expr={}
+        for d in _duty_full_days:
+            _expr[long[(pi,d)]]=_expr.get(long[(pi,d)],0.0)+1.0
+        for d in _duty_night_days:
+            _expr[night[(pi,d)]]=_expr.get(night[(pi,d)],0.0)+1.0
+        duty_raw_expr[pi]=_expr
+        if _expr:
+            mb.constraint(_expr,float(_duty_lo),float(_duty_hi))
+
+    # NIGHT-only sub-ledger remains independently water-filled when there is more
+    # than one NIGHT slot. Explicit one-off owners stay HARD and are included in the
+    # all-duty corridor above.
+    if len(_duty_night_days)>1:
+        _night_lo=len(_duty_night_days)//max(1,n)
+        _night_hi=int(math.ceil(float(len(_duty_night_days))/float(max(1,n))))
+        for pi in range(n):
+            _expr={night[(pi,d)]:1.0 for d in _duty_night_days}
+            mb.constraint(_expr,float(_night_lo),float(_night_hi))
 
     # V2.5.90 BASELINE WEEKEND VOLUNTEERS.
     # Standard months keep the old exact raw floor/ceil weekend water-fill.
@@ -4685,13 +4707,14 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
                 f"max hours/day {p.initials} {d}"
             )
 
-    # V2.5.162 VERY HARD internal-duty recovery for every SPS RO duty type.
-    # Duty day = no other assignment. Following calendar day = completely OFF.
+    # V2.5.165 VERY HARD internal-duty safety.
+    # ANY SPS RO duty = no other assignment that same calendar day.
+    # ONLY a NIGHT duty forces the following calendar day completely OFF.
     for pi,p in enumerate(people):
         if bool(getattr(p,"prior_last_day_duty",False)):
             _day1={x[(pi,s.idx)]:1.0 for s in by_day[1] if not s.blocked}
             if _day1:
-                mb.constraint(_day1,0.0,0.0,f"V25162 post-duty previous-month OFF {p.initials} day1")
+                mb.constraint(_day1,0.0,0.0,f"V25165 post-NIGHT previous-month OFF {p.initials} day1")
         for d in range(1,ndays+1):
             _duty=[s for s in by_day[d] if is_duty_slot(s) and not s.blocked]
             if not _duty:
@@ -4700,11 +4723,11 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
             for _ds in _duty:
                 _dv=x[(pi,_ds.idx)]
                 for _os in _other:
-                    mb.constraint({_dv:1.0,x[(pi,_os.idx)]:1.0},0.0,1.0,f"V25162 duty exclusive {p.initials} {d}")
-                if d<ndays:
+                    mb.constraint({_dv:1.0,x[(pi,_os.idx)]:1.0},0.0,1.0,f"V25165 duty exclusive {p.initials} {d}")
+                if _ds.block=="NIGHT" and d<ndays:
                     for _ns in by_day[d+1]:
                         if not _ns.blocked:
-                            mb.constraint({_dv:1.0,x[(pi,_ns.idx)]:1.0},0.0,1.0,f"V25162 post-duty OFF {p.initials} {d}->{d+1}")
+                            mb.constraint({_dv:1.0,x[(pi,_ns.idx)]:1.0},0.0,1.0,f"V25165 post-NIGHT OFF {p.initials} {d}->{d+1}")
 
     # Legacy NIGHT-specific constraints remain as redundant defense-in-depth when
     # the future recurring night model is activated.
@@ -5039,17 +5062,27 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
                     if _co:
                         mb.constraint(_co,-1.0,1.0,f"V25104 volunteer-adjusted {_label} fairness {people[i].initials}-{people[j].initials}")
 
-    # V2.5.142 night-duty water-fill: raw number of NIGHT duties differs by at
-    # most one between residents whenever the night model is active.
-    _night_slots=[s for s in slots if s.block=='NIGHT' and not s.blocked]
-    if _night_slots:
-        for i in range(len(people)):
-            for j in range(i+1,len(people)):
-                _co={}
-                for s in _night_slots:
-                    _co[x[(i,s.idx)]]=_co.get(x[(i,s.idx)],0.0)+1.0
-                    _co[x[(j,s.idx)]]=_co.get(x[(j,s.idx)],0.0)-1.0
-                mb.constraint(_co,-1.0,1.0,f"V25142 night raw waterfill {people[i].initials}-{people[j].initials}")
+    # V2.5.165 ABSOLUTE SPS RO DUTY WATER-FILL. Count every SPS RO duty in
+    # one raw ledger (weekend/holiday FULL + NIGHT), independent of ordinary SPS RO
+    # workstation exposure and independent of volunteer/weekend wish accounting.
+    # Exact floor/ceil is HARD in every solve path. No second duty before the first
+    # round is complete; if HARD eligibility makes that impossible, fail closed.
+    _all_duty_slots=[s for s in slots if is_duty_slot(s) and not s.blocked and s.idx not in fixed_gap_ids]
+    _duty_total=len(_all_duty_slots)
+    _duty_lo=_duty_total//max(1,len(people))
+    _duty_hi=int(math.ceil(float(_duty_total)/float(max(1,len(people)))))
+    for pi,p in enumerate(people):
+        _co={x[(pi,s.idx)]:1.0 for s in _all_duty_slots}
+        if _co:
+            mb.constraint(_co,float(_duty_lo),float(_duty_hi),f"V25165 all SPS RO duties exact waterfill {p.initials}")
+
+    # NIGHT-only sub-ledger is also water-filled when multiple NIGHT duties exist.
+    _night_slots=[s for s in _all_duty_slots if s.block=='NIGHT']
+    if len(_night_slots)>1:
+        _night_lo=len(_night_slots)//max(1,len(people)); _night_hi=int(math.ceil(float(len(_night_slots))/float(max(1,len(people)))))
+        for pi,p in enumerate(people):
+            _co={x[(pi,s.idx)]:1.0 for s in _night_slots}
+            mb.constraint(_co,float(_night_lo),float(_night_hi),f"V25165 NIGHT exact waterfill {p.initials}")
 
     holiday_days = public_holiday_days_in_month(year,month)
     holiday_slots = [s for s in slots if s.day in holiday_days and not s.blocked]
@@ -6710,6 +6743,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             "weekday_assignments": 0,
             "weekday_days": 0,
             "weekend_assignments": 0,
+            "sps_ro_duty_assignments": 0,
             "holiday_assignments": 0,
             "holiday_preference": int(getattr(p,"holiday_preference",0) or 0),
             "prior_holiday_count": int(getattr(p,"prior_holiday_count",0) or 0),
@@ -6878,6 +6912,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
         d["workload"] = sum(s.workload2 for s in pslots) / 2.0
         d["weekday_assignments"] = sum(s.weekday < 5 for s in pslots)
         d["weekend_assignments"] = sum(s.weekday >= 5 for s in pslots)
+        d["sps_ro_duty_assignments"] = sum(1 for s in pslots if is_duty_slot(s))
         d["holiday_assignments"] = sum(is_public_holiday(year,month,s.day) for s in pslots)
         d["cumulative_holiday_count"] = int(getattr(p,"prior_holiday_count",0) or 0) + d["holiday_assignments"]
         d["friday_assignments"] = sum(s.weekday == 4 for s in pslots)
@@ -7044,12 +7079,13 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             if len(ds) == 2:
                 d["doubles"] += 1
 
-        # V2.5.162 post-duty OFF is ABSOLUTE for SYSTEM and ACTUAL: no swap ACK.
+        # V2.5.165 post-NIGHT OFF is ABSOLUTE for SYSTEM and ACTUAL: no swap ACK.
+        # Daytime/weekend FULL duties do NOT create an automatic next-day OFF block.
         if bool(getattr(p,"prior_last_day_duty",False)) and any(s.day==1 for s in pslots):
-            errors.append(f"{p.initials}: VERY HARD post-duty rest violated on day 1 after prior-month duty")
+            errors.append(f"{p.initials}: VERY HARD post-NIGHT rest violated on day 1 after prior-month NIGHT duty")
         for _duty_day in range(1,ndays):
-            if any(s.day==_duty_day and is_duty_slot(s) for s in pslots) and any(s.day==_duty_day+1 for s in pslots):
-                errors.append(f"{p.initials}: VERY HARD post-duty rest violated; day {_duty_day+1} must be completely OFF after duty on day {_duty_day}")
+            if any(s.day==_duty_day and is_duty_slot(s) and s.block=="NIGHT" for s in pslots) and any(s.day==_duty_day+1 for s in pslots):
+                errors.append(f"{p.initials}: VERY HARD post-NIGHT rest violated; day {_duty_day+1} must be completely OFF after NIGHT duty on day {_duty_day}")
 
         d["distinct_work_days"] = len(worked_days)
         d["weekday_days"] = len(weekday_days)
@@ -7944,6 +7980,23 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
     monthly_fairness_score=monthly_fairness_score_balanced
     cumulative_fairness_score=cumulative_fairness_score_balanced
 
+    # V2.5.165 ABSOLUTE duty water-fill validator. This is independent of the
+    # broader SPS RO workplace counter: only actual SPS RO duty rows count here.
+    _duty_slots_validate=[s for s in slots if is_duty_slot(s) and not s.blocked]
+    _duty_total_validate=len(_duty_slots_validate)
+    _duty_n=max(1,len(people))
+    _duty_floor_validate=_duty_total_validate//_duty_n
+    _duty_ceil_validate=int(math.ceil(float(_duty_total_validate)/float(_duty_n)))
+    _duty_counts_validate={p.initials:int((pdata.get(p.initials) or {}).get("sps_ro_duty_assignments",0) or 0) for p in people}
+    _duty_vals_validate=list(_duty_counts_validate.values())
+    _duty_spread_validate=(max(_duty_vals_validate)-min(_duty_vals_validate)) if _duty_vals_validate else 0
+    _duty_waterfill_passed=all(_duty_floor_validate <= v <= _duty_ceil_validate for v in _duty_vals_validate) and _duty_spread_validate<=1
+    if not _duty_waterfill_passed:
+        errors.append(
+            f"SPS RO DUTY WATER-FILL violated: counts={_duty_counts_validate}, "
+            f"required each in [{_duty_floor_validate},{_duty_ceil_validate}]"
+        )
+
     active_scores = [v["preference_score"] for v in pdata.values() if v["preference_score"] is not None]
     active_soft_scores=[v["soft_preference_score"] for v in pdata.values() if v.get("soft_preference_score") is not None]
     active_exact_scores=[v["exact_preference_score"] for v in pdata.values() if v.get("exact_preference_score") is not None]
@@ -7995,6 +8048,14 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             "onko_monthly_spread_ceiling": 2,
             "weekday_count": weekday_count(year, month),
             "base_target": standard_target(year, month),
+            "sps_ro_duty_waterfill_required": True,
+            "sps_ro_duty_total_slots": int(_duty_total_validate),
+            "sps_ro_duty_floor": int(_duty_floor_validate),
+            "sps_ro_duty_ceil": int(_duty_ceil_validate),
+            "sps_ro_duty_counts": dict(_duty_counts_validate),
+            "sps_ro_duty_spread": int(_duty_spread_validate),
+            "sps_ro_duty_waterfill_passed": bool(_duty_waterfill_passed),
+            "post_duty_rest_policy": "NEXT_DAY_OFF_ONLY_AFTER_INTERNAL_NIGHT_DUTY",
             "weekly_load_model":"V2555_GENERATION_48H_RECOVERY_STRICT__VOLUNTARY_SWAP_12H_11H_6D_60H_REALITY_GUARD",
             "validation_mode":str(validation_mode),
             "voluntary_swap_mode":bool(voluntary_swap_mode),
@@ -8127,7 +8188,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             "preference_equity_quality_target_pp": 15.0,
             "preference_equity_quality_gate_passed": preference_equity_quality_gate_passed,
             "preference_fairness_model": "V2553_VERTICAL_RANK_HORIZONTAL_WEEKLY_RECOVERY_WATERFILL_GUARDRAILS",
-            "preference_vertical_order": ["ABSOLUTE_HARD","INTERNAL_DUTY_EXCLUSIVE_AND_NEXT_DAY_OFF","RESIDENT_HARD_ZERO_LOSS","MANDATORY_COVERAGE_AND_EXACT_WORKLOAD","FRIDAY_STRUCTURAL_WATERFILL","VALID_EXACT_SOFT1_MAX_COUNT","VALID_EXACT_SOFT2_MAX_COUNT","DOUBLE_FAIRNESS_AFTER_WISH_LOCK","CRITICAL_WEEKEND_GUARDRAILS","SOFT3_WORKSTYLE","POST_FAIRNESS"],
+            "preference_vertical_order": ["ABSOLUTE_HARD","ALL_SPS_RO_DUTIES_EXACT_WATERFILL","DUTY_SAME_DAY_EXCLUSIVE__NIGHT_ONLY_NEXT_DAY_OFF","RESIDENT_HARD_ZERO_LOSS","MANDATORY_COVERAGE_AND_EXACT_WORKLOAD","FRIDAY_STRUCTURAL_WATERFILL","VALID_EXACT_SOFT1_MAX_COUNT","VALID_EXACT_SOFT2_MAX_COUNT","DOUBLE_FAIRNESS_AFTER_WISH_LOCK","CRITICAL_WEEKEND_GUARDRAILS","SOFT3_WORKSTYLE","POST_FAIRNESS"],
             "post_fairness_model": "V2577_ALL_POST_PLUS_FRIDAY_STRUCTURAL_WATERFILL",
             "soft_waterfill_locks": {},
         },
@@ -8397,6 +8458,9 @@ def _swap_hard_rule_row(error: str) -> dict:
     elif "gap " in low or "gap-" in low:
         code="GENERATOR_GAP_FAIRNESS"
         rule="Generator-only optional-gap fairness"
+    elif "sps ro duty water-fill" in low:
+        code="SPS_RO_DUTY_WATERFILL"
+        rule="SPS RO duty water-fill"
     elif "friday structural" in low:
         code="GENERATOR_FRIDAY_FAIRNESS"
         rule="Generator-only Friday fairness"
@@ -8423,8 +8487,10 @@ def preview_swap(year: int, month: int, people: List[Person], result: SolveResul
     backup/coverage feasibility and even Onko pairing. Monthly workload CREDIT is
     frozen at publication and is never recalculated from ACTUAL placement. Generator-only
     fatigue shaping, the 48h generation ceiling, consecutive
-    Onko, weekend uniqueness, preference, workplace water-fill, post spread, modality
-    diversity and educational exposure are NOT blockers; affected residents may
+    Onko, ordinary weekend uniqueness, preference, workplace water-fill, post spread, modality
+    diversity and educational exposure are NOT blockers. SPS RO DUTY water-fill IS
+    a HARD blocker: a swap cannot create a second duty while another resident remains
+    below the exact duty floor/ceil corridor. Affected residents may otherwise
     voluntarily create an uneven ACTUAL post matrix by bilateral acceptance. Onko
     parity remains a separate ACTUAL invariant; target/workload CREDIT does not move.
     """
