@@ -1,4 +1,15 @@
-# RAPA Scheduler — V2.5.154 SURVEY ALL MODES
+# RAPA Scheduler — V2.5.157 ADMIN STATIONS + NO BLOCK
+
+## V2.5.157
+- SP / administracijos spalio postų prioritetai įdėti į operacinį engine.
+- MUST: CENTRO RO 4+4, SPS RO AM+PM, Centro UG 120 AM, Onkologinė/TBL, Skopijos ir budėjimai.
+- II prioritetas: Vaikų UG AM, ADC AM, Centro UG 120 PM.
+- III prioritetas: ADC PM ir SPS UG AM.
+- SPS UG PM nuo spalio neaktyvus; Mammografiją pakeičia Skopijos I–IV 08:00–14:00.
+- Skopijos įprastai: Centras 0153; 2026-10-13: konsultacinė poliklinika 209.
+- BLOCK / inactive slotai žmogui rodomame grafike neberodomi.
+- Budėjimų HARD logika palikta nepakeista.
+
 
 ## V2.5.154
 - Anketa matoma visiems rezidentams tiek paprastame, tiek išplėstiniame režime.

@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.153"
+ENGINE_API_VERSION = "2.5.157"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -195,14 +195,45 @@ def centro120_am_active(year: int, month: int) -> bool:
 def slot_visible_in_schedule(slot: "Slot", year: int, month: int) -> bool:
     """Whether a slot should appear in human-facing schedule grids/exports.
 
-    V2.5.153 keeps Oct-2026+ Mammography rows as blocked internal tombstones so
-    historical/serialized slot IDs do not shift, but they are no longer part of
-    the cohort rota and therefore must not render as a wall of BLOCK cells.
-    Historical months keep their original Mammography presentation.
+    V2.5.157 presentation rule: an inactive/blocked slot is solver metadata, not a
+    workplace.  Human-facing schedules therefore omit blocked cells entirely.
+    This also keeps the Oct-2026+ Mammography and SPS-UG-PM compatibility
+    tombstones internal while preserving their historical slot identities.
     """
-    if cohort_october_model(year, month) and str(slot.department).startswith("Mamografijos"):
-        return False
-    return True
+    return not bool(slot.blocked)
+
+
+def admin_coverage_priority_tier(slot: "Slot", year: int, month: int) -> int:
+    """Administrative service-coverage priority for Oct-2026+ gap selection.
+
+    0 = MUST / hard-covered service, 1 = second priority, 2 = last priority.
+    Historical months return 1 so their legacy gap behavior can remain intact.
+    """
+    if not cohort_october_model(year, month):
+        return 1
+    d=str(slot.department or "")
+    b=str(slot.block or "").upper()
+    if (
+        d.startswith("CENTRO RO")
+        or d.startswith("Onkologinė/TBL")
+        or d.startswith("Onko/TBL")
+        or d.startswith("SPS RO")
+        or (d.startswith("Centro UG 120") and b=="AM")
+        or d.startswith("Skopijos")
+    ):
+        return 0
+    if (
+        d.startswith("Vaikų UG")
+        or ((d.startswith("ADC 144") or d.startswith("145") or d.startswith("ADC 145")) and b=="AM")
+        or (d.startswith("Centro UG 120") and b=="PM")
+    ):
+        return 1
+    if (
+        ((d.startswith("ADC 144") or d.startswith("145") or d.startswith("ADC 145")) and b=="PM")
+        or (d.startswith("SPS UG") and b=="AM")
+    ):
+        return 2
+    return 2
 
 
 @dataclass
@@ -870,6 +901,7 @@ ROTATION_CATEGORIES = (
     "ADC 144",
     "ADC 145",
     "Vaikų UG",
+    "Skopijos",
     "Mamografijos",
 )
 
@@ -1049,6 +1081,8 @@ def rotation_category(slot: Slot) -> str:
         return "ADC 145"
     if d.startswith("Vaikų UG"):
         return "Vaikų UG"
+    if d.startswith("Skopijos"):
+        return "Skopijos"
     if d.startswith("Mamografijos"):
         return "Mamografijos"
     return d
@@ -1131,9 +1165,11 @@ def make_slots(year: int, month: int) -> List[Slot]:
       * CENTRO RO = exactly 4 AM + 4 PM rows on every open weekday;
       * Onkologinė/TBL = 1 AM + 1 PM (old 9 h Onko FULL/parity model retired);
       * SPS RO works both AM and PM on weekdays;
-      * Mammography is closed for this cohort (kept only as hidden blocked tombstones for stable slot IDs);
-      * weekend/holiday daytime duty is one 08:00-20:00 FULL row;
-      * Centro UG 120 AM remains active on open weekdays.
+      * Centro UG 120 AM is MUST coverage; 120 PM is second priority;
+      * Skopijos replaces Mammography: one 08:00-14:00 AM row Monday-Thursday;
+      * SPS UG PM is retired; SPS UG AM remains as a last-priority optional row;
+      * Mammography is closed for this cohort (hidden blocked tombstones keep stable slot IDs);
+      * weekend/holiday daytime duty remains HARD as one 08:00-20:00 FULL row.
     Future night XR duties remain disabled until their start model is explicitly confirmed.
     """
     slots: List[Slot] = []
@@ -1155,6 +1191,7 @@ def make_slots(year: int, month: int) -> List[Slot]:
     holiday_days=public_holiday_days_in_month(year,month)
     weekday_holidays=[]
     centro120_pm_days=[]
+    skopijos_days=[]
     for d in range(1, ndays + 1):
         wd = date(year, month, d).weekday()
         if wd < 5:
@@ -1170,14 +1207,22 @@ def make_slots(year: int, month: int) -> List[Slot]:
                 add(d, wd, "Onkologinė/TBL", "AM", mandatory=(not holiday_closed), blocked=holiday_closed)
                 add(d, wd, "Onkologinė/TBL", "PM", mandatory=(not holiday_closed), blocked=holiday_closed)
 
-            add(d, wd, "Centro UG 120kab", "AM", blocked=(holiday_closed or not centro120_am_active(year,month)))
+            add(
+                d, wd, "Centro UG 120kab", "AM",
+                mandatory=(new_model and not holiday_closed and centro120_am_active(year,month)),
+                blocked=(holiday_closed or not centro120_am_active(year,month))
+            )
             centro120_pm_days.append((d,wd,holiday_closed))
+            if new_model and wd <= 3:
+                skopijos_days.append((d,wd,holiday_closed))
 
             add(d, wd, "SPS RO d.d.", "AM", mandatory=(not holiday_closed), blocked=holiday_closed)
             if new_model:
                 add(d, wd, "SPS RO d.d.", "PM", mandatory=(not holiday_closed), blocked=holiday_closed)
-            add(d, wd, "SPS UG 1035kab", "AM", mandatory=(not holiday_closed), blocked=holiday_closed)
-            add(d, wd, "SPS UG 1035kab", "PM", mandatory=(not holiday_closed), blocked=holiday_closed)
+            # Admin priority from Oct-2026: SPS UG AM is the last optional tier;
+            # the former SPS UG PM row is retired but retained as a blocked tombstone.
+            add(d, wd, "SPS UG 1035kab", "AM", mandatory=(not new_model and not holiday_closed), blocked=holiday_closed)
+            add(d, wd, "SPS UG 1035kab", "PM", mandatory=(not new_model and not holiday_closed), blocked=(holiday_closed or new_model))
             add(d, wd, "ADC 144kab", "AM", blocked=holiday_closed)
             add(d, wd, "ADC 144kab", "PM", blocked=holiday_closed)
             add(d, wd, "145kab", "AM", blocked=holiday_closed)
@@ -1207,6 +1252,12 @@ def make_slots(year: int, month: int) -> List[Slot]:
     # Append-only identity rule for the previously added Centro 120 PM capacity.
     for d,wd,holiday_closed in centro120_pm_days:
         add(d, wd, "Centro UG 120kab", "PM", blocked=bool(holiday_closed))
+
+    # V2.5.157: Skopijos is append-only so every pre-existing slot id remains stable.
+    # One AM row exists Monday-Thursday from Oct-2026 onward.  2026-10-13 has a
+    # presentation-only room/location exception handled by the app layer.
+    for d,wd,holiday_closed in skopijos_days:
+        add(d, wd, "Skopijos", "AM", mandatory=(not holiday_closed), blocked=bool(holiday_closed))
 
     # Future 20:00-08:00 XR night duties remain fail-closed until explicitly confirmed.
     # When activated later, keep them append-only so daytime slot identities stay stable.
@@ -1860,11 +1911,15 @@ def _v2564_choose_fixed_gaps(year, month, slots, gap_meta, seconds=5.0):
     if not optional_days:
         return fixed
     options=[s for s in slots if s.day in optional_days and not s.blocked and not s.mandatory and s.department!="Onko RO centre"]
-    # V2.5.97: Mammography is the least-required cabinet. When optional capacity
-    # must be left empty, consume Mammography gaps first; only then water-fill
-    # unavoidable gaps across the remaining ordinary posts.
+    # V2.5.157: from Oct-2026 unavoidable empty rows follow the admin service
+    # hierarchy.  LAST-priority rows absorb gaps before SECOND-priority rows; MUST
+    # rows are mandatory upstream and therefore never enter this candidate list.
+    # Historical months retain the old Mammography-last behavior.
     def _gap_cost(sl):
         tiny=(((sl.day+1)*17+(sl.idx+1)*7)%53)*1e-5
+        if cohort_october_model(year,month):
+            tier=admin_coverage_priority_tier(sl,year,month)
+            return ({2:-10000.0,1:0.0,0:1000000.0}.get(tier,0.0)) + tiny
         return (-1000.0 if rotation_category(sl)=="Mamografijos" else 0.0) + tiny
     mb=_V2564FastMB(); g={s.idx:mb.var(cost=_gap_cost(s)) for s in options}
     for d in sorted(optional_days):
@@ -1872,13 +1927,27 @@ def _v2564_choose_fixed_gaps(year, month, slots, gap_meta, seconds=5.0):
         need=int(optional_counts.get(d,1))
         if len(co)<need: return None
         mb.constraint(co,float(need),float(need))
-    cats=sorted({rotation_category(s) for s in options if rotation_category(s)!="Mamografijos"})
-    expr={cat:{g[s.idx]:1.0 for s in options if rotation_category(s)==cat} for cat in cats}
-    for ai,c1 in enumerate(cats):
-        for c2 in cats[ai+1:]:
-            co=dict(expr[c1])
-            for v,c in expr[c2].items(): co[v]=co.get(v,0.0)-c
-            mb.constraint(co,-2.0,2.0)
+    if cohort_october_model(year,month):
+        # ADC morning and evening belong to different admin tiers, so balance by
+        # station+block family rather than by broad rotation category.
+        families=sorted({(rotation_category(sl),sl.block) for sl in options})
+        fexpr={fam:{g[sl.idx]:1.0 for sl in options if (rotation_category(sl),sl.block)==fam} for fam in families}
+        ftier={fam:min(admin_coverage_priority_tier(sl,year,month) for sl in options if (rotation_category(sl),sl.block)==fam) for fam in families}
+        for ai,f1 in enumerate(families):
+            for f2 in families[ai+1:]:
+                if ftier[f1]!=ftier[f2]:
+                    continue
+                co=dict(fexpr[f1])
+                for v,c in fexpr[f2].items(): co[v]=co.get(v,0.0)-c
+                mb.constraint(co,-2.0,2.0)
+    else:
+        cats=sorted({rotation_category(s) for s in options if rotation_category(s)!="Mamografijos"})
+        expr={cat:{g[s.idx]:1.0 for s in options if rotation_category(s)==cat} for cat in cats}
+        for ai,c1 in enumerate(cats):
+            for c2 in cats[ai+1:]:
+                co=dict(expr[c1])
+                for v,c in expr[c2].items(): co[v]=co.get(v,0.0)-c
+                mb.constraint(co,-2.0,2.0)
     res=mb.solve(seconds)
     if res.x is None: return None
     fixed.update(sid for sid,v in g.items() if float(res.x[v])>0.5)
@@ -4007,28 +4076,66 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
         mb.constraint(co,filled,filled,f"exactly {need} gaps day {d}")
 
     # Balance WHICH workplaces absorb the unavoidable gaps.
-    # gap_count(cat) = candidate gap-day slots in cat - filled slots in cat.
-    gap_count_by_cat={}
-    for cat in ROTATION_CATEGORIES:
-        cat_opts=[s for s in optional_slots if s.day in optional_gap_days and rotation_category(s)==cat]
-        if not cat_opts:
-            continue
-        gc=mb.var(f"gap_count[{cat}]",cost=0,lb=0,ub=len(cat_opts),integer=False)
-        co={gc:1}
-        for s in cat_opts:
-            for pi in range(len(people)):
-                co[x[(pi,s.idx)]]=co.get(x[(pi,s.idx)],0)+1
-        mb.constraint(co,len(cat_opts),len(cat_opts),f"gap count identity {cat}")
-        gap_count_by_cat[cat]=gc
+    if cohort_october_model(year,month):
+        # V2.5.157: admin tiers are station+block-specific (ADC AM is tier II,
+        # ADC PM is tier III), so gap variables are built per family.
+        gap_count_by_family={}
+        families=sorted({(rotation_category(sl),sl.block) for sl in optional_slots if sl.day in optional_gap_days})
+        for fam in families:
+            fam_opts=[sl for sl in optional_slots if sl.day in optional_gap_days and (rotation_category(sl),sl.block)==fam]
+            if not fam_opts:
+                continue
+            gc=mb.var(f"gap_count[{fam[0]},{fam[1]}]",cost=0,lb=0,ub=len(fam_opts),integer=False)
+            co={gc:1}
+            for sl in fam_opts:
+                for pi in range(len(people)):
+                    co[x[(pi,sl.idx)]]=co.get(x[(pi,sl.idx)],0)+1
+            mb.constraint(co,len(fam_opts),len(fam_opts),f"gap count identity {fam[0]} {fam[1]}")
+            gap_count_by_family[fam]=gc
 
-    if gap_count_by_cat:
-        gmax=mb.var("gap_category_max",cost=160.0,lb=0,ub=len(optional_gap_days),integer=False)
-        gmin=mb.var("gap_category_min",cost=-40.0,lb=0,ub=len(optional_gap_days),integer=False)
-        for cat,gc in gap_count_by_cat.items():
-            mb.constraint({gc:1,gmax:-1},-np.inf,0,f"gap category max {cat}")
-            mb.constraint({gc:1,gmin:-1},0,np.inf,f"gap category min {cat}")
-        # REAL guardrail: unavoidable gaps may not all pile into one service.
-        mb.constraint({gmax:1,gmin:-1},-np.inf,2,"gap category spread <= 2")
+        ftier={}
+        for fam,gc in gap_count_by_family.items():
+            candidates=[sl for sl in optional_slots if (rotation_category(sl),sl.block)==fam]
+            tier=min(admin_coverage_priority_tier(sl,year,month) for sl in candidates) if candidates else 2
+            ftier[fam]=tier
+            # Strong lexicographic proxy: never sacrifice a tier-II row while a
+            # tier-III row on that day can absorb the required gap.
+            if tier==1:
+                mb.c[gc] += 100000.0
+            elif tier==2:
+                mb.c[gc] -= 100.0
+
+        for tier in sorted(set(ftier.values())):
+            members=[fam for fam in gap_count_by_family if ftier[fam]==tier]
+            if len(members)<2:
+                continue
+            gmax=mb.var(f"gap_family_max_t{tier}",cost=160.0,lb=0,ub=len(optional_gap_days),integer=False)
+            gmin=mb.var(f"gap_family_min_t{tier}",cost=-40.0,lb=0,ub=len(optional_gap_days),integer=False)
+            for fam in members:
+                gc=gap_count_by_family[fam]
+                mb.constraint({gc:1,gmax:-1},-np.inf,0,f"gap family max t{tier} {fam}")
+                mb.constraint({gc:1,gmin:-1},0,np.inf,f"gap family min t{tier} {fam}")
+            mb.constraint({gmax:1,gmin:-1},-np.inf,2,f"gap family spread t{tier} <= 2")
+    else:
+        gap_count_by_cat={}
+        for cat in ROTATION_CATEGORIES:
+            cat_opts=[s for s in optional_slots if s.day in optional_gap_days and rotation_category(s)==cat]
+            if not cat_opts:
+                continue
+            gc=mb.var(f"gap_count[{cat}]",cost=0,lb=0,ub=len(cat_opts),integer=False)
+            co={gc:1}
+            for s in cat_opts:
+                for pi in range(len(people)):
+                    co[x[(pi,s.idx)]]=co.get(x[(pi,s.idx)],0)+1
+            mb.constraint(co,len(cat_opts),len(cat_opts),f"gap count identity {cat}")
+            gap_count_by_cat[cat]=gc
+        if gap_count_by_cat:
+            gmax=mb.var("gap_category_max",cost=160.0,lb=0,ub=len(optional_gap_days),integer=False)
+            gmin=mb.var("gap_category_min",cost=-40.0,lb=0,ub=len(optional_gap_days),integer=False)
+            for cat,gc in gap_count_by_cat.items():
+                mb.constraint({gc:1,gmax:-1},-np.inf,0,f"gap category max {cat}")
+                mb.constraint({gc:1,gmin:-1},0,np.inf,f"gap category min {cat}")
+            mb.constraint({gmax:1,gmin:-1},-np.inf,2,"gap category spread <= 2")
 
     # Spread repeated CENTRO/ADC row sacrifice as a lower-order tie-breaker.
     family_groups={}
@@ -6458,16 +6565,30 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
         if not s.blocked and not s.mandatory and s.department!="Onko RO centre"
         and rotation_category(s)!="Mamografijos"
     })
-    cat_vals=[cat_gap_counts.get(cat,0) for cat in optional_categories]
-    optional_gap_category_spread=(max(cat_vals)-min(cat_vals)) if cat_vals else 0
+    if cohort_october_model(year,month):
+        # ADC AM is tier 1 while ADC PM is tier 2, so validate dispersion by
+        # station+block family inside each tier rather than by broad category.
+        family_gap_counts={}
+        for r in actual_optional:
+            fam=(str(r["rotation"]),str(r["block"]))
+            family_gap_counts[fam]=family_gap_counts.get(fam,0)+1
+        families=sorted({(rotation_category(sl),sl.block) for sl in slots if not sl.blocked and not sl.mandatory and sl.department!="Onko RO centre"})
+        tier_spreads=[]
+        for tier in (1,2):
+            tf=[fam for fam in families if any(admin_coverage_priority_tier(sl,year,month)==tier for sl in slots if not sl.blocked and not sl.mandatory and (rotation_category(sl),sl.block)==fam)]
+            vals=[family_gap_counts.get(fam,0) for fam in tf]
+            if vals:
+                tier_spreads.append(max(vals)-min(vals))
+        optional_gap_category_spread=max(tier_spreads or [0])
+    else:
+        cat_vals=[cat_gap_counts.get(cat,0) for cat in optional_categories]
+        optional_gap_category_spread=(max(cat_vals)-min(cat_vals)) if cat_vals else 0
 
-    # V2.5.81: optional-gap pattern/distribution is a SYSTEM-generation structural
-    # rule only. ACTUAL voluntary swaps, backup changes and operational rescues may
-    # create/worsen optional gaps or spread without being blocked. The published
-    # SYSTEM fairness/gap baseline remains frozen for audit.
+    # V2.5.157: from Oct-2026 dispersion is checked within the same admin tier.
+    # SECOND and LAST tiers are intentionally not equalized against each other.
     if (not voluntary_swap_mode) and optional_gap_category_spread>2:
         errors.append(
-            f"Gap workplace dispersion violated: category spread {optional_gap_category_spread} > 2"
+            f"Gap workplace dispersion violated within coverage tier: category spread {optional_gap_category_spread} > 2"
         )
 
     _fixed_expected,_gap_meta,_gap_plan_errors=plan_distributed_gaps(
