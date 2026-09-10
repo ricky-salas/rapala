@@ -67,9 +67,9 @@ from opto_research import (
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.159 ONKO CYCLE LEDGER"
-EXPECTED_ENGINE_API_VERSION = "2.5.159"
-COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.159"}
+APP_VERSION = "2.5.160 AUTH RECOVERY + PERSISTENT SESSION"
+EXPECTED_ENGINE_API_VERSION = "2.5.160"
+COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.160"}
 
 # V2.5.139: import-safe reward credit compatibility. Older deployed engines used
 # by the same app already contain the scheduling API but predate the credit helpers.
@@ -1354,12 +1354,101 @@ def get_supabase_client():
         st.session_state["supabase_client"]=create_client(url,key)
     return st.session_state["supabase_client"]
 
+
+# V2.5.160 — Streamlit session state is tied to a WebSocket and is lost on a
+# browser reload. Keep the Supabase session in Secure/SameSite browser cookies
+# and restore it into a fresh supabase-py client on the next Streamlit session.
+_AUTH_COOKIE_ACCESS="rapa_sb_access_v1"
+_AUTH_COOKIE_REFRESH="rapa_sb_refresh_v1"
+_AUTH_COOKIE_MAX_AGE=60*60*24*30
+
+
+def _auth_cookie_value(name: str) -> str:
+    try:
+        raw=st.context.cookies.get(name,"")
+    except Exception:
+        return ""
+    try:
+        return urllib.parse.unquote(str(raw or ""))
+    except Exception:
+        return str(raw or "")
+
+
+def _auth_session_tokens(sb):
+    try:
+        session=sb.auth.get_session()
+    except Exception:
+        return "",""
+    session=getattr(session,"session",session)
+    access=str(getattr(session,"access_token","") or "")
+    refresh=str(getattr(session,"refresh_token","") or "")
+    return access,refresh
+
+
+def _render_auth_cookie_script(*, access: str="", refresh: str="", clear: bool=False):
+    """Write/delete persistent auth cookies in the browser without URL tokens."""
+    if clear:
+        payload=f'''<script>(()=>{{
+          const expire=(doc,name)=>{{doc.cookie=name+'=; Path=/; Max-Age=0; SameSite=Lax; Secure';}};
+          const run=(doc)=>{{expire(doc,{json.dumps(_AUTH_COOKIE_ACCESS)});expire(doc,{json.dumps(_AUTH_COOKIE_REFRESH)});}};
+          try{{run(window.parent.document);}}catch(e){{try{{run(document);}}catch(_){{}}}}
+        }})();</script>'''
+        components.html(payload,height=0,scrolling=False)
+        st.session_state.pop("_auth_cookie_fingerprint",None)
+        return
+    if not access or not refresh:
+        return
+    fp=hashlib.sha256((access+"\0"+refresh).encode()).hexdigest()
+    if st.session_state.get("_auth_cookie_fingerprint")==fp:
+        return
+    payload=f'''<script>(()=>{{
+      const maxAge={int(_AUTH_COOKIE_MAX_AGE)};
+      const put=(doc,name,value)=>{{doc.cookie=name+'='+encodeURIComponent(value)+'; Path=/; Max-Age='+maxAge+'; SameSite=Lax; Secure';}};
+      const run=(doc)=>{{put(doc,{json.dumps(_AUTH_COOKIE_ACCESS)},{json.dumps(access)});put(doc,{json.dumps(_AUTH_COOKIE_REFRESH)},{json.dumps(refresh)});}};
+      try{{run(window.parent.document);}}catch(e){{try{{run(document);}}catch(_){{}}}}
+    }})();</script>'''
+    components.html(payload,height=0,scrolling=False)
+    st.session_state["_auth_cookie_fingerprint"]=fp
+
+
+def _restore_persistent_auth_session(sb) -> bool:
+    """Restore a Supabase session after browser reload from RAPA cookies."""
+    if st.session_state.get("_auth_cookie_restore_attempted"):
+        return bool(st.session_state.get("_auth_cookie_restore_ok"))
+    st.session_state["_auth_cookie_restore_attempted"]=True
+    access=_auth_cookie_value(_AUTH_COOKIE_ACCESS)
+    refresh=_auth_cookie_value(_AUTH_COOKIE_REFRESH)
+    if not access or not refresh:
+        st.session_state["_auth_cookie_restore_ok"]=False
+        return False
+    try:
+        sb.auth.set_session(access,refresh)
+        # set_session refreshes automatically when necessary. Persist the
+        # rotated pair so the next reload does not reuse an obsolete token.
+        new_access,new_refresh=_auth_session_tokens(sb)
+        if new_access and new_refresh:
+            _render_auth_cookie_script(access=new_access,refresh=new_refresh)
+        st.session_state["_auth_cookie_restore_ok"]=True
+        return True
+    except Exception:
+        st.session_state["_auth_cookie_restore_ok"]=False
+        st.session_state["_auth_cookie_clear_needed"]=True
+        return False
+
+
+def _sync_persistent_auth_session(sb):
+    access,refresh=_auth_session_tokens(sb)
+    if access and refresh:
+        _render_auth_cookie_script(access=access,refresh=refresh)
+
+
 def authenticated_user(sb):
     try:
         r=sb.auth.get_user()
         return getattr(r,"user",None)
     except Exception:
         return None
+
 
 def _auth_uid(user):
     return str(getattr(user,"id","") or "").strip()
@@ -1391,13 +1480,28 @@ def enforce_auth_session_identity(user):
 
 
 def _password_recovery_redirect_url():
-    """Return a clean public RAPA URL for Supabase password recovery.
+    """Return the current clean public RAPA URL for password recovery.
 
-    Supabase must already allow this URL as the project Site URL or an Auth
-    Redirect URL. If it is not configured, reset_password_email is called
-    without an explicit redirect so Supabase falls back to the project Site URL.
+    Prefer the explicit deployment secret, but do not depend on it: on modern
+    Streamlit use st.context.url, and on older supported builds reconstruct the
+    public URL from forwarded headers. This prevents recovery emails from
+    falling back to a stale Supabase Site URL when the app URL changes.
     """
     public=config_value("SCHEDULER_PUBLIC_URL","").strip()
+    if not public:
+        try:
+            public=str(getattr(st.context,"url","") or "").strip()
+        except Exception:
+            public=""
+    if not public:
+        try:
+            headers=st.context.headers
+            host=str(headers.get("host") or "").strip()
+            proto=str(headers.get("x-forwarded-proto") or "https").split(",")[0].strip()
+            if host:
+                public=f"{proto}://{host}/"
+        except Exception:
+            public=""
     if not public:
         return ""
     try:
@@ -1411,103 +1515,120 @@ def _password_recovery_redirect_url():
 
 
 def render_password_recovery_bridge():
-    """Browser-only completion step for Supabase implicit recovery links.
+    """Complete Supabase implicit password recovery entirely in the browser.
 
     Supabase returns recovery credentials in the URL fragment (#...), which is
-    deliberately invisible to the Streamlit Python server. This same-origin
-    iframe reads the fragment in the browser and updates the password directly
-    against Supabase Auth. Tokens never enter Streamlit query parameters,
-    Python state, logs, or the database.
+    intentionally not sent to the Streamlit Python server. The browser form
+    updates the password directly at Supabase, then signs in once with the new
+    password and stores the fresh Supabase session in RAPA's Secure cookies.
+    No access/refresh token is ever copied into Streamlit query parameters.
     """
     url=config_value("SUPABASE_URL",DEFAULT_SUPABASE_URL).rstrip("/")
     key=config_value("SUPABASE_PUBLISHABLE_KEY",DEFAULT_SUPABASE_PUBLISHABLE_KEY)
     lt=(lang=="LT")
     title="Nustatykite naują slaptažodį" if lt else "Choose a new password"
+    intro=("Atkūrimo nuoroda patvirtinta. Įveskite naują slaptažodį du kartus. Išsaugojus RAPA jus prijungs automatiškai."
+           if lt else "Recovery link verified. Enter the new password twice. RAPA will sign you in automatically after saving.")
     p1="Naujas slaptažodis" if lt else "New password"
     p2="Pakartokite naują slaptažodį" if lt else "Repeat new password"
-    submit="IŠSAUGOTI NAUJĄ SLAPTAŽODĮ" if lt else "SAVE NEW PASSWORD"
+    submit="IŠSAUGOTI IR PRISIJUNGTI" if lt else "SAVE AND SIGN IN"
     mismatch="Slaptažodžiai nesutampa arba yra trumpesni nei 8 simboliai." if lt else "Passwords do not match or are shorter than 8 characters."
-    success="Slaptažodis pakeistas. Dabar galite prisijungti su nauju slaptažodžiu." if lt else "Password changed. You can now sign in with the new password."
-    expired="Atkūrimo nuoroda negalioja arba jos laikas baigėsi. Užsakykite naują nuorodą žemiau." if lt else "This recovery link is invalid or expired. Request a new link below."
+    success="Slaptažodis pakeistas. Jūs prisijungėte automatiškai — tęsiame į RAPA." if lt else "Password changed. You are signed in automatically — continuing to RAPA."
+    expired="Atkūrimo nuoroda negalioja arba jos laikas baigėsi. Grįžkite į RAPA ir užsakykite naują nuorodą." if lt else "This recovery link is invalid or expired. Return to RAPA and request a new link."
     failed="Slaptažodžio pakeisti nepavyko. Užsakykite naują atkūrimo nuorodą ir bandykite dar kartą." if lt else "Could not change the password. Request a new recovery link and try again."
-    back="Grįžti į prisijungimą" if lt else "Back to sign in"
     components.html(f'''<!doctype html><html><head><meta charset="utf-8"><style>
       body{{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:transparent;color:inherit}}
       #card{{display:none;border:1px solid rgba(128,128,128,.24);border-radius:12px;padding:18px 18px 16px;box-sizing:border-box;margin:0 0 12px}}
-      h3{{margin:0 0 13px;font-size:20px}} label{{display:block;font-size:13px;font-weight:600;margin:10px 0 5px}}
+      h3{{margin:0 0 8px;font-size:20px}} .intro{{font-size:13px;line-height:1.45;margin:0 0 10px;opacity:.82}}
+      label{{display:block;font-size:13px;font-weight:600;margin:10px 0 5px}}
       input{{width:100%;box-sizing:border-box;padding:10px 11px;border:1px solid rgba(128,128,128,.38);border-radius:8px;font-size:15px;background:transparent;color:inherit}}
       button{{width:100%;margin-top:14px;padding:10px 12px;border:0;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;background:#ff4b4b;color:white}}
       .msg{{margin-top:11px;font-size:13px;line-height:1.45}} .ok{{color:#1b7f3a}} .bad{{color:#b42318}}
-    </style></head><body><div id="card"><h3>{html.escape(title)}</h3><form id="f">
+    </style></head><body><div id="card"><h3>{html.escape(title)}</h3><div class="intro">{html.escape(intro)}</div><form id="f">
       <label>{html.escape(p1)}</label><input id="p1" type="password" autocomplete="new-password" minlength="8" required>
       <label>{html.escape(p2)}</label><input id="p2" type="password" autocomplete="new-password" minlength="8" required>
       <button type="submit">{html.escape(submit)}</button><div id="msg" class="msg"></div>
     </form></div><script>
     (() => {{
-      const frame=window.frameElement;
-      const hash=new URLSearchParams((window.parent.location.hash||'').replace(/^#/,''));
+      let parentHash='';
+      try {{ parentHash=window.parent.location.hash||''; }} catch(e) {{ parentHash=''; }}
+      const hash=new URLSearchParams(parentHash.replace(/^#/,''));
       const access=hash.get('access_token')||'';
       const type=hash.get('type')||'';
       const err=hash.get('error')||hash.get('error_code')||'';
       const card=document.getElementById('card'); const msg=document.getElementById('msg');
-      const show=() => {{card.style.display='block'; if(frame) frame.style.height='345px';}};
+      const show=() => {{card.style.display='block'; if(window.frameElement) window.frameElement.style.height='390px';}};
       if (err) {{ show(); document.getElementById('f').innerHTML='<div class="msg bad">'+{json.dumps(expired)}+'</div>'; return; }}
-      if (!(type==='recovery' && access)) {{ if(frame) frame.style.height='0px'; return; }}
+      if (!(type==='recovery' && access)) {{ if(window.frameElement) window.frameElement.style.height='0px'; return; }}
       show();
       document.getElementById('f').addEventListener('submit', async (ev) => {{
         ev.preventDefault(); const a=document.getElementById('p1').value; const b=document.getElementById('p2').value;
         if (a.length<8 || a!==b) {{ msg.className='msg bad'; msg.textContent={json.dumps(mismatch)}; return; }}
         msg.className='msg'; msg.textContent='...';
         try {{
-          const r=await fetch({json.dumps(url + '/auth/v1/user')}, {{method:'PUT',headers:{{'apikey':{json.dumps(key)},'Authorization':'Bearer '+access,'Content-Type':'application/json'}},body:JSON.stringify({{password:a}})}});
-          if (!r.ok) throw new Error(await r.text());
-          window.parent.history.replaceState(null,'',window.parent.location.pathname+window.parent.location.search);
-          document.getElementById('f').innerHTML='<div class="msg ok">'+{json.dumps(success)}+'</div><button type="button" id="back">'+{json.dumps(back)}+'</button>';
-          document.getElementById('back').onclick=() => {{
-            const u=new URL(window.parent.location.href); u.hash=''; u.searchParams.set('password_reset_done','1'); window.parent.location.href=u.toString();
-          }};
-          if(frame) frame.style.height='170px';
+          const me=await fetch({json.dumps(url + '/auth/v1/user')},{{headers:{{'apikey':{json.dumps(key)},'Authorization':'Bearer '+access}}}});
+          if(!me.ok) throw new Error(await me.text());
+          const user=await me.json(); const email=(user&&user.email)||'';
+          if(!email) throw new Error('missing recovery email');
+          const changed=await fetch({json.dumps(url + '/auth/v1/user')},{{method:'PUT',headers:{{'apikey':{json.dumps(key)},'Authorization':'Bearer '+access,'Content-Type':'application/json'}},body:JSON.stringify({{password:a}})}});
+          if(!changed.ok) throw new Error(await changed.text());
+          const login=await fetch({json.dumps(url + '/auth/v1/token?grant_type=password')},{{method:'POST',headers:{{'apikey':{json.dumps(key)},'Content-Type':'application/json'}},body:JSON.stringify({{email:email,password:a}})}});
+          if(!login.ok) throw new Error(await login.text());
+          const auth=await login.json();
+          if(!auth.access_token || !auth.refresh_token) throw new Error('missing fresh session');
+          const put=(doc,name,value)=>{{doc.cookie=name+'='+encodeURIComponent(value)+'; Path=/; Max-Age='+{int(_AUTH_COOKIE_MAX_AGE)}+'; SameSite=Lax; Secure';}};
+          const save=(doc)=>{{put(doc,{json.dumps(_AUTH_COOKIE_ACCESS)},auth.access_token);put(doc,{json.dumps(_AUTH_COOKIE_REFRESH)},auth.refresh_token);}};
+          try{{save(window.parent.document);}}catch(e){{try{{save(document);}}catch(_){{}}}}
+          try{{window.parent.history.replaceState(null,'',window.parent.location.pathname+window.parent.location.search);}}catch(e){{}}
+          document.getElementById('f').innerHTML='<div class="msg ok">'+{json.dumps(success)}+'</div>';
+          if(window.frameElement) window.frameElement.style.height='160px';
+          setTimeout(()=>{{
+            try {{ const u=new URL(window.parent.location.href); u.hash=''; u.searchParams.set('password_reset_done','1'); window.parent.location.href=u.toString(); }} catch(e) {{}}
+          }},700);
         }} catch(e) {{ msg.className='msg bad'; msg.textContent={json.dumps(failed)}; }}
       }});
     }})();
     </script></body></html>''',height=1,scrolling=False)
 
 
-def _consume_password_reset_done(sb):
-    """After a successful browser-side reset, force a clean login session."""
+def _consume_password_reset_done():
+    """Show a one-time success flash; do not sign the resident out again."""
     try:
         done=str(st.query_params.get("password_reset_done") or "")
     except Exception:
         done=""
     if done!="1":
         return
-    try:
-        sb.auth.sign_out()
-    except Exception:
-        pass
-    clear_cross_account_session_state(keep_client=False)
-    cleared=False
+    st.session_state["_password_reset_success_flash"]=True
     try:
         del st.query_params["password_reset_done"]
-        cleared=True
     except Exception:
-        try:
-            st.query_params.clear()
-            cleared=True
-        except Exception:
-            pass
-    if cleared:
-        st.rerun()
+        pass
 
 
 def render_auth_gate():
     sb=get_supabase_client()
-    _consume_password_reset_done(sb)
+
+    logout_cleanup=bool(st.session_state.pop("_logout_cookie_cleanup",False))
+    if logout_cleanup:
+        _render_auth_cookie_script(clear=True)
+    else:
+        if authenticated_user(sb) is None:
+            _restore_persistent_auth_session(sb)
+
+    if st.session_state.pop("_auth_cookie_clear_needed",False):
+        _render_auth_cookie_script(clear=True)
+
+    _consume_password_reset_done()
     render_password_recovery_bridge()
     user=authenticated_user(sb)
     if user is not None:
         enforce_auth_session_identity(user)
+        _sync_persistent_auth_session(sb)
+        if st.session_state.pop("_password_reset_success_flash",False):
+            st.success("Slaptažodis sėkmingai pakeistas. Jūs jau prisijungę." if lang=="LT" else "Password changed successfully. You are already signed in.")
         return sb,user
+
     st.title(tr("login_title"))
     with st.form("login_form"):
         email=st.text_input(tr("auth_email"),key="login_email")
@@ -1521,7 +1642,10 @@ def render_auth_gate():
                 st.error(tr("auth_invalid"))
 
     with st.expander(tr("forgot_password"),expanded=False):
-        st.caption(tr("forgot_password_help"))
+        if lang=="LT":
+            st.caption("Įveskite paskyros el. paštą ir spauskite atkūrimo mygtuką. Tada atidarykite gautą RAPA laišką ir paspauskite nuorodą. Ji sugrąžins tiesiai į RAPA, kur iškart įvesite naują slaptažodį du kartus. Išsaugojus būsite prijungti automatiškai — papildomai jungtis nereikės.")
+        else:
+            st.caption("Enter the account email and send the recovery request. Open the RAPA email and follow its link. It returns directly to RAPA, where you enter the new password twice. After saving, you are signed in automatically — no second login is required.")
         with st.form("password_reset_request_form"):
             reset_email=st.text_input(tr("auth_email"),key="reset_email")
             reset_go=st.form_submit_button(tr("forgot_password_send"),use_container_width=True)
@@ -1532,12 +1656,18 @@ def render_auth_gate():
                 else:
                     try:
                         redirect=_password_recovery_redirect_url()
+                        reset_fn=(getattr(sb.auth,"reset_password_for_email",None) or
+                                  getattr(sb.auth,"reset_password_email",None))
+                        if not callable(reset_fn):
+                            raise RuntimeError("Supabase password recovery API unavailable")
                         if redirect:
-                            sb.auth.reset_password_email(clean,{"redirect_to":redirect})
+                            reset_fn(clean,{"redirect_to":redirect})
                         else:
-                            sb.auth.reset_password_email(clean)
-                        # Deliberately privacy-preserving: do not reveal whether the email exists.
-                        st.success(tr("forgot_password_sent"))
+                            reset_fn(clean)
+                        if lang=="LT":
+                            st.success("Jei tokia paskyra egzistuoja, atkūrimo laiškas išsiųstas. Atidarykite jį ir spauskite atkūrimo nuorodą — RAPA pati atvers naujo slaptažodžio formą. Patikrinkite ir SPAM / Šlamšto aplanką.")
+                        else:
+                            st.success("If this account exists, the recovery email was sent. Open it and follow the recovery link — RAPA will open the new-password form automatically. Check spam too.")
                     except Exception as e:
                         low=str(e or "").lower()
                         if "rate limit" in low or "email rate" in low:
@@ -5187,7 +5317,8 @@ def render_observer_portal(profile,auth_user):
     if st.sidebar.button(tr("logout"),use_container_width=True,key="observer_logout"):
         try: st.session_state["supabase_client"].auth.sign_out()
         except Exception: pass
-        st.session_state.pop("supabase_client",None)
+        clear_cross_account_session_state(keep_client=False)
+        st.session_state["_logout_cookie_cleanup"]=True
         st.rerun()
 
     default_y,default_m=next_month(date.today())
@@ -5412,6 +5543,7 @@ if st.sidebar.button(tr("logout"),use_container_width=True):
     try: sb.auth.sign_out()
     except Exception: pass
     clear_cross_account_session_state(keep_client=False)
+    st.session_state["_logout_cookie_cleanup"]=True
     st.rerun()
 
 # V2.5.90: one visible interface per account. There is no profile switch.
