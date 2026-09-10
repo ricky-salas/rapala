@@ -2,7 +2,7 @@ from pathlib import Path
 BASE=Path(__file__).resolve().parent
 APP=(BASE/"app.py").read_text(encoding="utf-8")
 ENGINE=(BASE/"scheduler_engine.py").read_text(encoding="utf-8")
-assert 'APP_VERSION = "2.5.165 DUTY WATERFILL + NIGHT REST"' in APP
+assert 'APP_VERSION = "2.5.166 GENERATION UX"' in APP
 assert 'EXPECTED_ENGINE_API_VERSION = "2.5.165"' in APP
 assert 'ENGINE_API_VERSION = "2.5.165"' in ENGINE
 assert 'if is_researcher_account:\n    names.append("RESEARCH")' in APP

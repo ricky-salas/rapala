@@ -740,6 +740,27 @@ def save_current(year: int, month: int, payload: dict):
 
 
 
+def discard_draft_only(year: int, month: int) -> dict:
+    """Discard only an unpublished draft; preserve every scheduling input.
+
+    This is intentionally much narrower than reset_month_schedule(): it never
+    deletes a published SYSTEM/ACTUAL baseline, fairness history, swaps, or real
+    backup activity. Published months must use the guarded server-side reset.
+    """
+    rows = _data(_retry_db(lambda: client().table("schedules")
+        .select("status,current_json")
+        .eq("year",int(year)).eq("month",int(month)).limit(1).execute()))
+    if not rows:
+        return {"ok": True, "year": int(year), "month": int(month), "discarded": False}
+    r = rows[0]
+    if str(r.get("status") or "") == "published" and r.get("current_json"):
+        raise RuntimeError("DRAFT_ONLY_BLOCKED_PUBLISHED_SCHEDULE")
+    (client().table("schedules")
+        .update({"draft_json": None, "updated_at": _now()})
+        .eq("year",int(year)).eq("month",int(month)).execute())
+    return {"ok": True, "year": int(year), "month": int(month), "discarded": True}
+
+
 def reset_month_schedule(year: int, month: int) -> dict:
     """Senior-only destructive reset of generated/published schedule outputs.
 

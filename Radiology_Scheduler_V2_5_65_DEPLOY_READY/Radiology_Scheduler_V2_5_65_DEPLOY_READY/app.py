@@ -67,7 +67,7 @@ from opto_research import (
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.165 DUTY WATERFILL + NIGHT REST"
+APP_VERSION = "2.5.166 GENERATION UX"
 EXPECTED_ENGINE_API_VERSION = "2.5.165"
 COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.165"}
 
@@ -5964,7 +5964,20 @@ if advanced_mode:
 names.append(tr("rules"))
 
 # Research-only scheduling experiments now live inside the single Tyrimas window.
-tabs=st.tabs(names)
+# V2.5.166: Streamlit tabs normally reopen the FIRST tab after a forced rerun.
+# For SP/ŠR that used to mean getting thrown back to Pageidavimai during schedule
+# iteration. Make Sudarymas the first VISIBLE operator tab, while remapping the
+# returned containers back to the original logical order so all existing `pos`
+# blocks keep rendering into the correct tab without a large navigation rewrite.
+_logical_names=list(names)
+if senior_mode and tr("generation") in _logical_names:
+    _generation_label=tr("generation")
+    _visible_names=[_generation_label]+[n for n in _logical_names if n!=_generation_label]
+    _visible_tabs=st.tabs(_visible_names)
+    _tab_by_name={name:_visible_tabs[i] for i,name in enumerate(_visible_names)}
+    tabs=[_tab_by_name[name] for name in _logical_names]
+else:
+    tabs=st.tabs(_logical_names)
 research_shadow_tab_index=None
 
 # Navigacija visoms paskyroms prasideda nuo pirmojo realaus lango.
@@ -6939,6 +6952,14 @@ if senior_mode:
         st.metric(tr("state"),status)
         if _state_draft_health and not _state_draft_health.get("publishable"):
             render_invalid_draft_guard(_state_draft_health,compact=True)
+        if state.get("has_draft") and not state.get("has_published") and (_state_draft_health or {}).get("valid_for_improve"):
+            st.info(
+                "NORINT GERESNIO GRAFIKO JO TRINTI NEREIKIA. Spausk „BANDYTI GERESNĮ GRAFIKĄ“ žemiau. "
+                "Sistema paliks dabartinį juodraštį, jei naujas variantas bus blogesnis arba nepraeis HARD patikros."
+                if lang=="LT" else
+                "YOU DO NOT NEED TO DELETE THE DRAFT TO TRY FOR A BETTER SCHEDULE. Press TRY A BETTER SCHEDULE below. "
+                "The current draft is kept if the new candidate is worse or fails HARD validation."
+            )
         lifecycle_generation=db.get_schedule_lifecycle(year,month)
         generation_locked=bool(state.get("has_published")) or str(lifecycle_generation.get("state") or "") in ("working","swap_open","swap_closed","final")
         # V2.5.128: SP ir ŠR generavimo metu gauna tą patį privatų refinemento
@@ -7055,9 +7076,11 @@ if senior_mode:
                             if "fallback" in (result.message or "").lower():
                                 st.warning(
                                     "Globalus fairness MILP nespėjo pilnai užsibaigti, bet sistema prieš išsaugodama pritaikė local fairness repair loop. "
-                                    "Grafikas yra HARD-valid; „PERTIKRINTI / GERINTI“ gali bandyti jį dar pagerinti."
+                                    "Grafikas yra HARD-valid; „BANDYTI GERESNĮ GRAFIKĄ“ gali bandyti jį dar pagerinti."
                                 )
-                            st.rerun()
+                            # V2.5.166: do NOT force a second rerun here. Streamlit tabs otherwise
+                            # jump back to Pageidavimai after every successful generation. The code
+                            # below reloads the just-saved draft during this same run.
                     else:
                         _msg=result.message if getattr(result,"message",None) else tr("no_solution")
                         if ("PREFERENCE-AWARE GENERATION DID NOT FINISH" in str(_msg) or "ISOLATED GENERATION" in str(_msg)):
@@ -7097,12 +7120,13 @@ if senior_mode:
                 )
             else:
                 st.caption(
-                    "Dabartinis juodraštis patikrintas su CURRENT engine: 0 HARD / 0 „Negaliu dirbti“ pažeidimų. Galima ieškoti geresnio varianto; esamas validus grafikas nebus prarastas, jei kandidatas blogesnis."
+                    "Dabartinis juodraštis saugus: 0 HARD / 0 „Negaliu dirbti“ pažeidimų. Gali bandyti dar kartą — dabartinis variantas lieka, kol randamas tikrai geresnis."
                     if lang=="LT" else
-                    "The current draft passed CURRENT-engine validation: 0 HARD / 0 Cannot-work violations. You can search for a better candidate; the valid draft is preserved if the new one is worse."
+                    "The current draft is safe: 0 HARD / 0 Cannot-work violations. You can try again — the current version stays unless a genuinely better one is found."
                 )
             if st.button(
-                "PERTIKRINTI / GERINTI GRAFIKĄ",use_container_width=True,key=f"improve_{year}_{month}",
+                ("BANDYTI GERESNĮ GRAFIKĄ — SAUGOTI TIK JEI GERESNIS" if lang=="LT" else "TRY A BETTER SCHEDULE — KEEP ONLY IF BETTER"),
+                type="primary",use_container_width=True,key=f"improve_{year}_{month}",
                 disabled=(generation_locked or _sp_private_generation_gate or not _improve_health.get("valid_for_improve"))
             ):
                 t0=perf_counter()
@@ -7149,7 +7173,7 @@ if senior_mode:
                         )
                         if _cand_backup_errors:
                             st.warning("Atskirame standby dublių sluoksnyje liko neuždengtų vietų." if lang=="LT" else "The separate standby backup layer still has uncovered duties.")
-                        st.rerun()
+                        # V2.5.166: stay in Sudarymas; the fresh draft is reloaded below.
                     else:
                         st.success(
                             "Pertikrinta. Naujas normalus grafikas nebuvo geresnis pagal užfiksuotą hierarchiją, todėl esamas juodraštis paliktas."
@@ -7298,42 +7322,67 @@ if senior_mode:
                 key_prefix="generation_draft_export",
             )
 
-        # V2.5.22 — senior-only safe month reset.
+        # V2.5.166 — generation UX: a normal draft never needs the destructive
+        # month reset just to try another candidate. Draft-only discard is one-click
+        # and keeps all inputs; published SYSTEM still requires the guarded full reset.
         state_now=db.get_schedule_state(year,month)
-        if state_now.get("has_draft") or state_now.get("has_published"):
+        if state_now.get("has_draft") and not state_now.get("has_published"):
             st.divider()
-            with st.expander("PAVOJINGA ZONA — ištrinti ir perdaryti mėnesio grafiką", expanded=False):
+            with st.expander(("Juodraščio valdymas" if lang=="LT" else "Draft controls"), expanded=False):
+                st.caption(
+                    "Geresniam variantui šito naudoti nereikia — spausk „BANDYTI GERESNĮ GRAFIKĄ“. "
+                    "Šis mygtukas tik išmeta dabartinį juodraštį; pageidavimai, HARD ir credit pasirinkimai lieka."
+                    if lang=="LT" else
+                    "You do not need this to search for a better version — use TRY A BETTER SCHEDULE. "
+                    "This only discards the current draft; preferences, HARD inputs and credit selections remain."
+                )
+                if st.button(
+                    ("IŠMESTI TIK JUODRAŠTĮ" if lang=="LT" else "DISCARD DRAFT ONLY"),
+                    use_container_width=True,key=f"discard_draft_{year}_{month}"
+                ):
+                    try:
+                        db.discard_draft_only(year,month)
+                        st.session_state.pop("shadow_result",None)
+                        st.success(
+                            "Juodraštis išmestas. Visi inputai liko. Šiame lange gali iškart spausti GENERUOTI / PERKURTI."
+                            if lang=="LT" else
+                            "Draft discarded. All inputs remain. You can immediately GENERATE / REBUILD in this same window."
+                        )
+                        # V2.5.166 operator navigation opens Sudarymas first, so this
+                        # refresh no longer throws the user back to Pageidavimai.
+                        st.rerun()
+                    except Exception as e:
+                        st.error(("Juodraščio išmesti nepavyko: " if lang=="LT" else "Could not discard draft: ")+str(e))
+
+        if state_now.get("has_published"):
+            st.divider()
+            with st.expander("PAVOJINGA ZONA — ištrinti PASKELBTĄ mėnesio grafiką", expanded=False):
                 st.warning(
-                    "Naudok tik jei šio mėnesio grafikas buvo sugeneruotas / paskelbtas per klaidą ir turi būti sudarytas iš naujo. "
-                    "Bus pašalintas draft, paskelbtas SYSTEM/ACTUAL grafikas, šio mėnesio fairness_history, suplanuoti dubliai, "
-                    "apsikeitimų užklausos ir administraciniai repair įrašai. "
-                    "Rezidentų pageidavimai, HARD apribojimai, recurring pageidavimai ir pasirinkti credit redemptions LIEKA — "
-                    "todėl galėsi iškart generuoti iš naujo iš tų pačių inputų."
+                    "Čia tik PASKELBTAM grafikui. Jei nori tik geresnio juodraščio, šios zonos nenaudok. "
+                    "Pilnas reset pašalins draft, paskelbtą SYSTEM/ACTUAL grafiką, šio mėnesio fairness_history, suplanuotus dublius, "
+                    "apsikeitimų užklausas ir administracinius repair įrašus. Pageidavimai, HARD, recurring ir credit redemptions LIEKA."
                 )
                 st.caption(
-                    "Saugiklis: jei šiame grafike jau buvo realiai užbaigtas dublio/pavadavimo įvykis, reset bus blokuojamas, "
-                    "kad netyčia neištrintume realios darbo/credit istorijos."
+                    "Jei šiame grafike jau buvo realiai užbaigtas dublio/pavadavimo įvykis, reset bus blokuojamas."
                 )
-                confirm_text=f"RESET {year}-{month:02d}"
-                typed=st.text_input(
-                    f"Patvirtinimui įrašyk tiksliai: {confirm_text}",
+                reset_ack=st.checkbox(
+                    "Suprantu: bus ištrintas paskelbtas šio mėnesio grafikas ir jo operacinė istorija, bet pageidavimai / HARD inputai liks.",
                     key=f"reset_confirm_{year}_{month}"
                 )
-                reset_disabled=(typed.strip()!=confirm_text)
                 if st.button(
-                    "IŠTRINTI ŠIO MĖNESIO GRAFIKĄ IR PRADĖTI IŠ NAUJO",
-                    type="primary",
-                    disabled=reset_disabled,
-                    use_container_width=True,
+                    "IŠTRINTI PASKELBTĄ GRAFIKĄ IR GRĮŽTI Į SUDARYMĄ",
+                    type="primary",disabled=not reset_ack,use_container_width=True,
                     key=f"reset_month_{year}_{month}"
                 ):
                     try:
-                        reset_result=db.reset_month_schedule(year,month)
+                        db.reset_month_schedule(year,month)
                         st.session_state.pop("shadow_result",None)
                         st.success(
-                            f"{year}-{month:02d} grafikas ištrintas. Pageidavimai ir HARD inputai išsaugoti. "
-                            "Dabar gali generuoti grafiką iš naujo."
+                            f"{year}-{month:02d} paskelbtas grafikas ištrintas. Pageidavimai ir HARD inputai išsaugoti. "
+                            "Kitas veiksmas — GENERUOTI / PERKURTI."
                         )
+                        # The operator's first visible tab is now Sudarymas, so a refresh
+                        # immediately returns here with generation unlocked.
                         st.rerun()
                     except Exception as e:
                         msg=str(e)
