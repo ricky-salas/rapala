@@ -1,3 +1,9 @@
+# RAPA V2.5.163 — SCANDI AUDIT + FRIDAY FAIR
+
+- Neįvykdyti pageidavimai rodomi trumpai: **Data · Pageidavimas · Kas gavosi · Kodėl**.
+- Penktadieniai išlieka struktūriškai sąžiningi; konkretūs norai maksimaliai pildomi tik šio balanso ribose.
+- Visos V2.5.162 VERY HARD budėjimų taisyklės išlieka.
+
 # RAPA Scheduler — V2.5.157 ADMIN STATIONS + NO BLOCK
 
 ## V2.5.157
@@ -134,3 +140,12 @@ Visa ši dalis yra izoliuota: ji nekeičia SYSTEM, ACTUAL ar Supabase operacinio
 
 ## Paskyrų prieiga
 - `Pirma registracija` pašalinta. Visi esami rezidentai jungiasi per vienintelį `Prisijungimas` srautą.
+
+
+## V2.5.162 — pageidavimų ir budėjimų konstitucija
+
+- VALIDŪS konkretūs mėnesio pageidavimai optimizuojami su 100 % tikslu prieš penktadienių / dublių / paprastų postų kosmetinį fairness. Safety, RESIDENT HARD, mandatory coverage, exact workload ir Onko HARD lieka aukščiau.
+- Anti-gaming guardrail rezidentui blokuoja tik aiškius savitarnos išnaudojimo raštus: >=5 efektyviai pilnas laisvas dienas iš eilės (skaičiuojant ir `Dirbti negaliu`, ir `Noriu laisvos` kombinacijas), visus mėnesio šeštadienius arba visus sekmadienius, bei >1 savaitgalio `Pageidauju dirbti` datą. Keturių dienų ilgas savaitgalis savaime nėra blokuojamas. Tik Seniūnė/operatorius gali įvesti išimtį su audito priežastimi; oficialiam neatvykimui naudojamos atostogų / specialių dienų funkcijos.
+- VERY HARD: bet kokio RAPA budėjimo dieną negali būti jokios kitos pamainos tam pačiam rezidentui.
+- VERY HARD: po bet kokio SPS RO dieninio ar naktinio budėjimo visa kita kalendorinė diena yra LAISVA. Taisyklė galioja ir per mėnesio ribą ir nėra voluntary-swap ACK išimtis.
+- 2026-10-30 `SPS RO naktinis budėjimas` HARD priskirtas GE (Gertas Ernestas); 2026-10-31 GE privalomai laisva.

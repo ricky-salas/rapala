@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.160"
+ENGINE_API_VERSION = "2.5.163"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -198,6 +198,23 @@ def night_xray_duty_active(year: int, month: int) -> bool:
         return False
     return (int(year), int(month)) >= tuple(NIGHT_XRAY_DUTY_START)
 
+
+def explicit_night_duty_owner(year: int, month: int, day: int) -> Optional[str]:
+    """Explicit one-off night duties confirmed by the senior scheduler.
+
+    V2.5.162: 2026-10-30 SPS RO night duty belongs to GE (Gertas Ernestas).
+    This is an operational HARD assignment, not a preference.
+    """
+    if (int(year), int(month), int(day)) == (2026, 10, 30):
+        return "GE"
+    return None
+
+
+def is_duty_slot(slot: "Slot") -> bool:
+    """Internal RAPA duty requiring same-day exclusivity + next-day OFF."""
+    d=str(getattr(slot,"department","") or "")
+    return d.startswith("SPS RO budėjimai") or d.startswith("SPS RO naktinis budėjimas")
+
 def centro120_am_active(year: int, month: int) -> bool:
     if not cohort_october_model(year, month):
         return True
@@ -317,6 +334,9 @@ class Person:
     # Whether the resident worked Onko on the immediately preceding calendar
     # day (the last day of the previous published month). Used only for recovery.
     prior_last_day_onko: bool = False
+    # V2.5.162: whether the immediately preceding calendar day (previous month's
+    # last day) was an internal RAPA duty. Any duty requires the following day OFF.
+    prior_last_day_duty: bool = False
     # Immediate prior-month Onko count. Retained for audit/cross-month context.
     # V2.5.159 no longer hard-excludes prior-month Onko workers; longitudinal
     # ordering uses the dedicated cumulative Onko pair-cycle in prior_rotation_counts.
@@ -794,6 +814,7 @@ def serialize_people_request_snapshot(people: List[Person]) -> dict:
             "prior_rotation_counts":dict(p.prior_rotation_counts),
             "prior_consecutive_weekend_streak":int(p.prior_consecutive_weekend_streak),
             "prior_last_day_onko":bool(getattr(p,"prior_last_day_onko",False)),
+            "prior_last_day_duty":bool(getattr(p,"prior_last_day_duty",False)),
             "prior_month_onko_count":int(getattr(p,"prior_month_onko_count",0) or 0),
             "request_items":[dict(x) for x in (p.request_items or [])],
             "preference_priority_points":max(0,int(getattr(p,"preference_priority_points",0) or 0)),
@@ -852,6 +873,7 @@ def people_from_request_snapshot(snapshot: Optional[dict]) -> List[Person]:
                 prior_rotation_counts=dict(r.get("prior_rotation_counts") or {}),
                 prior_consecutive_weekend_streak=int(r.get("prior_consecutive_weekend_streak") or 0),
                 prior_last_day_onko=bool(r.get("prior_last_day_onko",False)),
+                prior_last_day_duty=bool(r.get("prior_last_day_duty",False)),
                 prior_month_onko_count=int(r.get("prior_month_onko_count") or 0),
             ))
         except Exception:
@@ -1189,7 +1211,8 @@ def make_slots(year: int, month: int) -> List[Slot]:
         until SP/admin explicitly changes the PM tier;
       * Mammography is closed for this cohort (hidden blocked tombstones keep stable slot IDs);
       * weekend/holiday daytime duty remains HARD exactly as before.
-    The visible NIGHT row is a presentation scaffold only until dates/hours are confirmed.
+    V2.5.162 adds one explicitly confirmed SPS RO NIGHT duty on 2026-10-30 for GE.
+    Any future recurring night-duty programme remains fail-closed until confirmed.
     """
     slots: List[Slot] = []
     idx = 0
@@ -1281,12 +1304,18 @@ def make_slots(year: int, month: int) -> List[Slot]:
     for d,wd,holiday_closed in skopijos_days:
         add(d, wd, "Skopijos", "AM", mandatory=(not holiday_closed), blocked=bool(holiday_closed))
 
-    # Future 20:00-08:00 XR night duties remain fail-closed until explicitly confirmed.
-    # When activated later, keep them append-only so daytime slot identities stay stable.
+    # Future recurring 20:00-08:00 XR night duties remain fail-closed until confirmed.
+    # V2.5.162 additionally supports explicit one-off HARD night duties. Keep all
+    # NIGHT rows append-only so daytime slot identities remain stable.
+    _night_days=set()
     if night_model:
-        for d in range(1,ndays+1):
-            wd=date(year,month,d).weekday()
-            add(d, wd, "SPS RO naktinis budėjimas", "NIGHT", workload2=4, mandatory=True)
+        _night_days.update(range(1,ndays+1))
+    for d in range(1,ndays+1):
+        if explicit_night_duty_owner(year,month,d):
+            _night_days.add(d)
+    for d in sorted(_night_days):
+        wd=date(year,month,d).weekday()
+        add(d, wd, "SPS RO naktinis budėjimas", "NIGHT", workload2=4, mandatory=True)
     return slots
 
 
@@ -2023,6 +2052,15 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         mb.constraint({full[(pi,d)]:1.0 for pi in range(n)},len(full_slots),len(full_slots))
         mb.constraint({long[(pi,d)]:1.0 for pi in range(n)},len(long_slots),len(long_slots))
         mb.constraint({night[(pi,d)]:1.0 for pi in range(n)},len(night_slots),len(night_slots))
+        _explicit_owner=explicit_night_duty_owner(year,month,d)
+        if _explicit_owner and night_slots:
+            _owner_pi=next((pi for pi,p in enumerate(people) if p.initials==_explicit_owner),None)
+            if _owner_pi is None:
+                return None
+            mb.constraint({night[(_owner_pi,d)]:1.0},1.0,1.0)
+            for _pi in range(n):
+                if _pi!=_owner_pi:
+                    mb.constraint({night[(_pi,d)]:1.0},0.0,0.0)
     # Person-level feasibility and exact monthly workload.
     for pi,p in enumerate(people):
         for d in range(1,ndays+1):
@@ -2046,6 +2084,17 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
                 mb.constraint({long[(pi,d)]:1.0},0.0,0.0)
             if normal_assignment_blocked(p,d,"NIGHT"):
                 mb.constraint({night[(pi,d)]:1.0},0.0,0.0)
+        # V2.5.162 VERY HARD DUTY RULES:
+        # 1) A duty day is exclusive: no other AM/PM/Onko/FULL/NIGHT assignment.
+        #    The aggregate AM/PM/FULL/NIGHT constraints above already enforce this;
+        #    these named rows make the invariant explicit and regression-testable.
+        # 2) The entire calendar day after ANY internal RAPA duty is OFF. No AM, PM,
+        #    Onko, another FULL duty, or another NIGHT is allowed. No ACK/soft override.
+        if bool(getattr(p,"prior_last_day_duty",False)):
+            mb.constraint({work[(pi,1)]:1.0},0.0,0.0)
+        for _duty_day in range(1,ndays):
+            mb.constraint({long[(pi,_duty_day)]:1.0,work[(pi,_duty_day+1)]:1.0},-np.inf,1.0)
+            mb.constraint({night[(pi,_duty_day)]:1.0,work[(pi,_duty_day+1)]:1.0},-np.inf,1.0)
         co={}
         for d in range(1,ndays+1):
             co[am[(pi,d)]]=2.0; co[pm[(pi,d)]]=2.0; co[full[(pi,d)]]=3.0; co[long[(pi,d)]]=4.0; co[night[(pi,d)]]=4.0
@@ -2135,14 +2184,26 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
                     f"V25159 Onko wait behind lower cycle cohort {people[pi].initials}"
                 )
 
-    # Double fairness is structural, but below mandatory cannot-work blocks.
-    # Normal mode keeps the <=2 corridor. The zero-hard fallback minimizes the
-    # actual double spread instead of making a hard wish infeasible.
+    # V2.5.163: exact monthly wishes remain real solver inputs, but Friday burden
+    # is STRUCTURAL fairness, not cosmetic fairness. A resident may request every
+    # Friday off; the engine tries to honor the maximum feasible subset inside the
+    # cohort's HARD-capacity-aware Friday water-fill corridor. Double/work-style
+    # cosmetics remain below valid exact wishes.
+    _exact_date_wishes_active=any(
+        bool(set(p.soft_free)|set(p.soft_free_am)|set(p.soft_free_pm)|set(p.preferred)|set(p.preferred_am)|set(p.preferred_pm))
+        for p in people
+    )
+    _friday_exact_wishes_active=any(
+        any(date(year,month,int(d)).weekday()==4 for d in (set(p.soft_free)|set(p.soft_free_am)|set(p.soft_free_pm)|set(p.preferred)|set(p.preferred_am)|set(p.preferred_pm)))
+        for p in people
+    )
+    # Double fairness remains a target, but exact valid wishes may temporarily widen
+    # it. The best possible spread is restored after SOFT1/SOFT2 outcomes are locked.
     double_style_slacks=[]
     if not structural_relaxation:
         for i in range(n):
             for j in range(i+1,n):
-                sv=mb.var(0.0,0.0,False,cost=0.15)
+                sv=mb.var(0.0,float(ndays) if _exact_date_wishes_active else 0.0,False,cost=0.15)
                 double_style_slacks.append(sv)
                 co={}
                 for d in range(1,ndays+1):
@@ -2194,6 +2255,9 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             co[night[(pi,d)]]=co.get(night[(pi,d)],0.0)+1.0
         _friday_expr.append(co)
         if not structural_relaxation:
+            # Friday fairness is structural even when a resident explicitly asks
+            # for one or all Fridays off. Wishes compete only inside this proven
+            # HARD-eligibility-aware water-fill corridor.
             mb.constraint(co,float(_friday_lo[pi]),float(_friday_hi[pi]))
     if structural_relaxation and _friday_expr:
         # V2.5.152: Friday fairness is NEVER widened merely because a bounded solve
@@ -2245,13 +2309,9 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         # Generator recovery rule: after two consecutive AM+PM doubles, next day is PM/night-only or off.
         for d in range(3,ndays+1):
             mb.constraint({dbl[(pi,d-2)]:1.0,dbl[(pi,d-1)]:1.0,am[(pi,d)]:1.0,full[(pi,d)]:1.0,long[(pi,d)]:1.0},-np.inf,2.0)
-        # NIGHT ends 08:00 next day; no AM/PM/FULL daytime assignment is legal
-        # on that following day under the 11 h rest rule. Consecutive NIGHT is okay (12 h rest).
-        for d in range(1,ndays):
-            mb.constraint({night[(pi,d)]:1.0,am[(pi,d+1)]:1.0},-np.inf,1.0)
-            mb.constraint({night[(pi,d)]:1.0,pm[(pi,d+1)]:1.0},-np.inf,1.0)
-            mb.constraint({night[(pi,d)]:1.0,full[(pi,d+1)]:1.0},-np.inf,1.0)
-            mb.constraint({night[(pi,d)]:1.0,long[(pi,d+1)]:1.0},-np.inf,1.0)
+        # V2.5.162: next-day OFF after NIGHT is enforced above via work[d+1]==0.
+        # This is intentionally stronger than the old 11 h rest-only rule and also
+        # forbids a consecutive NIGHT on the following calendar day.
     # V2.5.142 NIGHT raw water-fill: one 20:00-08:00 duty per calendar day
     # is shared as evenly as mathematically possible.
     if night_xray_duty_active(year,month):
@@ -2789,6 +2849,10 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         for (_pi,_d),_v in am.items(): _count_cost[_v]+=(((_pi+1)*31+_d*7)%97)*1e-10
         for (_pi,_d),_v in pm.items(): _count_cost[_v]+=(((_pi+1)*29+_d*11)%89)*1e-10
         for (_pi,_d),_v in long.items(): _count_cost[_v]+=(((_pi+1)*19+_d*17)%79)*1e-10
+        # Equal-count tie-break only: keep double spread as tight as possible without
+        # ever trading away one additional honored wish.
+        for _sv in double_style_slacks:
+            _count_cost[_sv]+=1e-7
         mb.c=_count_cost
         _tier_seconds=max(3.0,min(10.0,float(seconds)*0.18))
         _tr=mb.solve(_tier_seconds,mip_gap=0.0)
@@ -2816,6 +2880,10 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         if _rank_coef:
             _rank_cost=[0.0 for _ in mb.c]
             for _v,_c in _rank_coef.items(): _rank_cost[_v]-=float(_c)
+            # Submission order only breaks equal max-count alternatives. Cosmetic
+            # double balance is a still smaller tie-break inside the same rank score.
+            for _sv in double_style_slacks:
+                _rank_cost[_sv]+=1e-7
             mb.c=_rank_cost
             _pr=mb.solve(max(2.0,min(6.0,float(seconds)*0.10)),mip_gap=0.0)
             if _pr.x is not None:
@@ -2829,6 +2897,14 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             "submission_priority_score":None if _rank_score is None else round(float(_rank_score),6),
             "includes_weekends":True,
         }
+
+    # V2.5.162 WISH-FIRST boundary. Exact SOFT1/SOFT2 max-count outcomes are now
+    # locked before any later work-style/private/post-label refinement. Friday and
+    # double cosmetics are allowed to widen only when needed to protect a valid
+    # request. We deliberately do not launch an additional large MILP here: the
+    # equal-count solves above already use tiny double-balance tie-breaks, while
+    # phase 2 re-optimizes workplace fairness without changing the locked dates.
+    _wish_first_fairness_refined=bool(_exact_date_wishes_active)
 
     # V2.5.141 ACCOUNT-MODE REFINEMENT.
     # 6 h / mixed / 12 h is an account-level work-style mode, NOT a scored wish.
@@ -3067,8 +3143,19 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     pattern["friday_hard_capacity"]={people[pi].initials:int(_friday_caps[pi]) for pi in range(n)}
     pattern["friday_entitlement_lo"]={people[pi].initials:int(_friday_lo[pi]) for pi in range(n)}
     pattern["friday_entitlement_hi"]={people[pi].initials:int(_friday_hi[pi]) for pi in range(n)}
-    pattern["friday_waterfill_mode"]="TIGHTEST_PROVEN_FEASIBLE_HARD_ELIGIBILITY_V25152"
-    pattern["friday_relaxation_radius"]=int(max(0,int(friday_relaxation_radius or 0)))
+    _pref_friday_radius=0
+    if _friday_exact_wishes_active:
+        for _pi,_obs in enumerate(fvals):
+            _pref_friday_radius=max(
+                _pref_friday_radius,
+                max(0,int(_friday_lo[_pi])-int(_obs),int(_obs)-int(_friday_hi[_pi]))
+            )
+    pattern["friday_waterfill_mode"]="V25163_STRUCTURAL_FRIDAY_WATERFILL_BEFORE_SOFT"
+    pattern["friday_relaxation_radius"]=int(max(int(friday_relaxation_radius or 0),int(_pref_friday_radius)))
+    pattern["wish_first_exact_mode_v25162"]=bool(_exact_date_wishes_active)
+    pattern["wish_first_friday_mode_v25162"]=False
+    pattern["wish_first_fairness_refined_v25162"]=bool(_wish_first_fairness_refined)
+    pattern["friday_structural_before_soft_v25163"]=True
     if diagnostics is not None:
         diagnostics.update({"status":int(getattr(res,"status",0)),"incumbent":True})
     return pattern
@@ -3949,7 +4036,7 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "friday_structural_waterfill_required":True,
         "friday_structural_spread_ceiling":None,
         "friday_entitlement_relaxation_radius":int(pattern.get("friday_relaxation_radius",0) or 0),
-        "friday_structural_waterfill_mode":"TIGHTEST_PROVEN_FEASIBLE_HARD_ELIGIBILITY_V25152",
+        "friday_structural_waterfill_mode":"V25163_STRUCTURAL_FRIDAY_WATERFILL_BEFORE_SOFT",
         "friday_hard_capacity":pattern.get("friday_hard_capacity",{}),
         "friday_entitlement_lo":pattern.get("friday_entitlement_lo",{}),
         "friday_entitlement_hi":pattern.get("friday_entitlement_hi",{}),
@@ -3996,6 +4083,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
             for cat in ROTATION_CATEGORIES
         },
         prior_resident_hard_loss_count=0,
+        prior_last_day_duty=bool(getattr(p,"prior_last_day_duty",False)),
     ) for p in people]
     # V2.5.152 PRE-SOLVE HARD↔SOFT NORMALIZATION IS PART OF THE PRIMARY ENGINE.
     # Keep the resident's raw intent in request_items, but mark requests that are
@@ -4120,11 +4208,14 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
             if s.department.startswith("CENTRO RO"):
                 cost -= 0.10
 
+            _explicit_owner=explicit_night_duty_owner(year,month,s.day) if s.block=="NIGHT" else None
+            _forced_here=bool(_explicit_owner and p.initials==_explicit_owner)
+            _forced_elsewhere=bool(_explicit_owner and p.initials!=_explicit_owner)
             x[(pi, s.idx)] = mb.var(
                 f"x[{p.initials},{s.day},{s.department},{s.block}]",
                 cost=cost,
-                lb=0,
-                ub=1 if allowed else 0,
+                lb=1 if (_forced_here and allowed) else 0,
+                ub=0 if _forced_elsewhere else (1 if allowed else 0),
                 integer=True,
             )
 
@@ -4594,9 +4685,29 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
                 f"max hours/day {p.initials} {d}"
             )
 
-    # V2.5.142 NIGHT recovery: a 20:00-08:00 duty cannot be combined with any
-    # daytime assignment on its start date, and the following day must remain free
-    # until at least 19:00 (there are no later-than-14:00 starts in this model).
+    # V2.5.162 VERY HARD internal-duty recovery for every SPS RO duty type.
+    # Duty day = no other assignment. Following calendar day = completely OFF.
+    for pi,p in enumerate(people):
+        if bool(getattr(p,"prior_last_day_duty",False)):
+            _day1={x[(pi,s.idx)]:1.0 for s in by_day[1] if not s.blocked}
+            if _day1:
+                mb.constraint(_day1,0.0,0.0,f"V25162 post-duty previous-month OFF {p.initials} day1")
+        for d in range(1,ndays+1):
+            _duty=[s for s in by_day[d] if is_duty_slot(s) and not s.blocked]
+            if not _duty:
+                continue
+            _other=[s for s in by_day[d] if not is_duty_slot(s) and not s.blocked]
+            for _ds in _duty:
+                _dv=x[(pi,_ds.idx)]
+                for _os in _other:
+                    mb.constraint({_dv:1.0,x[(pi,_os.idx)]:1.0},0.0,1.0,f"V25162 duty exclusive {p.initials} {d}")
+                if d<ndays:
+                    for _ns in by_day[d+1]:
+                        if not _ns.blocked:
+                            mb.constraint({_dv:1.0,x[(pi,_ns.idx)]:1.0},0.0,1.0,f"V25162 post-duty OFF {p.initials} {d}->{d+1}")
+
+    # Legacy NIGHT-specific constraints remain as redundant defense-in-depth when
+    # the future recurring night model is activated.
     if night_xray_duty_active(year,month):
         for pi,p in enumerate(people):
             for d in range(1,ndays+1):
@@ -6927,8 +7038,18 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             pm = sum(s.block in ("PM", "FULL") for s in ds)
             if am > 1 or pm > 1:
                 errors.append(f"{p.initials}: overlapping assignments on day {day}")
+            _duty_ds=[s for s in ds if is_duty_slot(s)]
+            if _duty_ds and len(ds)>1:
+                errors.append(f"{p.initials}: VERY HARD duty-day exclusivity violated on day {day}; duty cannot coexist with any other assignment")
             if len(ds) == 2:
                 d["doubles"] += 1
+
+        # V2.5.162 post-duty OFF is ABSOLUTE for SYSTEM and ACTUAL: no swap ACK.
+        if bool(getattr(p,"prior_last_day_duty",False)) and any(s.day==1 for s in pslots):
+            errors.append(f"{p.initials}: VERY HARD post-duty rest violated on day 1 after prior-month duty")
+        for _duty_day in range(1,ndays):
+            if any(s.day==_duty_day and is_duty_slot(s) for s in pslots) and any(s.day==_duty_day+1 for s in pslots):
+                errors.append(f"{p.initials}: VERY HARD post-duty rest violated; day {_duty_day+1} must be completely OFF after duty on day {_duty_day}")
 
         d["distinct_work_days"] = len(worked_days)
         d["weekday_days"] = len(weekday_days)
@@ -7575,6 +7696,13 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
         d["soft_request_misses"]=[r for r in detail_rows if r["included_in_score"] and r["priority"].startswith("SOFT") and not r["fulfilled"]]
         d["honored_request_details"]=[r for r in detail_rows if r["included_in_score"] and r["fulfilled"]]
 
+    # V2.5.162 explicit one-off night owner invariant.
+    for _sl in slots:
+        _owner=explicit_night_duty_owner(year,month,_sl.day) if _sl.block=="NIGHT" else None
+        if _owner and not _sl.blocked:
+            if assignments.get(_sl.idx)!=_owner:
+                errors.append(f"Explicit HARD night duty {_sl.day} must be assigned to {_owner}")
+
     # V2.5.77 ABSOLUTE SYSTEM Friday water-fill. This is generation-only:
     # post-publication mutually accepted ACTUAL swaps may intentionally make the
     # Friday distribution uneven, just like workplace exposure.
@@ -7913,7 +8041,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             "friday_structural_spread_ceiling": None,
             "friday_entitlement_relaxation_radius": int(_friday_validation_radius),
             "friday_entitlement_max_deviation": int(friday_entitlement_max_deviation),
-            "friday_structural_waterfill_mode": "TIGHTEST_PROVEN_FEASIBLE_HARD_ELIGIBILITY_V25152",
+            "friday_structural_waterfill_mode": "V25163_STRUCTURAL_FRIDAY_WATERFILL_BEFORE_SOFT",
             "friday_hard_capacity": {p.initials:int(_friday_caps_validate[i]) for i,p in enumerate(people)},
             "friday_entitlement_lo": {p.initials:int(_friday_lo_validate[i]) for i,p in enumerate(people)},
             "friday_entitlement_hi": {p.initials:int(_friday_hi_validate[i]) for i,p in enumerate(people)},
@@ -7999,7 +8127,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             "preference_equity_quality_target_pp": 15.0,
             "preference_equity_quality_gate_passed": preference_equity_quality_gate_passed,
             "preference_fairness_model": "V2553_VERTICAL_RANK_HORIZONTAL_WEEKLY_RECOVERY_WATERFILL_GUARDRAILS",
-            "preference_vertical_order": ["ABSOLUTE_HARD","RESIDENT_HARD_ZERO_LOSS","CRITICAL_RAW_WEEKENDS_AND_HARD_CAPACITY_FRIDAYS","CRITICAL_SPACING","WEEKLY_LOAD_RECOVERY_WATERFILL","STRUCTURAL_BURDEN","NONCRITICAL_POST_GUARDRAIL","SOFT1_MAX_COUNT_THEN_SUBMISSION_RANK","SOFT2_MAX_COUNT_THEN_SUBMISSION_RANK","SOFT3","NONCRITICAL_POST_MONTHLY_OPTIMUM"],
+            "preference_vertical_order": ["ABSOLUTE_HARD","INTERNAL_DUTY_EXCLUSIVE_AND_NEXT_DAY_OFF","RESIDENT_HARD_ZERO_LOSS","MANDATORY_COVERAGE_AND_EXACT_WORKLOAD","FRIDAY_STRUCTURAL_WATERFILL","VALID_EXACT_SOFT1_MAX_COUNT","VALID_EXACT_SOFT2_MAX_COUNT","DOUBLE_FAIRNESS_AFTER_WISH_LOCK","CRITICAL_WEEKEND_GUARDRAILS","SOFT3_WORKSTYLE","POST_FAIRNESS"],
             "post_fairness_model": "V2577_ALL_POST_PLUS_FRIDAY_STRUCTURAL_WATERFILL",
             "soft_waterfill_locks": {},
         },
