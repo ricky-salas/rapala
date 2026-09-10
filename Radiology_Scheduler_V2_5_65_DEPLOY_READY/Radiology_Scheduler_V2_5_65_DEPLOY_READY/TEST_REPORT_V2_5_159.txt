@@ -1,0 +1,46 @@
+V2.5.159 TEST REPORT — ONKO CYCLE LEDGER
+
+PASS — Python compile:
+- app.py
+- scheduler_engine.py
+- db.py
+- solver_runner.py
+- notification_core.py
+- notification_worker.py
+
+PASS — app/engine contract:
+- APP_VERSION = 2.5.159 ONKO CYCLE LEDGER
+- ENGINE_API_VERSION = 2.5.159
+- all scheduler_engine imports used by app.py resolve
+
+AUTHORITATIVE SEPTEMBER 2026 ONKO SEED FROM SP/WARDEN:
+SE, KE, MR, ŠR, GB, GD, DU, SA, MŽ, GE, PV = 2 Onko days each.
+Residents still waiting at start of October:
+MG, SŠ, VL, SP, SN = 0.
+
+PASS — October 2026 real-cycle regression:
+- Onko/TBL: 22 FULL 08:00–17:00 slots
+- every waiting resident MG / SŠ / VL / SP / SN receives exactly 2 Onko days
+- six already-exposed residents begin the next cycle with another 2-day pair
+- every October Onko count remains 0 or 2
+- cumulative Onko spread after October = 2 days (one pair)
+- HARD errors = 0
+
+Observed October Onko counts in regression:
+MŽ 2, ŠR 2, KE 2, MG 2, SŠ 2, SP 2, SN 2, GE 2, GD 2, VL 2, SA 2.
+
+PASS — Suvestinė cycle accounting:
+- Onko iki mėnesio
+- Onko šį mėnesį
+- Onko ciklas iš viso
+
+PASS — inherited V2.5.158 station/display checks:
+- Onko/TBL remains one 08:00–17:00 FULL row, workload 1.5
+- SPS UG 1035 PM remains present
+- visible BLOCK sentinel remains absent
+- SPS RO night row scaffold remains present
+
+DESIGN:
+General future-month post fairness debt remains disabled. The longitudinal carry-over applies only to the dedicated Onko pair cycle. September 2026 is seeded from SP's authoritative list; later months add published SYSTEM Onko assignments, so the cycle continues automatically.
+
+SUPABASE MIGRATION: NOT REQUIRED.

@@ -1,0 +1,55 @@
+RAPA V2.5.157 — ADMIN STATIONS + NO BLOCK
+FINAL RELEASE VERIFICATION
+
+PASS — Python compile:
+- app.py
+- scheduler_engine.py
+- db.py
+- solver_runner.py
+- notification_core.py
+- notification_worker.py
+- extension_core.py
+- opto_research.py
+
+PASS — app/engine import contract:
+- APP_VERSION = 2.5.157 ADMIN STATIONS + NO BLOCK
+- EXPECTED_ENGINE_API_VERSION = 2.5.157
+- ENGINE_API_VERSION = 2.5.157
+- 57/57 scheduler_engine imports available
+
+PASS — October 2026 station model:
+- CENTRO RO: 4 AM + 4 PM, MUST
+- SPS RO: AM + PM, MUST
+- Centro UG 120 AM: MUST
+- Onkologinė/TBL: AM + PM, MUST
+- Skopijos: one AM row Monday-Thursday, MUST, 08:00-14:00
+- Skopijos regular location: Centras 0153
+- 2026-10-13 exception: Konsultacinė poliklinika 209
+- Vaikų UG AM / ADC AM / Centro UG 120 PM: second priority
+- ADC PM / SPS UG AM: last priority
+- SPS UG PM: inactive / hidden
+- Mammography: inactive / hidden
+- Weekend duties: existing HARD logic retained
+- SPS RO night: not activated without confirmed operating parameters
+
+PASS — priority gap regression with default October cohort:
+- exact target preserved
+- every MUST slot filled
+- every second-priority slot filled
+- all unavoidable optional gaps fell only in LAST tier
+- observed gap families: ADC 144 PM = 11; ADC 145 PM = 9; SPS UG AM = 9
+- no second-tier gaps
+
+PASS — full October solver regression:
+- SolveResult.ok = True
+- no mandatory slot left unfilled
+- exact workload retained
+
+PASS — presentation regression:
+- blocked/inactive slots are not visible in human-facing schedule grids
+- no schedule cell emits the BLOCK sentinel
+- XLSX uses blank/nonexistent cells for inactive dates rather than BLOCK
+- Skopijos row carries the Oct-13 room exception in its human-facing label
+
+Supabase migration: NOT REQUIRED.
+Deploy app.py and scheduler_engine.py together by replacing the entire existing deploy folder.

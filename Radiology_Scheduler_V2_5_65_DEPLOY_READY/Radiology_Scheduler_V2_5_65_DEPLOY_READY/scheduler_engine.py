@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.157"
+ENGINE_API_VERSION = "2.5.159"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -175,6 +175,20 @@ ANNUAL_EXAM_DATES = (date(2027,6,2), date(2027,6,16), date(2027,6,21))
 def cohort_october_model(year: int, month: int) -> bool:
     return (int(year), int(month)) >= OCTOBER_2026_MODEL_START
 
+def is_onko_slot(slot: "Slot") -> bool:
+    """Canonical Onko detector across the historical and Oct-2026+ labels."""
+    d=str(getattr(slot,"department","") or "")
+    return d == "Onko RO centre" or d.startswith("Onkologinė/TBL") or d.startswith("Onko/TBL")
+
+def october_onko_prior_month_exclusion_active(year: int, month: int) -> bool:
+    """Deprecated in V2.5.159: Onko now uses a continuing cumulative pair-cycle.
+
+    Kept only as an import-compatible helper for older app/test code. The old
+    hard exclusion was too strong because October must continue the cycle after
+    the previously unexposed residents receive their first pair.
+    """
+    return False
+
 def night_xray_duty_active(year: int, month: int) -> bool:
     # Night XR duties were announced as a future November change, but the senior
     # scheduler has not yet confirmed the operational implementation details.
@@ -230,7 +244,7 @@ def admin_coverage_priority_tier(slot: "Slot", year: int, month: int) -> int:
         return 1
     if (
         ((d.startswith("ADC 144") or d.startswith("145") or d.startswith("ADC 145")) and b=="PM")
-        or (d.startswith("SPS UG") and b=="AM")
+        or (d.startswith("SPS UG") and b in ("AM","PM"))
     ):
         return 2
     return 2
@@ -300,11 +314,13 @@ class Person:
     # Consecutive weekends worked at the tail of the immediately preceding
     # published SYSTEM month. Used only as a fatigue/spacing tie-breaker.
     prior_consecutive_weekend_streak: int = 0
-    # Whether the resident worked Onko RO on the immediately preceding calendar
-    # day (the last day of the previous published SYSTEM month). V2.5.68 uses
-    # this to enforce the absolute "no Onko on consecutive calendar days" rule
-    # across month boundaries as well as inside the month.
+    # Whether the resident worked Onko on the immediately preceding calendar
+    # day (the last day of the previous published month). Used only for recovery.
     prior_last_day_onko: bool = False
+    # Immediate prior-month Onko count. Retained for audit/cross-month context.
+    # V2.5.159 no longer hard-excludes prior-month Onko workers; longitudinal
+    # ordering uses the dedicated cumulative Onko pair-cycle in prior_rotation_counts.
+    prior_month_onko_count: int = 0
     # Cumulative count of RESIDENT-HARD losses in prior published SYSTEM months.
     prior_resident_hard_loss_count: int = 0
 
@@ -475,7 +491,7 @@ def scheduled_slot_hours(slot: Slot) -> float:
     if b=='NIGHT':
         return 12.0
     if b=='FULL':
-        return 9.0 if slot.department=='Onko RO centre' else 12.0
+        return 9.0 if is_onko_slot(slot) else 12.0
     return 6.0
 
 def scheduled_slot_clock(slot: Slot) -> Tuple[float,float]:
@@ -485,7 +501,7 @@ def scheduled_slot_clock(slot: Slot) -> Tuple[float,float]:
     if b=='PM': return 14.0,20.0
     if b=='NIGHT': return 20.0,32.0
     if b=='FULL':
-        return (8.0,17.0) if slot.department=='Onko RO centre' else (8.0,20.0)
+        return (8.0,17.0) if is_onko_slot(slot) else (8.0,20.0)
     raise ValueError(f'Unsupported slot block: {slot.block}')
 
 
@@ -778,6 +794,7 @@ def serialize_people_request_snapshot(people: List[Person]) -> dict:
             "prior_rotation_counts":dict(p.prior_rotation_counts),
             "prior_consecutive_weekend_streak":int(p.prior_consecutive_weekend_streak),
             "prior_last_day_onko":bool(getattr(p,"prior_last_day_onko",False)),
+            "prior_month_onko_count":int(getattr(p,"prior_month_onko_count",0) or 0),
             "request_items":[dict(x) for x in (p.request_items or [])],
             "preference_priority_points":max(0,int(getattr(p,"preference_priority_points",0) or 0)),
             "preference_priority_rank":max(0,int(getattr(p,"preference_priority_rank",0) or 0)),
@@ -835,6 +852,7 @@ def people_from_request_snapshot(snapshot: Optional[dict]) -> List[Person]:
                 prior_rotation_counts=dict(r.get("prior_rotation_counts") or {}),
                 prior_consecutive_weekend_streak=int(r.get("prior_consecutive_weekend_streak") or 0),
                 prior_last_day_onko=bool(r.get("prior_last_day_onko",False)),
+                prior_month_onko_count=int(r.get("prior_month_onko_count") or 0),
             ))
         except Exception:
             continue
@@ -912,7 +930,7 @@ CRITICAL_ROTATION_CATEGORIES = ("SPS RO", "SPS UG")
 # V2.5.74: Onko is governed by its own even-pair parity rule (0/2/4...) and
 # therefore cannot share the generic <=1 post-waterfill corridor. Every other
 # ordinary workplace is structurally water-filled across residents.
-NONCRITICAL_ROTATION_CATEGORIES = tuple(c for c in ROTATION_CATEGORIES if c not in CRITICAL_ROTATION_CATEGORIES and c != "Onko RO")
+NONCRITICAL_ROTATION_CATEGORIES = tuple(c for c in ROTATION_CATEGORIES if c not in CRITICAL_ROTATION_CATEGORIES and c not in ("Onko RO","Onko/TBL"))
 CRITICAL_SPREAD_TARGET = 1
 NONCRITICAL_SPREAD_NORMAL_CEILING = 1
 NONCRITICAL_SPREAD_EXCEPTIONAL_CEILING = 2
@@ -978,7 +996,7 @@ def backup_required_slot(slot: Slot) -> bool:
     """
     if slot.blocked:
         return False
-    if slot.department == "Onko RO centre":
+    if is_onko_slot(slot):
         return bool(rule_value("backup_onko_ro"))
     if slot.department.startswith("Centro UG 120") and slot.block == "AM":
         return bool(rule_value("backup_centro120_am"))
@@ -1109,7 +1127,7 @@ def is_emergency_lower_priority_donor_slot(slot: Slot) -> bool:
     """
     if slot.blocked or slot.mandatory:
         return False
-    if slot.department == "Onko RO centre":
+    if is_onko_slot(slot):
         return False
     return rotation_category(slot) not in EMERGENCY_CRITICAL_ROTATIONS
 
@@ -1163,14 +1181,15 @@ def make_slots(year: int, month: int) -> List[Slot]:
 
     Through Sep-2026 the historical model is preserved. From Oct-2026:
       * CENTRO RO = exactly 4 AM + 4 PM rows on every open weekday;
-      * Onkologinė/TBL = 1 AM + 1 PM (old 9 h Onko FULL/parity model retired);
+      * Onkologinė/TBL = ONE 08:00-17:00 FULL row, workload 1.5 shift-units;
       * SPS RO works both AM and PM on weekdays;
       * Centro UG 120 AM is MUST coverage; 120 PM is second priority;
-      * Skopijos replaces Mammography: one 08:00-14:00 AM row Monday-Thursday;
-      * SPS UG PM is retired; SPS UG AM remains as a last-priority optional row;
+      * Skopijos: one 08:00-14:00 AM row Monday-Thursday;
+      * SPS UG 1035 AM + PM both exist; both are kept in the last optional tier
+        until SP/admin explicitly changes the PM tier;
       * Mammography is closed for this cohort (hidden blocked tombstones keep stable slot IDs);
-      * weekend/holiday daytime duty remains HARD as one 08:00-20:00 FULL row.
-    Future night XR duties remain disabled until their start model is explicitly confirmed.
+      * weekend/holiday daytime duty remains HARD exactly as before.
+    The visible NIGHT row is a presentation scaffold only until dates/hours are confirmed.
     """
     slots: List[Slot] = []
     idx = 0
@@ -1204,8 +1223,9 @@ def make_slots(year: int, month: int) -> List[Slot]:
             if legacy_onko:
                 add(d, wd, "Onko RO centre", "FULL", workload2=3, mandatory=(not holiday_closed and not odd_weekdays), blocked=holiday_closed)
             else:
-                add(d, wd, "Onkologinė/TBL", "AM", mandatory=(not holiday_closed), blocked=holiday_closed)
-                add(d, wd, "Onkologinė/TBL", "PM", mandatory=(not holiday_closed), blocked=holiday_closed)
+                # SP/admin 2026-09-10: Onko/TBL is one 08:00-17:00 shift, not AM+PM.
+                # One day contributes 1.5 of the ordinary 6 h shift-equivalent target.
+                add(d, wd, "Onkologinė/TBL", "FULL", workload2=3, mandatory=(not holiday_closed), blocked=holiday_closed)
 
             add(
                 d, wd, "Centro UG 120kab", "AM",
@@ -1219,10 +1239,12 @@ def make_slots(year: int, month: int) -> List[Slot]:
             add(d, wd, "SPS RO d.d.", "AM", mandatory=(not holiday_closed), blocked=holiday_closed)
             if new_model:
                 add(d, wd, "SPS RO d.d.", "PM", mandatory=(not holiday_closed), blocked=holiday_closed)
-            # Admin priority from Oct-2026: SPS UG AM is the last optional tier;
-            # the former SPS UG PM row is retired but retained as a blocked tombstone.
+            # SP 2026-09-10: restore the missing SPS UG 1035 evening row.
+            # The earlier admin message explicitly placed SPS UG AM in the last tier
+            # but did not state a new PM tier; keep both SPS UG rows optional/last-tier
+            # rather than inventing a stronger coverage rank.
             add(d, wd, "SPS UG 1035kab", "AM", mandatory=(not new_model and not holiday_closed), blocked=holiday_closed)
-            add(d, wd, "SPS UG 1035kab", "PM", mandatory=(not new_model and not holiday_closed), blocked=(holiday_closed or new_model))
+            add(d, wd, "SPS UG 1035kab", "PM", mandatory=(not new_model and not holiday_closed), blocked=holiday_closed)
             add(d, wd, "ADC 144kab", "AM", blocked=holiday_closed)
             add(d, wd, "ADC 144kab", "PM", blocked=holiday_closed)
             add(d, wd, "145kab", "AM", blocked=holiday_closed)
@@ -1398,7 +1420,7 @@ def plan_distributed_gaps(
     full_supply2=sum(s.workload2 for s in nonblocked)
     target_total2=int(round(sum(float(v) for v in targets.values())*2))
 
-    onko=[s for s in slots if s.department=="Onko RO centre" and not s.blocked]
+    onko=[s for s in slots if is_onko_slot(s) and not s.blocked]
     # Legacy parity gap is only relevant when the legacy even-count rule is active.
     onko_gap_count=(0 if len(onko)%2==0 else 1) if bool(rule_value("onko_even_required")) else 0
     residual2=full_supply2-target_total2-(3*onko_gap_count)
@@ -1443,7 +1465,7 @@ def plan_distributed_gaps(
     if k>0:
         # Capacity is the number of optional 6h rows that may legally remain open.
         capacities={
-            d:sum(1 for s in slots if s.day==d and not s.blocked and not s.mandatory and s.department!="Onko RO centre")
+            d:sum(1 for s in slots if s.day==d and not s.blocked and not s.mandatory and not is_onko_slot(s))
             for d in candidate_days
         }
         if sum(capacities.values()) < k:
@@ -1902,7 +1924,7 @@ def _v2564_choose_fixed_gaps(year, month, slots, gap_meta, seconds=5.0):
     onko_gap_day=gap_meta.get("onko_gap_day")
     if onko_gap_day:
         for s in slots:
-            if s.day==int(onko_gap_day) and s.department=="Onko RO centre" and not s.blocked:
+            if s.day==int(onko_gap_day) and is_onko_slot(s) and not s.blocked:
                 fixed.add(s.idx); break
     optional_counts={int(d):int(c) for d,c in (gap_meta.get("optional_gap_counts") or {}).items()}
     if not optional_counts:
@@ -1910,7 +1932,7 @@ def _v2564_choose_fixed_gaps(year, month, slots, gap_meta, seconds=5.0):
     optional_days=set(optional_counts)
     if not optional_days:
         return fixed
-    options=[s for s in slots if s.day in optional_days and not s.blocked and not s.mandatory and s.department!="Onko RO centre"]
+    options=[s for s in slots if s.day in optional_days and not s.blocked and not s.mandatory and not is_onko_slot(s)]
     # V2.5.157: from Oct-2026 unavoidable empty rows follow the admin service
     # hierarchy.  LAST-priority rows absorb gaps before SECOND-priority rows; MUST
     # rows are mandatory upstream and therefore never enter this candidate list.
@@ -1968,11 +1990,15 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     # V2.5.71: workday-length preference redistributes a neutral, group-level
     # double pool. It must not manufacture extra AM+PM double-days.
     mixed_dev_vars={}
-    # V2.5.96: no longitudinal fairness catch-up. Each month starts from a
-    # clean water-fill baseline. Cross-month state is retained only for safety/spacing.
-    prior_onko=[0.0 for _ in people]
-    min_prior_onko=0.0
-    onko_catchup_unit=0.0
+    # V2.5.159: general historical fairness debt remains disabled, but Onko has
+    # a dedicated continuing 2-day pair cycle. Prior counts are supplied by the
+    # app from the official September seed + later published SYSTEM baselines.
+    _cycle_cat=("Onko/TBL" if cohort_october_model(year,month) else "Onko RO")
+    prior_onko=[float((p.prior_rotation_counts or {}).get(_cycle_cat,0) or 0) for p in people]
+    min_prior_onko=min(prior_onko) if prior_onko else 0.0
+    # Small cost is only a deterministic preference; the actual cycle floor below
+    # is constrained explicitly so later SOFT optimizations cannot erase it.
+    onko_catchup_unit=0.01
     for pi,p in enumerate(people):
         onko_prior_penalty=max(0.0,prior_onko[pi]-min_prior_onko)*onko_catchup_unit
         for d in range(1,ndays+1):
@@ -1987,10 +2013,10 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             dbl[(pi,d)]=mb.var(cost=3.0)
     # Coverage by time block; exact post labels are deferred to phase 2.
     for d in range(1,ndays+1):
-        am_slots=[s for s in slots if s.day==d and not s.blocked and s.idx not in fixed_gaps and s.department!="Onko RO centre" and s.block=="AM"]
-        pm_slots=[s for s in slots if s.day==d and not s.blocked and s.idx not in fixed_gaps and s.department!="Onko RO centre" and s.block=="PM"]
-        full_slots=[s for s in slots if s.day==d and not s.blocked and s.idx not in fixed_gaps and s.department=="Onko RO centre"]
-        long_slots=[s for s in slots if s.day==d and not s.blocked and s.idx not in fixed_gaps and s.block=="FULL" and s.department!="Onko RO centre"]
+        am_slots=[s for s in slots if s.day==d and not s.blocked and s.idx not in fixed_gaps and not is_onko_slot(s) and s.block=="AM"]
+        pm_slots=[s for s in slots if s.day==d and not s.blocked and s.idx not in fixed_gaps and not is_onko_slot(s) and s.block=="PM"]
+        full_slots=[s for s in slots if s.day==d and not s.blocked and s.idx not in fixed_gaps and is_onko_slot(s)]
+        long_slots=[s for s in slots if s.day==d and not s.blocked and s.idx not in fixed_gaps and s.block=="FULL" and not is_onko_slot(s)]
         night_slots=[s for s in slots if s.day==d and not s.blocked and s.idx not in fixed_gaps and s.block=="NIGHT"]
         mb.constraint({am[(pi,d)]:1.0 for pi in range(n)},len(am_slots),len(am_slots))
         mb.constraint({pm[(pi,d)]:1.0 for pi in range(n)},len(pm_slots),len(pm_slots))
@@ -2064,6 +2090,51 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             for d in range(1,ndays+1):
                 co[full[(i,d)]]=1.0; co[full[(j,d)]]=co.get(full[(j,d)],0.0)-1.0
             mb.constraint(co,-2.0,2.0)
+    # V2.5.159 ONKO CYCLE FLOOR in the PRIMARY two-phase work-pattern model.
+    # Monthly Onko parity + spread<=2 means each resident gets either 0 or 2 Onko
+    # days in a normal month. Therefore the cycle rule only needs to ensure that
+    # the residents on the lowest cumulative historical total are selected before
+    # residents already one pair ahead. Any remaining pairs automatically begin
+    # the next cycle.
+    _onko_supply=sum(1 for s in slots if (not s.blocked) and s.idx not in fixed_gaps and is_onko_slot(s))
+    _pair_capacity=_onko_supply//2
+    _floor=min(prior_onko) if prior_onko else 0.0
+    _low=[pi for pi,v in enumerate(prior_onko) if abs(float(v)-float(_floor))<1e-9]
+
+    def _phase1_pair_possible(_pi):
+        _p=people[_pi]
+        _days=[]
+        for _s in slots:
+            if _s.blocked or _s.idx in fixed_gaps or not is_onko_slot(_s):
+                continue
+            if hard_unavailable_for_block(_p,_s.day,"FULL"):
+                continue
+            if bool(getattr(_p,"prior_last_day_onko",False)) and int(_s.day)==1:
+                continue
+            _days.append(int(_s.day))
+        _days=sorted(set(_days))
+        return any((_b-_a)>1 for _i,_a in enumerate(_days) for _b in _days[_i+1:])
+
+    _eligible_low=[pi for pi in _low if _phase1_pair_possible(pi)]
+    if _pair_capacity >= len(_eligible_low):
+        for pi in _eligible_low:
+            mb.constraint(
+                {full[(pi,d)]:1.0 for d in range(1,ndays+1)},
+                2.0,np.inf,
+                f"V25159 Onko first unfinished pair {people[pi].initials}"
+            )
+    else:
+        # There are fewer pairs than residents on the current floor. Keep every
+        # higher-history resident out for this month; the floor cohort continues
+        # next month until it is completed.
+        for pi in range(n):
+            if pi not in _eligible_low:
+                mb.constraint(
+                    {full[(pi,d)]:1.0 for d in range(1,ndays+1)},
+                    0.0,0.0,
+                    f"V25159 Onko wait behind lower cycle cohort {people[pi].initials}"
+                )
+
     # Double fairness is structural, but below mandatory cannot-work blocks.
     # Normal mode keeps the <=2 corridor. The zero-hard fallback minimizes the
     # actual double spread instead of making a hard wish infeasible.
@@ -3024,7 +3095,7 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
     parity model: 0/2/4/... per resident and monthly spread <=2.
     """
     n=len(people); ndays=calendar.monthrange(year,month)[1]
-    normal=[s for s in slots if not s.blocked and s.idx not in fixed_gaps and s.department!="Onko RO centre" and s.block in ("AM","PM")]
+    normal=[s for s in slots if not s.blocked and s.idx not in fixed_gaps and not is_onko_slot(s) and s.block in ("AM","PM")]
     byid={s.idx:s for s in normal}
 
     baseline_weekend_volunteer_mode=bool(pattern.get("baseline_weekend_volunteer_mode",False))
@@ -3132,7 +3203,7 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
         if _coloc_event_vars:
             mb.constraint({v:1.0 for v in _coloc_event_vars},-np.inf,float(_dream_centro_target))
 
-        cats=[c for c in ROTATION_CATEGORIES if c!="Onko RO"]
+        cats=[c for c in ROTATION_CATEGORIES if c not in ("Onko RO","Onko/TBL")]
         expr={}
         for pi in range(n):
             for cat in cats:
@@ -3208,7 +3279,7 @@ def _v2564_assign_posts(year, month, people, slots, pattern, fixed_gaps, seconds
             return None,res
 
         assignments={}
-        onko_by_day={s.day:s for s in slots if s.department=="Onko RO centre" and not s.blocked and s.idx not in fixed_gaps}
+        onko_by_day={s.day:s for s in slots if is_onko_slot(s) and not s.blocked and s.idx not in fixed_gaps}
         for pi,p in enumerate(people):
             for d in range(1,ndays+1):
                 if pattern["full"][(pi,d)]:
@@ -3269,7 +3340,7 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
     returns no schedule rather than silently widening it.
     """
     n=len(people); ndays=calendar.monthrange(year,month)[1]
-    normal=[s for s in slots if not s.blocked and s.idx not in fixed_gaps and s.department!="Onko RO centre" and s.block in ("AM","PM")]
+    normal=[s for s in slots if not s.blocked and s.idx not in fixed_gaps and not is_onko_slot(s) and s.block in ("AM","PM")]
     byid={s.idx:s for s in normal}
     baseline_weekend_volunteer_mode=bool(pattern.get("baseline_weekend_volunteer_mode",False))
 
@@ -3306,9 +3377,9 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
         if _prefs:
             _operator_private_sets.append((_owner_pi,_prefs))
 
-    cats=[c for c in ROTATION_CATEGORIES if c!="Onko RO"]
+    cats=[c for c in ROTATION_CATEGORIES if c not in ("Onko RO","Onko/TBL")]
     cat_slot_counts={cat:sum(1 for sl in normal if rotation_category(sl)==cat) for cat in cats}
-    _fixed_long_by_day={sl.day:sl for sl in slots if not sl.blocked and sl.idx not in fixed_gaps and sl.block=='FULL' and sl.department!='Onko RO centre'}
+    _fixed_long_by_day={sl.day:sl for sl in slots if not sl.blocked and sl.idx not in fixed_gaps and sl.block=='FULL' and not is_onko_slot(sl)}
     _fixed_night_by_day={sl.day:sl for sl in slots if not sl.blocked and sl.idx not in fixed_gaps and sl.block=='NIGHT'}
     _fixed_cat_offset={(pi,cat):0 for pi in range(n) for cat in cats}
     for pi in range(n):
@@ -3583,7 +3654,7 @@ def _v25105_assign_posts_resilient(year, month, people, slots, pattern, fixed_ga
             if has:
                 assignments={}
                 # Legacy 9 h Onko FULL is fixed by phase 1.
-                onko_by_day={sl.day:sl for sl in slots if sl.department=="Onko RO centre" and not sl.blocked and sl.idx not in fixed_gaps}
+                onko_by_day={sl.day:sl for sl in slots if is_onko_slot(sl) and not sl.blocked and sl.idx not in fixed_gaps}
                 for pi,p in enumerate(people):
                     for d in range(1,ndays+1):
                         if bool(pattern.get("full",{}).get((pi,d),False)):
@@ -3745,7 +3816,7 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
     _centro_set=set(_centro_group)
     _centro_by_event={}
     for sl in slots:
-        if sl.blocked or sl.department=="Onko RO centre" or not sl.department.startswith("CENTRO RO "):
+        if sl.blocked or is_onko_slot(sl) or not sl.department.startswith("CENTRO RO "):
             continue
         who=assigned.get(sl.idx)
         if who:
@@ -3774,6 +3845,18 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
     g["dream_team_centro_weeks"]=len(_centro_events)
     g["dream_team_centro_target_weeks"]=int(_centro_target)
     g["admin_weekend_spread_cap_used"]=int(pattern.get("weekend_spread_cap",1) or 1)
+    # V2.5.159 explicit longitudinal Onko cycle audit.
+    _ocat=("Onko/TBL" if cohort_october_model(year,month) else "Onko RO")
+    _oprior={ini:int((d.get("prior_rotation_counts") or {}).get(_ocat,0) or 0) for ini,d in (stats.get("people",{}) or {}).items()}
+    _omonth={ini:int((d.get("rotation_counts") or {}).get(_ocat,0) or 0) for ini,d in (stats.get("people",{}) or {}).items()}
+    _ocum={ini:int(_oprior.get(ini,0))+int(_omonth.get(ini,0)) for ini in set(_oprior)|set(_omonth)}
+    g["onko_cycle_model"]="V2.5.159 cumulative 2-day pair cycle"
+    g["onko_cycle_category"]=_ocat
+    g["onko_cycle_prior_counts"]=_oprior
+    g["onko_cycle_month_counts"]=_omonth
+    g["onko_cycle_cumulative_counts"]=_ocum
+    g["onko_cycle_lowest_before_month"]=min(_oprior.values()) if _oprior else 0
+    g["onko_cycle_achieved_spread"]=(max(_ocum.values())-min(_ocum.values())) if _ocum else 0
     if int(g.get("hard_errors",9999) or 0)>0: return None
     rotation_spreads=g.get("rotation_monthly_spreads") or {}
     critical_spreads=dict(g.get("critical_structural_spreads") or {
@@ -3840,7 +3923,8 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "fixed_gap_slot_ids":sorted(int(x) for x in fixed_gaps),
         "count_date_separation":"Phase 1 enforces exact workload, Onko parity, RAW weekend water-fill, and HARD-capacity-aware Friday entitlements while choosing dates/blocks. A wider structural frontier is tried only after the tighter one is mathematically proven infeasible; timeout alone never widens fairness. Phase 2 jointly water-fills non-Onko post labels. ACTUAL voluntary swaps may later diverge after approval.",
         "sparse_first_exposure_required":True,
-        "onko_first_exposure_required":False,
+        "onko_first_exposure_required":True,
+        "onko_cycle_lowest_cumulative_first":True,
         "exact_workload_targets_required":True,
         "onko_even_pairs_required":True,
         "onko_monthly_spread_ceiling":2,
@@ -3905,7 +3989,12 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
         prior_friday_count=0,
         prior_double_count=0,
         prior_weekday_day_count=0,
-        prior_rotation_counts={},
+        # V2.5.159 exception to the clean-month rule: general post debt remains
+        # zeroed, but Onko carries its own explicit educational 2-day pair cycle.
+        prior_rotation_counts={
+            cat:(int((p.prior_rotation_counts or {}).get(cat,0) or 0) if cat in ("Onko RO","Onko/TBL") else 0)
+            for cat in ROTATION_CATEGORIES
+        },
         prior_resident_hard_loss_count=0,
     ) for p in people]
     # V2.5.152 PRE-SOLVE HARD↔SOFT NORMALIZATION IS PART OF THE PRIMARY ENGINE.
@@ -4045,14 +4134,14 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     # solver chooses which row/station is best to leave empty.
     optional_slots=[
         s for s in slots
-        if not s.blocked and not s.mandatory and s.department!="Onko RO centre"
+        if not s.blocked and not s.mandatory and not is_onko_slot(s)
     ]
 
     for s in slots:
         co={x[(pi,s.idx)]:1 for pi in range(len(people))}
         if s.blocked or s.idx in fixed_gap_ids:
             mb.constraint(co,0,0,f"blocked/fixed-gap {s.idx}")
-        elif s.department=="Onko RO centre":
+        elif is_onko_slot(s):
             mb.constraint(co,1,1,f"Onko filled {s.idx}")
         elif s.mandatory:
             mb.constraint(co,1,1,f"mandatory {s.idx}")
@@ -4155,7 +4244,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
         mb.constraint(co,0,0,f"gap family filled identity {fam}")
 
     # Explicit Onko parity consistency.
-    onko_slots=[s for s in slots if s.department=="Onko RO centre" and not s.blocked]
+    onko_slots=[s for s in slots if is_onko_slot(s) and not s.blocked]
     onko_fill=len(onko_slots) if len(onko_slots)%2==0 else len(onko_slots)-1
     mb.constraint(
         {x[(pi,s.idx)]:1 for pi in range(len(people)) for s in onko_slots},
@@ -4688,6 +4777,59 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
                 busy, 0, len(candidates)-1,
                 f"backup availability {covered_slot.department} {covered_slot.block} day {covered_slot.day}"
             )
+
+    # V2.5.159: no resident is hard-excluded merely because they worked Onko
+    # last month. A dedicated cumulative pair-cycle below first catches up people
+    # on the lowest historical total, then continues the next cycle.
+
+    # V2.5.159 ONKO PAIR-CYCLE FLOOR/CAP. The cumulative ledger is not merely
+    # cosmetic: residents on the lowest historical Onko total are completed
+    # first. Once they have received one 2-day pair, the remaining capacity may
+    # start the next cycle, but nobody may receive more than one extra pair before
+    # peers have had a chance to catch up. Residents who cannot physically take a
+    # non-consecutive pair this month remain at the front of the next month.
+    if onko_slots:
+        _ocat = "Onko/TBL" if cohort_october_model(year,month) else "Onko RO"
+        _priors={pi:max(0,int(p.prior_rotation_counts.get(_ocat,0) or 0)) for pi,p in enumerate(people)}
+        _floor=min(_priors.values()) if _priors else 0
+        _low=[pi for pi,v in _priors.items() if v==_floor]
+        _pair_capacity=len(onko_slots)//2
+
+        def _can_take_pair(_pi):
+            _p=people[_pi]
+            _days=[]
+            for _s in onko_slots:
+                if hard_unavailable_for_block(_p,_s.day,"FULL"):
+                    continue
+                if bool(getattr(_p,"prior_last_day_onko",False)) and _s.day==1:
+                    continue
+                _days.append(int(_s.day))
+            return any((_b-_a)>1 for _i,_a in enumerate(_days) for _b in _days[_i+1:])
+
+        _eligible_low=[pi for pi in _low if _can_take_pair(pi)]
+        _base_required={pi:0 for pi in range(len(people))}
+        if _pair_capacity >= len(_eligible_low):
+            # Complete the unfinished cohort first.
+            for pi in _eligible_low:
+                _co={x[(pi,s.idx)]:1.0 for s in onko_slots}
+                mb.constraint(_co,2.0,np.inf,f"V25159 Onko cycle catch-up pair {people[pi].initials}")
+                _base_required[pi]=2
+            _remaining_pairs=_pair_capacity-len(_eligible_low)
+            if _remaining_pairs < len(people):
+                # Start at most one new pair per person in the next cycle.
+                for pi in range(len(people)):
+                    _co={x[(pi,s.idx)]:1.0 for s in onko_slots}
+                    mb.constraint(_co,-np.inf,float(_base_required[pi]+2),f"V25159 Onko one-next-pair cap {people[pi].initials}")
+        else:
+            # Not enough pairs to finish the current lowest cohort this month:
+            # use this month's Onko only inside that cohort; higher-history
+            # residents wait until the current floor catches up.
+            for pi in range(len(people)):
+                _co={x[(pi,s.idx)]:1.0 for s in onko_slots}
+                if pi not in _eligible_low:
+                    mb.constraint(_co,0.0,0.0,f"V25159 Onko wait for lower cohort {people[pi].initials}")
+                else:
+                    mb.constraint(_co,-np.inf,2.0,f"V25159 Onko current-cycle one-pair cap {people[pi].initials}")
 
     # Optional administrative rule: even Onko assignment count.
     if bool(rule_value("onko_even_required")):
@@ -6222,6 +6364,9 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
         )
     else:
         stats = validate_schedule(year, month, people, slots, assignments, targets)
+        _cycle_vals=[int(d.get("onko_cycle_cumulative_count",0) or 0) for d in (stats.get("people",{}) or {}).values()]
+        stats.setdefault("global",{})["onko_cycle_achieved_spread"]=(max(_cycle_vals)-min(_cycle_vals)) if _cycle_vals else 0
+        stats["global"]["onko_cycle_lowest_before_month"] = min([int(p.prior_rotation_counts.get(("Onko/TBL" if cohort_october_model(year,month) else "Onko RO"),0) or 0) for p in people] or [0])
         accepted_repairs=0
 
     # V2.5.52 uses explicit staged critical/noncritical corridors; do not run the
@@ -6240,7 +6385,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     stats["global"]["fairness_guardrails_established"] = guardrails_established
     stats["global"]["solve_stage"] = solve_stage
     stats["global"]["preference_fairness_model"] = "V2558_VERTICAL_HORIZONTAL_HOLIDAY_COHORT_WATERFILL"
-    stats["global"]["preference_vertical_order"] = ["ABSOLUTE_HARD","RESIDENT_HARD_ZERO_LOSS","CRITICAL_SPS_RO_SPS_UG_WEEKENDS_RAW_WATERFILL","CRITICAL_SPACING","WEEKLY_LOAD_RECOVERY_WATERFILL","HOLIDAY_CURRENT_MONTH_WATERFILL","STRUCTURAL_BURDEN","NONCRITICAL_POST_GUARDRAIL","SOFT1","SOFT2","SOFT3","CURRENT_MONTH_POST_OPTIMUM"]
+    stats["global"]["preference_vertical_order"] = ["ABSOLUTE_HARD","RESIDENT_HARD_ZERO_LOSS","CRITICAL_SPS_RO_SPS_UG_WEEKENDS_RAW_WATERFILL","CRITICAL_SPACING","WEEKLY_LOAD_RECOVERY_WATERFILL","HOLIDAY_CURRENT_MONTH_WATERFILL","STRUCTURAL_BURDEN","NONCRITICAL_POST_GUARDRAIL","ONKO_CUMULATIVE_PAIR_CYCLE","SOFT1","SOFT2","SOFT3","CURRENT_MONTH_POST_OPTIMUM"]
     stats["global"]["holiday_waterfill_locks"] = dict(holiday_locks)
     stats["global"]["post_fairness_model"] = "V2577_ALL_POST_PLUS_FRIDAY_STRUCTURAL_WATERFILL"
     stats["global"]["weekly_load_waterfill"] = {
@@ -6495,6 +6640,8 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             ]),
             "prior_consecutive_weekend_streak": int(getattr(p,"prior_consecutive_weekend_streak",0) or 0),
             "prior_last_day_onko": bool(getattr(p,"prior_last_day_onko",False)),
+            "prior_month_onko_count": int(getattr(p,"prior_month_onko_count",0) or 0),
+            "onko_cycle_prior_count": int(p.prior_rotation_counts.get(("Onko/TBL" if cohort_october_model(year,month) else "Onko RO"),0) or 0),
             "consecutive_onko_pairs": [],
             "max_consecutive_weekends": 0,
             "max_consecutive_days": 0,
@@ -6521,7 +6668,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
     }
 
     # Coverage.
-    onko_slots = [s for s in slots if s.department == "Onko RO centre" and not s.blocked]
+    onko_slots = [s for s in slots if is_onko_slot(s) and not s.blocked]
     onko_filled = sum(1 for s in onko_slots if s.idx in assignments)
     expected_onko = len(onko_slots) if len(onko_slots) % 2 == 0 else len(onko_slots) - 1
     if onko_filled != expected_onko:
@@ -6531,7 +6678,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
         assigned = s.idx in assignments
         if s.blocked and assigned:
             errors.append(f"Blocked slot filled: {s.day} {s.department} {s.block}")
-        if s.mandatory and s.department != "Onko RO centre" and not assigned:
+        if s.mandatory and not is_onko_slot(s) and not assigned:
             errors.append(f"Mandatory slot unfilled: {s.day} {s.department} {s.block}")
 
     # Optional-gap distribution validation / diagnostics.
@@ -6540,12 +6687,12 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
         day_gaps=[
             s for s in slots
             if s.day==d and not s.blocked and not s.mandatory
-            and s.department!="Onko RO centre"
+            and not is_onko_slot(s)
             and s.idx not in assignments
         ]
         onko_day_gaps=[
             s for s in slots
-            if s.day==d and s.department=="Onko RO centre" and s.idx not in assignments
+            if s.day==d and is_onko_slot(s) and s.idx not in assignments
         ]
         all_day_gaps=day_gaps+onko_day_gaps
         for s in all_day_gaps:
@@ -6555,14 +6702,14 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             })
 
     # V2.5.40 gap-distribution validation.
-    actual_optional=[r for r in optional_gap_rows if r["department"]!="Onko RO centre"]
+    actual_optional=[r for r in optional_gap_rows if r["rotation"] not in ("Onko RO","Onko/TBL")]
     cat_gap_counts={}
     for r in actual_optional:
         cat_gap_counts[r["rotation"]]=cat_gap_counts.get(r["rotation"],0)+1
 
     optional_categories=sorted({
         rotation_category(s) for s in slots
-        if not s.blocked and not s.mandatory and s.department!="Onko RO centre"
+        if not s.blocked and not s.mandatory and not is_onko_slot(s)
         and rotation_category(s)!="Mamografijos"
     })
     if cohort_october_model(year,month):
@@ -6572,7 +6719,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
         for r in actual_optional:
             fam=(str(r["rotation"]),str(r["block"]))
             family_gap_counts[fam]=family_gap_counts.get(fam,0)+1
-        families=sorted({(rotation_category(sl),sl.block) for sl in slots if not sl.blocked and not sl.mandatory and sl.department!="Onko RO centre"})
+        families=sorted({(rotation_category(sl),sl.block) for sl in slots if not sl.blocked and not sl.mandatory and not is_onko_slot(sl)})
         tier_spreads=[]
         for tier in (1,2):
             tf=[fam for fam in families if any(admin_coverage_priority_tier(sl,year,month)==tier for sl in slots if not sl.blocked and not sl.mandatory and (rotation_category(sl),sl.block)==fam)]
@@ -6693,6 +6840,10 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             else int(d["rotation_counts"].get("SPS RO",0))
         )
         d["distinct_rotations"]=sum(1 for n in d["rotation_counts"].values() if n>0)
+        _ocat=("Onko/TBL" if cohort_october_model(year,month) else "Onko RO")
+        d["onko_cycle_prior_count"]=int(p.prior_rotation_counts.get(_ocat,0) or 0)
+        d["onko_cycle_month_count"]=int(d["rotation_counts"].get(_ocat,0) or 0)
+        d["onko_cycle_cumulative_count"]=d["onko_cycle_prior_count"]+d["onko_cycle_month_count"]
 
         # Cumulative critical weekend exposure includes ALL worked weekend shifts.
         d["cumulative_weekend_count"] = p.prior_weekend_count + d["weekend_assignments"]
@@ -6728,11 +6879,11 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             if abs(workload_delta) > 1e-9:
                 errors.append(f"{p.initials}: workload {d['workload']} must equal exact target {targets[p.initials]}")
 
-        onko_n = sum(s.department == "Onko RO centre" for s in pslots)
+        onko_n = sum(is_onko_slot(s) for s in pslots)
         if onko_n % 2 != 0:
             errors.append(f"{p.initials}: odd Onko count {onko_n} is forbidden; Onko must be assigned in even pairs (0, 2, 4, ...)")
 
-        onko_days=sorted({s.day for s in pslots if s.department=="Onko RO centre"})
+        onko_days=sorted({s.day for s in pslots if is_onko_slot(s)})
         consecutive_onko=[]
         if bool(getattr(p,"prior_last_day_onko",False)) and 1 in onko_days:
             consecutive_onko.append([0,1])
@@ -7095,7 +7246,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
         _normal_by_day={}
         _onko_days=set()
         for sl in pslots:
-            if sl.department=="Onko RO centre":
+            if is_onko_slot(sl):
                 _onko_days.add(int(sl.day))
                 continue
             _normal_by_day[int(sl.day)]=_normal_by_day.get(int(sl.day),0)+1

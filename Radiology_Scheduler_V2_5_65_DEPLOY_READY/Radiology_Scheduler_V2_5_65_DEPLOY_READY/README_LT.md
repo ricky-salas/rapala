@@ -1,6 +1,31 @@
-# RAPA Scheduler — V2.5.152 STRICT FAIRNESS + WISH AUDIT
+# RAPA Scheduler — V2.5.157 ADMIN STATIONS + NO BLOCK
+
+## V2.5.157
+- SP / administracijos spalio postų prioritetai įdėti į operacinį engine.
+- MUST: CENTRO RO 4+4, SPS RO AM+PM, Centro UG 120 AM, Onkologinė/TBL, Skopijos ir budėjimai.
+- II prioritetas: Vaikų UG AM, ADC AM, Centro UG 120 PM.
+- III prioritetas: ADC PM ir SPS UG AM.
+- SPS UG PM nuo spalio neaktyvus; Mammografiją pakeičia Skopijos I–IV 08:00–14:00.
+- Skopijos įprastai: Centras 0153; 2026-10-13: konsultacinė poliklinika 209.
+- BLOCK / inactive slotai žmogui rodomame grafike neberodomi.
+- Budėjimų HARD logika palikta nepakeista.
 
 
+## V2.5.154
+- Anketa matoma visiems rezidentams tiek paprastame, tiek išplėstiniame režime.
+- ŠR/SP papildomi tyrimo įrankiai lieka prieinami tik pagal rolę ir tik išplėstiniame režime.
+- Scheduling engine nepakeistas: naudojamas stabilus V2.5.153 engine API.
+- Paveldėti V2.5.153 Centro UG / neaktyvių postų / fairness pataisymai išsaugoti.
+
+
+## V2.5.153
+
+- Centro UG 120kab [Rytas] nuo 2026-10 yra aktyvus svarbus darbo postas.
+- Mamografijos nuo 2026-10 lieka išjungta ir nebėra rodoma kaip BLOCK eilutės grafike / Excel.
+- Vidiniai Mamografijos tombstone slotai palikti tik slot_id stabilumui.
+- Supabase migracijos nereikia; po deploy spalio juodraštį pergeneruokite.
+
+---
 
 ## V2.5.152 — strict fairness + wish audit
 

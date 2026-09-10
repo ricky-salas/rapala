@@ -11,10 +11,10 @@ ENGINE=(ROOT/'scheduler_engine.py').read_text(encoding='utf-8')
 
 def run():
     # Release contract: app and optimizer move together.
-    assert se.ENGINE_API_VERSION == '2.5.152'
-    assert 'APP_VERSION = "2.5.152 STRICT FAIRNESS + WISH AUDIT"' in APP
-    assert 'EXPECTED_ENGINE_API_VERSION = "2.5.152"' in APP
-    assert 'COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.152"}' in APP
+    assert se.ENGINE_API_VERSION == '2.5.153'
+    assert 'APP_VERSION = "2.5.154 SURVEY ALL MODES"' in APP
+    assert 'EXPECTED_ENGINE_API_VERSION = "2.5.153"' in APP
+    assert 'COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.153"}' in APP
 
     # Regression 1: bounded water-fill respects a hard capacity bottleneck.
     # 100 Friday assignments, one resident can accept only 2, peers can accept 10.
@@ -55,7 +55,7 @@ def run():
     assert 'pateikė {_submitted_count}/{len(DEFAULT_PEOPLE)} · juodraštis:' in APP
     assert '("yra" if state.get("has_draft") else "nėra")' in APP
 
-    print('V2.5.151 hard-aware Friday behavior retained on V2.5.152 PASS')
+    print('V2.5.151 hard-aware Friday behavior retained on V2.5.153 PASS')
 
 
 if __name__=='__main__':

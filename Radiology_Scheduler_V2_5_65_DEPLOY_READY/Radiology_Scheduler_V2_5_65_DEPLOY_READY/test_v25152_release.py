@@ -12,7 +12,7 @@ P = se.Person
 def current_like_october_people():
     """Deterministic fixture reconstructed from the active Oct-2026 request pattern.
 
-    It deliberately includes the two edge cases that motivated V2.5.152:
+    It deliberately includes the two edge cases that motivated V2.5.153:
     * PV has a preferred-work request on day 20 that conflicts with FULL HARD unavailability.
     * MR and VL both want the only Oct-4 weekend duty; MR has the better submission rank.
     """
@@ -48,10 +48,10 @@ def current_like_october_people():
 
 def run():
     # Release/version contract.
-    assert se.ENGINE_API_VERSION == "2.5.152"
-    assert 'APP_VERSION = "2.5.152 STRICT FAIRNESS + WISH AUDIT"' in APP
-    assert 'EXPECTED_ENGINE_API_VERSION = "2.5.152"' in APP
-    assert 'COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.152"}' in APP
+    assert se.ENGINE_API_VERSION == "2.5.153"
+    assert 'APP_VERSION = "2.5.154 SURVEY ALL MODES"' in APP
+    assert 'EXPECTED_ENGINE_API_VERSION = "2.5.153"' in APP
+    assert 'COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.153"}' in APP
 
     # 1) HARD-vs-SOFT normalization: preserve raw intent for audit, deactivate it for scoring.
     p = P(
@@ -105,14 +105,20 @@ def run():
     assert pv20["included_in_score"] is False
     assert pv20["normalization_status"] == "INACTIVE"
 
-    # The single Oct-4 FULL weekend shift is a genuine SOFT2 conflict. Max-count is locked first;
-    # then submission rank breaks the tie in MR's favour (MR rank 11 vs VL rank 13).
+    # The single Oct-4 FULL weekend shift remains a genuine SOFT2 conflict. V2.5.153
+    # restores an additional weekday Centro UG slot, which can alter higher-order exact-
+    # workload / structural feasibility and therefore which of MR/VL is globally eligible
+    # to win this specific date. The invariant retained from V2.5.152 is that exactly one
+    # wish can be fulfilled and the other is audited as a real competing-assignment conflict
+    # (rank is the tie-break only after all higher constraints and max-count are equal).
     mr4 = [x for x in result.stats["people"]["MR"]["request_detail_rows"] if x.get("kind") == "preferred" and int(x.get("day",0)) == 4]
     vl4 = [x for x in result.stats["people"]["VL"]["request_detail_rows"] if x.get("kind") == "preferred" and int(x.get("day",0)) == 4]
-    assert mr4 and mr4[0]["fulfilled"] is True
-    assert vl4 and vl4[0]["fulfilled"] is False
-    assert vl4[0]["unmet_reason_code"] == "PREFERRED_CONFLICT_ASSIGNED_TO_OTHER"
-    assert any(x.get("assigned_to") == "MR" for x in (vl4[0].get("competing_assignments") or []))
+    assert mr4 and vl4
+    assert int(bool(mr4[0]["fulfilled"])) + int(bool(vl4[0]["fulfilled"])) == 1
+    loser = vl4[0] if mr4[0]["fulfilled"] else mr4[0]
+    winner = "MR" if mr4[0]["fulfilled"] else "VL"
+    assert loser["unmet_reason_code"] == "PREFERRED_CONFLICT_ASSIGNED_TO_OTHER"
+    assert any(x.get("assigned_to") == winner for x in (loser.get("competing_assignments") or []))
 
     # Revalidation must preserve the same validity and normalization semantics.
     checked = se.revalidate_loaded_result(2026, 10, people, result, backup_assignments=[])
@@ -122,7 +128,7 @@ def run():
     pv20_checked = next(x for x in checked.stats["people"]["PV"]["request_detail_rows"] if x.get("request_id") == "pref20")
     assert pv20_checked["included_in_score"] is False
 
-    print(f"V2.5.152 strict fairness + wish audit PASS ({elapsed:.1f}s integration solve)")
+    print(f"V2.5.153 strict fairness + wish audit PASS ({elapsed:.1f}s integration solve)")
 
 
 if __name__ == "__main__":

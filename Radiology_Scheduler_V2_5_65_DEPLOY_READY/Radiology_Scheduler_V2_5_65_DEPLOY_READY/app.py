@@ -35,7 +35,7 @@ import scheduler_engine as _scheduler_engine
 from scheduler_engine import (
     Person, Slot, SolveResult, DEFAULT_PEOPLE, PERSON_COLORS, next_month, weekday_count, round_half_up,
     standard_target, make_slots, solve_schedule, attempt_swap, preview_swap, validate_schedule,
-    cohort_october_model, night_xray_duty_active, slot_visible_in_schedule, scheduled_slot_hours, scheduled_slot_clock, ANNUAL_EXAM_DATES,
+    cohort_october_model, night_xray_duty_active, slot_visible_in_schedule, scheduled_slot_hours, scheduled_slot_clock, is_onko_slot, ANNUAL_EXAM_DATES,
     lithuanian_public_holidays, public_holiday_days_in_month, is_public_holiday,
     serialize_result, deserialize_result, revalidate_loaded_result, calculate_targets, blocks_overlap, hard_unavailable_for_block,
     resident_hard_unavailable_for_block, absolute_unavailable_for_block,
@@ -67,9 +67,9 @@ from opto_research import (
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.157 ADMIN STATIONS + NO BLOCK"
-EXPECTED_ENGINE_API_VERSION = "2.5.157"
-COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.157"}
+APP_VERSION = "2.5.159 ONKO CYCLE LEDGER"
+EXPECTED_ENGINE_API_VERSION = "2.5.159"
+COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.159"}
 
 # V2.5.139: import-safe reward credit compatibility. Older deployed engines used
 # by the same app already contain the scheduling API but predate the credit helpers.
@@ -760,7 +760,7 @@ def slot_time_text(sl):
     if sl.block=="AM": return "08:00–14:00"
     if sl.block=="PM": return "14:00–20:00"
     if sl.block=="NIGHT": return "20:00–08:00"
-    if sl.block=="FULL": return "08:00–17:00" if sl.department=="Onko RO centre" else "08:00–20:00"
+    if sl.block=="FULL": return "08:00–17:00" if is_onko_slot(sl) else "08:00–20:00"
     return block_label(sl.block)
 
 
@@ -782,7 +782,7 @@ def slot_datetime_bounds(y,m,sl,tz):
         return datetime.combine(d0,time(20),tzinfo=tz), datetime.combine(d0+timedelta(days=1),time(8),tzinfo=tz)
     if sl.block=="AM": return datetime.combine(d0,time(8),tzinfo=tz),datetime.combine(d0,time(14),tzinfo=tz)
     if sl.block=="PM": return datetime.combine(d0,time(14),tzinfo=tz),datetime.combine(d0,time(20),tzinfo=tz)
-    endt=time(17) if sl.department=="Onko RO centre" else time(20)
+    endt=time(17) if is_onko_slot(sl) else time(20)
     return datetime.combine(d0,time(8),tzinfo=tz),datetime.combine(d0,endt,tzinfo=tz)
 def pretty_day(y,m,d): return f"{d:02d} {WEEKDAYS[lang][date(y,m,d).weekday()]}"
 def safe_filename(s): return "".join(ch for ch in unicodedata.normalize("NFKD",s).encode("ascii","ignore").decode() if ch.isalnum() or ch in "_-")
@@ -1613,6 +1613,60 @@ def recurring_dates_for_month(y,m,rows):
         elif typ=="preferred": out["preferred"] |= days
     return out
 
+# V2.5.159 — authoritative Onko cycle seed supplied by SP/warden on 2026-09-10.
+# These residents completed their September Onko pair. The cycle is tracked in
+# 2-day units: residents with the lower cumulative total are offered the next
+# pair first; after everyone catches up, the cycle continues from the new floor.
+OFFICIAL_ONKO_CYCLE_SEED = {
+    (2026, 9): {
+        "SE": 2, "KE": 2, "MR": 2, "ŠR": 2, "GB": 2, "GD": 2,
+        "DU": 2, "SA": 2, "MŽ": 2, "GE": 2, "PV": 2,
+    }
+}
+
+def historical_onko_cycle_counts_before(y,m):
+    """Return cumulative Onko days before ``y,m`` for the dedicated Onko cycle.
+
+    September-2026 is seeded from the warden's authoritative list. If a stored
+    September baseline exists, the seed replaces that month's Onko contribution
+    so it cannot be double-counted. Other published months are read normally.
+    This history is used only for Onko-cycle ordering; it does not reactivate
+    general future-month fairness debt.
+    """
+    out={p["initials"]:0 for p in DEFAULT_PEOPLE}
+    monthly={}
+    try:
+        rows=db.published_baselines_before(y,m)
+    except Exception:
+        rows=[]
+    for r in rows:
+        try:
+            yy=int(r["year"]); mm=int(r["month"])
+            if (yy,mm) >= (int(y),int(m)):
+                continue
+            payload=r.get("baseline_json") or {}
+            ass={int(k):v for k,v in (payload.get("assignments") or {}).items()}
+            slot_map={s.idx:s for s in make_slots(yy,mm)}
+            bucket={p["initials"]:0 for p in DEFAULT_PEOPLE}
+            for sid,ini in ass.items():
+                sl=slot_map.get(int(sid))
+                if sl is not None and ini in bucket and is_onko_slot(sl):
+                    bucket[ini]+=1
+            monthly[(yy,mm)]=bucket
+        except Exception:
+            continue
+
+    # The warden-supplied September list is the source of truth for that month.
+    for smonth,seed in OFFICIAL_ONKO_CYCLE_SEED.items():
+        if smonth < (int(y),int(m)):
+            monthly[smonth]={p["initials"]:int(seed.get(p["initials"],0) or 0) for p in DEFAULT_PEOPLE}
+
+    for bucket in monthly.values():
+        for ini,n in bucket.items():
+            if ini in out:
+                out[ini]+=max(0,int(n or 0))
+    return out
+
 def historical_rotation_counts_before(y,m):
     """Count prior published SYSTEM workplace exposures for longitudinal catch-up."""
     out={p["initials"]:{cat:0 for cat in ROTATION_CATEGORIES} for p in DEFAULT_PEOPLE}
@@ -1697,6 +1751,23 @@ def historical_weekend_tail_streak_before(y,m):
     return out
 
 
+def historical_previous_month_onko_counts(y,m):
+    """Immediate prior-month ACTUAL Onko counts for explicit month-to-month eligibility rules."""
+    out={p["initials"]:0 for p in DEFAULT_PEOPLE}
+    py,pm,ass=_previous_month_effective_actual_assignments(y,m)
+    if not ass:
+        return out
+    try:
+        slot_map={s.idx:s for s in make_slots(py,pm)}
+        for sid,ini in ass.items():
+            sl=slot_map.get(int(sid))
+            if sl is not None and ini in out and is_onko_slot(sl):
+                out[ini]+=1
+    except Exception:
+        return {p["initials"]:0 for p in DEFAULT_PEOPLE}
+    return out
+
+
 def historical_previous_last_day_onko_before(y,m):
     """Prior-month ACTUAL last-day Onko state for cross-boundary safety only."""
     out={p["initials"]:False for p in DEFAULT_PEOPLE}
@@ -1708,7 +1779,7 @@ def historical_previous_last_day_onko_before(y,m):
         last_day=calendar.monthrange(py,pm)[1]
         for sid,ini in ass.items():
             sl=slot_map.get(int(sid))
-            if sl is not None and ini in out and sl.day==last_day and sl.department=="Onko RO centre":
+            if sl is not None and ini in out and sl.day==last_day and is_onko_slot(sl):
                 out[ini]=True
     except Exception:
         return {p["initials"]:False for p in DEFAULT_PEOPLE}
@@ -1832,7 +1903,9 @@ def load_people(y,m):
     resident_hard_prior={}
     # Cross-month safety/spacing state remains because it is not fairness catch-up.
     weekend_tail=historical_weekend_tail_streak_before(y,m)
+    previous_month_onko=historical_previous_month_onko_counts(y,m)
     previous_last_day_onko=historical_previous_last_day_onko_before(y,m)
+    onko_cycle_prior=historical_onko_cycle_counts_before(y,m)
     claim_rows=db.list_backup_claims(y,m)
     claims_by_initials={}
     for r in claim_rows:
@@ -1945,9 +2018,16 @@ def load_people(y,m):
             prior_friday_count=0,
             prior_double_count=0,
             prior_weekday_day_count=0,
-            prior_rotation_counts={},
+            # General historical post debt stays disabled, but Onko has a dedicated
+            # longitudinal pair-cycle requested by SP. Carry only the active Onko
+            # category into the engine so remaining residents catch up first.
+            prior_rotation_counts={
+                cat:(int(onko_cycle_prior.get(initials,0) or 0) if cat==("Onko/TBL" if cohort_october_model(y,m) else "Onko RO") else 0)
+                for cat in ROTATION_CATEGORIES
+            },
             prior_consecutive_weekend_streak=int(weekend_tail.get(initials,0)),
             prior_last_day_onko=bool(previous_last_day_onko.get(initials,False)),
+            prior_month_onko_count=int(previous_month_onko.get(initials,0) or 0),
             prior_resident_hard_loss_count=0))
     return people
 
@@ -2079,6 +2159,13 @@ def schedule_grid(y,m,result,status_rows=None):
                 except Exception: continue
                 if 1<=di<=ndays: rows[key][di]=ini
 
+    # SP 2026-09-10 asked for a dedicated night SPS RO row in the visual schedule.
+    # Operational dates/hours were not supplied, so V2.5.158 shows the row as a
+    # presentation scaffold only; it does not create fake NIGHT assignments or workload.
+    if cohort_october_model(y,m):
+        _night_key=("SPS RO naktiniai budėjimai [Naktis]" if lang=="LT" else "SPS RO night duties [Night]")
+        rows.setdefault(_night_key,{d:"" for d in range(1,ndays+1)})
+
     for r in (status_rows or []):
         ini=str(r.get("initials") or "")
         try: day=int(r.get("day"))
@@ -2092,12 +2179,34 @@ def schedule_grid(y,m,result,status_rows=None):
         key=f"{_status_label} · {ini}"
         rows.setdefault(key,{d:"" for d in range(1,ndays+1)})
         rows[key][day]=ini
+    def _row_order(k):
+        s=str(k)
+        block_rank=0 if ("[Rytas]" in s or "[Morning]" in s) else 1 if ("[Visa diena]" in s or "[Full day]" in s) else 2 if ("[Popietė]" in s or "[Afternoon]" in s) else 3
+        if s.startswith("CENTRO RO"):
+            try: num=int(re.search(r"CENTRO RO (\d+)",s).group(1))
+            except Exception: num=9
+            return (10,block_rank,num,s)
+        if s.startswith("Onkologinė/TBL") or s.startswith("Onko/TBL"): return (20,block_rank,0,s)
+        if s.startswith("Centro UG 120"): return (30,block_rank,0,s)
+        if s.startswith("SPS RO d.d."): return (40,block_rank,0,s)
+        if s.startswith("SPS RO nakt") or s.startswith("SPS RO night"): return (41,3,0,s)
+        if s.startswith("SPS UG 1035"): return (50,block_rank,0,s)
+        if s.startswith("ADC 144"): return (60,block_rank,0,s)
+        if s.startswith("145") or s.startswith("ADC 145"): return (61,block_rank,0,s)
+        if s.startswith("Vaikų UG"): return (70,block_rank,0,s)
+        if s.startswith("Skopijos"): return (80,block_rank,0,s)
+        if s.startswith("SPS RO budėjimai"): return (90,block_rank,0,s)
+        if s.startswith("IŠVYKĘS") or s.startswith("AWAY") or s.startswith("PATEISINAMAS") or s.startswith("JUSTIFIED"): return (1000,block_rank,0,s)
+        return (500,block_rank,0,s)
+    rows=dict(sorted(rows.items(),key=lambda kv:_row_order(kv[0])))
     df=pd.DataFrame.from_dict(rows,orient="index"); df.columns=[f"{d:02d}\n{WEEKDAYS[lang][date(y,m,d).weekday()]}" for d in range(1,ndays+1)]
     return df
 
 def style_schedule(df):
     def cs(v):
-        c=PERSON_COLORS.get(str(v)); return "" if not c else f"background-color:{c};color:{contrast_text(c)};font-weight:700;text-align:center;"
+        c=PERSON_COLORS.get(str(v))
+        # SP/admin aesthetics: one consistent white text color on all resident cells.
+        return "" if not c else f"background-color:{c};color:#FFFFFF;font-weight:700;text-align:center;text-shadow:0 1px 2px rgba(0,0,0,.45);"
     return df.style.map(cs)
 
 def style_rows(df):
@@ -2686,6 +2795,15 @@ def summary_df(result,y,m):
         rotation_counts=d.get("rotation_counts") or {}
         for cat in display_rotation_categories(y,m):
             row[cat]=int(rotation_counts.get(cat,0) or 0)
+        # V2.5.159 dedicated Onko cycle ledger in Suvestinė. This makes the
+        # carry-in and post-month cumulative position visible instead of hiding
+        # the longitudinal rule inside the solver.
+        _onko_cat=("Onko/TBL" if cohort_october_model(y,m) else "Onko RO")
+        _prior_onko=int((d.get("prior_rotation_counts") or {}).get(_onko_cat,0) or 0)
+        _month_onko=int(rotation_counts.get(_onko_cat,0) or 0)
+        row[("Onko iki mėnesio" if lang=="LT" else "Onko before month")]=_prior_onko
+        row[("Onko šį mėnesį" if lang=="LT" else "Onko this month")]=_month_onko
+        row[("Onko ciklas iš viso" if lang=="LT" else "Onko cycle total")]=_prior_onko+_month_onko
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -3728,6 +3846,7 @@ def build_xlsx(y,m,result,document_status=None,backup_rows_override=None):
     out=BytesIO(); wb=xlsxwriter.Workbook(out,{"in_memory":True}); ws=wb.add_worksheet("Grafikas" if lang=="LT" else "Schedule"); sm=wb.add_worksheet("Suvestinė" if lang=="LT" else "Summary"); bk=wb.add_worksheet("Dubliai" if lang=="LT" else "Backups")
     dark="#1F2937"; light="#F3F4F6"; weekend="#E5E7EB"; border="#D1D5DB"; title=wb.add_format({"bold":True,"font_size":16,"font_color":"#FFFFFF","bg_color":dark}); header=wb.add_format({"bold":True,"bg_color":light,"border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True}); wh=wb.add_format({"bold":True,"bg_color":weekend,"border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True}); cell=wb.add_format({"border":1,"border_color":border,"text_wrap":True}); blocked=wb.add_format({"border":1,"border_color":border,"bg_color":"#BFC4CA","align":"center"})
     pf={i:wb.add_format({"bold":True,"bg_color":c,"font_color":contrast_text(c),"border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True}) for i,c in PERSON_COLORS.items()}
+    schedule_pf={i:wb.add_format({"bold":True,"bg_color":c,"font_color":"#FFFFFF","border":1,"border_color":border,"align":"center","valign":"vcenter","text_wrap":True}) for i,c in PERSON_COLORS.items()}
     _,nd=calendar.monthrange(y,m); last=1+nd; status_prefix=(str(document_status).strip()+" — ") if document_status else ""
     ws.merge_range(0,0,0,last,status_prefix+("Rezidentų grafikas — " if lang=="LT" else "Resident grafikas — ")+month_label(y,m),title); ws.write(1,0,tr("department"),header); ws.write(1,1,tr("shift"),header)
     for d in range(1,nd+1): ws.write(1,1+d,f"{d:02d}\n{WEEKDAYS[lang][date(y,m,d).weekday()]}",wh if date(y,m,d).weekday()>=5 else header)
@@ -3735,6 +3854,27 @@ def build_xlsx(y,m,result,document_status=None,backup_rows_override=None):
     for s in slots:
         k=(slot_department_text(y,m,s,grid=True),s.block)
         if k not in rowkeys: rowkeys.append(k)
+    if cohort_october_model(y,m):
+        _night_row=("SPS RO naktiniai budėjimai" if lang=="LT" else "SPS RO night duties","NIGHT")
+        if _night_row not in rowkeys: rowkeys.append(_night_row)
+    def _rk(k):
+        dept,block=k; br={"AM":0,"FULL":1,"PM":2,"NIGHT":3}.get(block,9); s=str(dept)
+        if s.startswith("CENTRO RO"):
+            try: num=int(re.search(r"CENTRO RO (\d+)",s).group(1))
+            except Exception: num=9
+            return (10,br,num,s)
+        if s.startswith("Onkologinė/TBL") or s.startswith("Onko/TBL"): return (20,br,0,s)
+        if s.startswith("Centro UG 120"): return (30,br,0,s)
+        if s.startswith("SPS RO d.d."): return (40,br,0,s)
+        if s.startswith("SPS RO nakt") or s.startswith("SPS RO night"): return (41,br,0,s)
+        if s.startswith("SPS UG 1035"): return (50,br,0,s)
+        if s.startswith("ADC 144"): return (60,br,0,s)
+        if s.startswith("145") or s.startswith("ADC 145"): return (61,br,0,s)
+        if s.startswith("Vaikų UG"): return (70,br,0,s)
+        if s.startswith("Skopijos"): return (80,br,0,s)
+        if s.startswith("SPS RO budėjimai"): return (90,br,0,s)
+        return (500,br,0,s)
+    rowkeys.sort(key=_rk)
     by={(slot_department_text(y,m,s,grid=True),s.block,s.day):s for s in slots}
     for r,(dept,block) in enumerate(rowkeys,start=2):
         ws.write(r,0,dept,cell); ws.write(r,1,block_label(block),cell)
@@ -3742,7 +3882,7 @@ def build_xlsx(y,m,result,document_status=None,backup_rows_override=None):
             s=by.get((dept,block,d))
             if not s: ws.write_blank(r,1+d,None,cell)
             else:
-                who=result.assignments.get(s.idx,""); ws.write(r,1+d,who,pf[who] if who else cell)
+                who=result.assignments.get(s.idx,""); ws.write(r,1+d,who,schedule_pf[who] if who else cell)
     ws.set_column(0,0,23); ws.set_column(1,1,13); ws.set_column(2,last,7); ws.freeze_panes(2,2)
     sdf=summary_df(result,y,m)
     for c,col in enumerate(sdf.columns): sm.write(0,c,col,header)
@@ -7724,7 +7864,7 @@ with tabs[pos]:
         all_backup_slots=[s for s in make_slots(year,month) if backup_required_slot(s)]
         weekend_slots=[s for s in all_backup_slots if s.weekday >= 5]
         centro120_slots=[s for s in all_backup_slots if s.weekday < 5 and s.department.startswith("Centro UG 120") and s.block=="AM"]
-        onko_slots=[s for s in all_backup_slots if s.weekday < 5 and s.department=="Onko RO centre"]
+        onko_slots=[s for s in all_backup_slots if s.weekday < 5 and is_onko_slot(s)]
         sps_ro_slots=[s for s in all_backup_slots if s.weekday < 5 and s.department.startswith("SPS RO")]
         sps_ug_slots=[s for s in all_backup_slots if s.weekday < 5 and s.department.startswith("SPS UG")]
 
@@ -7819,7 +7959,7 @@ with tabs[pos]:
             board=[]
             for s in all_backup_slots:
                 r=claim_by_slot.get(s.idx)
-                group=("Centro 120" if s.department.startswith("Centro UG 120") else "Onko RO" if s.department=="Onko RO centre" else "SPS RO" if s.department.startswith("SPS RO") else "SPS UG")
+                group=("Centro 120" if s.department.startswith("Centro UG 120") else "Onko/TBL" if is_onko_slot(s) else "SPS RO" if s.department.startswith("SPS RO") else "SPS UG")
                 board.append({
                     ("Grupė" if lang=="LT" else "Group"):group,
                     tr("date"):f"{year}-{month:02d}-{s.day:02d}",
@@ -13295,14 +13435,17 @@ def explanatory_manual_only(content: str) -> str:
 with tabs[pos]:
     st.subheader(tr("rules_title"))
     st.info(
-        ("V2.5.157 — SP / ADMIN PADENGIMO TVARKA NUO SPALIO. MUST: CENTRO RO 4+4, SPS RO rytas+vakaras, Centro UG 120 rytas, Onkologinė/TBL, Skopijos ir budėjimai. "
-         "II prioritetas: Vaikų UG rytas, ADC rytai, Centro UG 120 vakaras. III / paskutinis prioritetas: ADC vakarai ir SPS UG rytas. "
-         "Kai tiksliam mėnesio krūviui reikia palikti neužpildytų optional vietų, sistema pirmiausia palieka III prioriteto vietas ir tik tada II prioriteto. "
-         "SPS UG vakaro eilutė nuo spalio neaktyvi. Mammografiją pakeičia viena Skopijų AM eilutė I–IV 08:00–14:00. BLOCK žmogui rodomame grafike neberodomas."
+        ("V2.5.158 — NAUJAUSIAS SP / ADMIN SPALIO MODELIS. Onko/TBL yra VIENA 08:00–17:00 FULL pamaina (1,5 pamainos vieneto), ne AM+PM. "
+         "2026 m. spalį Onko skiriamas tik rugsėjį Onko nedirbusiems rezidentams; vienam Onko rezidentui skiriamos 2 Onko dienos. "
+         "SPS UG 1035 vakaro pamaina grąžinta. MUST: CENTRO RO 4+4, SPS RO rytas+vakaras, Centro UG 120 rytas, Onko/TBL, Skopijos ir esami budėjimai. "
+         "II prioritetas: Vaikų UG rytas, ADC rytai, Centro UG 120 vakaras. III / paskutinis prioritetas: ADC vakarai ir SPS UG rytas+vakaras. "
+         "Centro UG eilutės grafike rodomos greta; rezidentų raidžių spalva suvienodinta; BLOCK nerodomas. Naktinių SPS RO budėjimų eilutė rodoma kaip vizualus scaffold, bet naktinių datų/valandų engine nekuria, kol jos nepatvirtintos."
          if lang=="LT" else
-         "V2.5.157 — SP / ADMIN COVERAGE ORDER FROM OCTOBER. MUST: CENTRO RO 4+4, SPS RO AM+PM, Centro UG 120 AM, Oncology/TBL, Endoscopy and duties. "
-         "Second tier: Pediatric US AM, ADC AM, Centro UG 120 PM. Last tier: ADC PM and SPS UG AM. "
-         "When exact monthly workload requires optional gaps, last-tier rows are sacrificed before second-tier rows. SPS UG PM is inactive from October; Mammography is replaced by one Mon–Thu Endoscopy AM row. Human-facing schedules no longer display BLOCK cells.")
+         "V2.5.158 — LATEST SP / ADMIN OCTOBER MODEL. Onko/TBL is ONE 08:00–17:00 FULL shift worth 1.5 standard shift-units, not AM+PM. "
+         "In October 2026 Onko is assigned only to residents who did not work Onko in September; an Onko resident receives 2 Onko days. "
+         "SPS UG 1035 PM is restored. MUST: CENTRO RO 4+4, SPS RO AM+PM, Centro UG 120 AM, Onko/TBL, Endoscopy and existing duties. "
+         "Second tier: Pediatric US AM, ADC AM, Centro UG 120 PM. Last tier: ADC PM and SPS UG AM+PM. "
+         "Centro UG rows are adjacent; resident text color is unified; BLOCK is hidden. A night SPS RO duty row is shown as a visual scaffold, but the engine does not invent night dates/hours until they are confirmed.")
     )
 
     if lang=="LT":
@@ -13324,12 +13467,12 @@ with tabs[pos]:
         st.markdown("### Supaprastinta vertikali prioritetų lentelė")
         st.dataframe(pd.DataFrame([
             {"Rangas":"1. TRUE ABSOLUTE HARD","Kas įeina":"Sauga, patvirtinta liga/atostogos, fizinis neįmanomumas, coverage; generatoriui ≤48 val./7 d. ir bent 1 laisva diena/7 d.","Kaip sprendžiama":"Generuojant 100%. Po publikavimo tik 48h riba gali būti savanoriškai viršyta normaliu bilateral swapu su aiškiu asmens sutikimu; kiti HARD lieka"},
-            {"Rangas":"2. CRITICAL STRUCTURAL","Kas įeina":"SPS RO + šeštadieniai + sekmadieniai + penktadieniai","Kaip sprendžiama":"SPS RO ir savaitgalio našta saugoma struktūriškai; tai nepakeičia atskiros V2.5.157 postų padengimo hierarchijos, kur SPS UG AM yra paskutiniame optional prioritete."},
+            {"Rangas":"2. CRITICAL STRUCTURAL","Kas įeina":"SPS RO + šeštadieniai + sekmadieniai + penktadieniai","Kaip sprendžiama":"SPS RO ir savaitgalio našta saugoma struktūriškai; tai nepakeičia atskiros V2.5.158 postų padengimo hierarchijos, kur SPS UG AM+PM yra paskutiniame optional prioritete."},
             {"Rangas":"3. RESIDENT HARD","Kas įeina":"Negaliu dirbti — data / AM / PM / recurring","Kaip sprendžiama":"0 pažeidimų privaloma; jei tokio SYSTEM grafiko nėra, juodraštis negrąžinamas"},
             {"Rangas":"4. WEEKLY LOAD + RECOVERY","Kas įeina":"Valandos per slenkančias 7 d., kalendorinės savaitės, 12 val. dvigubų dienų seka","Kaip sprendžiama":"Taikosi į ~40 val./7 d.; lygina savaitinį krūvį. Po 1 double vengia kito double; po 2 doubles kita diena PM arba laisva, preferuojama laisva"},
             {"Rangas":"5. ŠVENČIŲ WATER-FILL","Kas įeina":"Oficialios Lietuvos švenčių dienos ir ilgalaikis pasirinkimas: noriu dirbti / neutralu / noriu ilsėtis","Kaip sprendžiama":"Pirmiausia norintys dirbti, tada neutralūs, o norintys ilsėtis — tik kai reikia. Kiekvienoje grupėje 1 visiems → 2 visiems; žiūrima ankstesnė SYSTEM švenčių našta ir mėnesio krūvis."},
             {"Rangas":"6. Kitas struktūrinis krūvis","Kas įeina":"Dvigubų pamainų bendras skaičius ir kitas consecutive/fatigue","Kaip sprendžiama":"Lyginama grupėje nebloginant aukštesnių užraktų; penktadieniai jau užrakinti aukščiau raw 0–1"},
-            {"Rangas":"7. POSTŲ PADENGIMO PRIORITETAI","Kas įeina":"MUST: CENTRO RO 4+4, SPS RO AM+PM, Centro UG 120 AM, Onkologinė/TBL, Skopijos, budėjimai. II: Vaikų UG AM, ADC AM, Centro UG 120 PM. III: ADC PM, SPS UG AM.","Kaip sprendžiama":"Nuo 2026-10 privalomas MUST padengimas užrakinamas. Jei dėl bendro mėnesio krūvio reikia palikti tuščių optional vietų, jos pirmiausia imamos iš III prioriteto ir tik tada iš II prioriteto."},
+            {"Rangas":"7. POSTŲ PADENGIMO PRIORITETAI","Kas įeina":"MUST: CENTRO RO 4+4, SPS RO AM+PM, Centro UG 120 AM, Onkologinė/TBL, Skopijos, budėjimai. II: Vaikų UG AM, ADC AM, Centro UG 120 PM. III: ADC PM, SPS UG AM+PM.","Kaip sprendžiama":"Nuo 2026-10 privalomas MUST padengimas užrakinamas. Jei dėl bendro mėnesio krūvio reikia palikti tuščių optional vietų, jos pirmiausia imamos iš III prioriteto ir tik tada iš II prioriteto."},
             {"Rangas":"8. SOFT-1","Kas įeina":"Noriu laisvos; struktūruotas recovery / vengti dublių","Kaip sprendžiama":"Horizontalus water-filling: bendras sluoksnis visiems prieš papildomus vieno žmogaus prašymus"},
             {"Rangas":"9. SOFT-2","Kas įeina":"Pageidauju dirbti konkrečią datą / AM / PM","Kaip sprendžiama":"Horizontalus water-filling"},
             {"Rangas":"10. SOFT-3","Kas įeina":"Išsklaidymas / koncentracija","Kaip sprendžiama":"Tik po aukštesnių rangų"},
@@ -13437,7 +13580,7 @@ with tabs[pos]:
         st.markdown("### Simplified vertical-priority table")
         st.dataframe(pd.DataFrame([
             {"Rank":"1. TRUE ABSOLUTE HARD","Includes":"Safety/rest, approved absence, physical impossibility, coverage; generation <=48h/rolling7 and >=1 free day/7d","Method":"100% during generation. Post-publication voluntary swaps use consequence + ACK warnings, but ABSOLUTE/operational and labour-time blockers remain hard"},
-            {"Rank":"2. CRITICAL STRUCTURAL","Includes":"SPS RO + Saturday + Sunday + Fridays","Method":"Structural SPS RO/weekend load fairness; separate V2.5.157 service-coverage tiers govern which optional stations may be left unfilled"},
+            {"Rank":"2. CRITICAL STRUCTURAL","Includes":"SPS RO + Saturday + Sunday + Fridays","Method":"Structural SPS RO/weekend load fairness; separate V2.5.158 service-coverage tiers govern which optional stations may be left unfilled"},
             {"Rank":"3. RESIDENT HARD","Includes":"Unavailable date / AM / PM / recurring","Method":"Zero violations are mandatory in SYSTEM generation; if impossible, no draft is returned"},
             {"Rank":"4. WEEKLY LOAD + RECOVERY","Includes":"Rolling-7 hours, calendar-week load, double-shift sequences","Method":"Aim ~40h/7d; equalize weekly load; after 2 consecutive doubles next day PM-only or off, preferring off"},
             {"Rank":"5. OTHER STRUCTURAL","Includes":"Total doubles and other consecutive/fatigue","Method":"Balance without worsening higher locks; Fridays are already structurally locked at raw 0–1"},
