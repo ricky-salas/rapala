@@ -7,8 +7,8 @@ ROOT=Path(__file__).resolve().parent
 APP=(ROOT/'app.py').read_text(encoding='utf-8')
 ENG=(ROOT/'scheduler_engine.py').read_text(encoding='utf-8')
 
-assert 'APP_VERSION = "2.5.166 GENERATION UX"' in APP
-assert 'ENGINE_API_VERSION = "2.5.165"' in ENG
+assert 'APP_VERSION = "2.5.167 GENERATION RECOVERY"' in APP
+assert 'ENGINE_API_VERSION = "2.5.167"' in ENG
 assert 'V25163_STRUCTURAL_FRIDAY_WATERFILL_BEFORE_SOFT' in ENG
 assert 'mb.constraint(co,float(_friday_lo[pi]),float(_friday_hi[pi]))' in ENG
 assert 'if _friday_exact_wishes_active:\n                # Do not force a resident onto a requested-off Friday' not in ENG

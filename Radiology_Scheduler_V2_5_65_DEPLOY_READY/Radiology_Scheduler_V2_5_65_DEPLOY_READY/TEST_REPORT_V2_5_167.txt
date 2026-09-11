@@ -1,0 +1,12 @@
+RAPA V2.5.167 GENERATION RECOVERY — TEST REPORT
+
+PASS: py_compile scheduler_engine.py app.py solver_runner.py db.py
+PASS: V2.5.167 static generation-recovery assertions
+PASS: V2.5.165 duty water-fill + NIGHT-only next-day rest
+PASS: V2.5.163 Scandinavian missed-wish audit + Friday structural fairness
+PASS: V2.5.163 ŠR RESEARCH retained / isolated
+PASS: V2.5.166 generation UX
+PASS: isolated solver_runner expected_engine_api=2.5.167
+PASS: October 2026 actual-input-like direct solve under active 60h rolling-7 profile: OK / 0 HARD / 10 SPS RO duties assigned to 10 different residents
+
+V2.5.167 changes only generation recovery / active rolling-7 hard-cap semantics and associated explanatory text.

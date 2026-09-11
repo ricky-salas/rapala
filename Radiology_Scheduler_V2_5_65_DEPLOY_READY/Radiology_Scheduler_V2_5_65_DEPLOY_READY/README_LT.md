@@ -157,3 +157,8 @@ Visa ši dalis yra izoliuota: ji nekeičia SYSTEM, ACTUAL ar Supabase operacinio
 - **Budėjimo diena yra išskirtinė.** Bet koks SPS RO budėjimas tą pačią kalendorinę dieną negali sutapti su jokia kita RAPA pamaina.
 - **Kita diena laisva tik po NIGHT.** Po SPS RO naktinio budėjimo visa sekanti kalendorinė diena yra ABSOLUTE OFF, taip pat per mėnesio ribą. Dieninis / savaitgalio 08:00–20:00 budėjimas šios automatinės taisyklės nesukuria.
 - **2026-10-30 GE NIGHT → 2026-10-31 GE OFF** lieka HARD.
+
+
+## V2.5.167 — GENERATION RECOVERY
+
+Generuojant rolling-7 HARD limitas imamas iš aktyvaus Rule Profile (iki 60 val./7 d.). ~40 val. yra planavimo tikslas, o >48 val. rodomas kaip didelio krūvio perspėjimas / avoidance, ne paslėptas HARD ceiling. Weighted solveriui timeoutinus be kandidato, RAPA bando tą patį Friday/weekend fairness koridorių su feasibility recovery ir fairness dėl timeouto neplatina.

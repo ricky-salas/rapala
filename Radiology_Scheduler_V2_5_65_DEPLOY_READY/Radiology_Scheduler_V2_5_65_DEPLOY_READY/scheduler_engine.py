@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.165"
+ENGINE_API_VERSION = "2.5.167"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -995,11 +995,11 @@ def _configured_dream_teams(people):
 # These are safety/fatigue guardrails, not user-selectable SOFT preferences.
 # The Rule Profile may tighten them, but cannot weaken them.
 FATIGUE_MAX_WORKDAYS_ROLLING7 = 6
-FATIGUE_ROLLING7_HARD_CEILING_HOURS = 48.0
+FATIGUE_ROLLING7_HARD_CEILING_HOURS = 60.0
 WEEKLY_LOAD_SOFT_TARGET_HOURS = 40.0
 
 # V2.5.55 voluntary-swap reality guardrails. Generation remains deliberately
-# stricter (48h/7d + recovery shaping), but a bilateral post-publication swap
+# stricter (~40h target + >48h warning + recovery shaping), while generation follows the active rule-profile hard cap (up to 60h/7d). A bilateral post-publication swap
 # may use the wider legal/operational envelope below. Acknowledgement never
 # overrides these blockers.
 SWAP_ABSOLUTE_MAX_HOURS_ROLLING7 = 60.0
@@ -2006,7 +2006,7 @@ def _v2564_choose_fixed_gaps(year, month, slots, gap_meta, seconds=5.0):
     return fixed
 
 
-def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds=60.0, structural_relaxation=False, weekend_spread_cap=4, friday_relaxation_radius=0, diagnostics=None):
+def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds=60.0, structural_relaxation=False, weekend_spread_cap=4, friday_relaxation_radius=0, diagnostics=None, feasibility_only=False):
     """Phase 1: choose dates/AM/PM/FULL without deciding weekday post labels.
 
     V2.5.107 keeps every `Negaliu dirbti` block mandatory. The normal pass uses
@@ -2299,6 +2299,10 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         mb.constraint(busy,-np.inf,float(len(candidates)-1))
 
     max_days7=min(int(rule_value("max_workdays_rolling7")),int(FATIGUE_MAX_WORKDAYS_ROLLING7))
+    # V2.5.167: generation obeys the ACTIVE rule-profile hard cap. 48h is a
+    # workload warning/shape threshold, not a hidden constitutional ceiling.
+    # The engine-wide safety maximum is 60h/rolling-7; an active profile may be
+    # stricter but never looser.
     max_hours7=min(float(rule_value("max_hours_rolling7")),float(FATIGUE_ROLLING7_HARD_CEILING_HOURS))
     for pi,p in enumerate(people):
         for start in range(1,ndays-6+1):
@@ -2810,7 +2814,21 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         for (pi,d),v in long.items(): mb.c[v]+=(((pi+1)*19+d*17)%79)*1e-8
         for (pi,d),v in night.items(): mb.c[v]+=(((pi+1)*17+d*19)%73)*1e-8
     else:
-        mb.c=single_costs
+        if feasibility_only:
+            # V2.5.167 SAME-CORRIDOR FEASIBILITY RECOVERY. When the rich weighted
+            # objective times out without an incumbent, retry the IDENTICAL HARD +
+            # Friday/weekend fairness corridor with a near-zero deterministic
+            # objective. This asks only "does a valid schedule exist here?" and
+            # never widens fairness because of timeout. Exact SOFT max-count stages
+            # still run after an incumbent is found.
+            mb.c=[0.0 for _ in mb.c]
+            for (pi,d),v in am.items(): mb.c[v]+=(((pi+1)*31+d*7)%97)*1e-9
+            for (pi,d),v in pm.items(): mb.c[v]+=(((pi+1)*29+d*11)%89)*1e-9
+            for (pi,d),v in full.items(): mb.c[v]+=(((pi+1)*23+d*13)%83)*1e-9
+            for (pi,d),v in long.items(): mb.c[v]+=(((pi+1)*19+d*17)%79)*1e-9
+            for (pi,d),v in night.items(): mb.c[v]+=(((pi+1)*17+d*19)%73)*1e-9
+        else:
+            mb.c=single_costs
 
     # V2.5.107 ZERO-LOSS RESIDENT-HARD GATE.
     # `Negaliu dirbti` is already encoded above as a hard assignment prohibition.
@@ -2820,7 +2838,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     _rh_loss_vars=[lv for vals in rh_by_person.values() for lv in vals]
     if _rh_loss_vars:
         mb.constraint({lv:1.0 for lv in _rh_loss_vars},0.0,0.0)
-    _fallback_mode="WEIGHTED_STRICT"
+    _fallback_mode=("STRICT_CORRIDOR_FEASIBILITY_RECOVERY" if feasibility_only and not structural_relaxation else "WEIGHTED_STRICT")
     _bounded=max(12.0,min(float(seconds),18.0)) if structural_relaxation else max(12.0,float(seconds))
     res=mb.solve(_bounded)
     if res.x is not None and structural_relaxation:
@@ -2847,7 +2865,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             _fallback_mode="PRIORITY_WEIGHTED_SOFT_CONFLICT_RESOLUTION"
     if res.x is None:
         if diagnostics is not None:
-            diagnostics.update({"status":int(getattr(res,"status",99)),"incumbent":False})
+            diagnostics.update({"status":int(getattr(res,"status",99)),"incumbent":False,"feasibility_only":bool(feasibility_only)})
         return None
 
     # V2.5.152 EXACT-WISH MAX-COUNT + SUBMISSION-RANK TIE-BREAK.
@@ -3840,11 +3858,12 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
     )
     if pattern is None and int(_diag.get("status",99))!=2:
         _retry=(32.0 if cohort_october_model(year,month) else min(60.0,max(40.0,time_limit*0.35)))
-        retry_trace.append({"phase":"strict_work_pattern_same_corridor_retry","seconds":round(_retry,1),"first_status":int(_diag.get("status",99))})
+        retry_trace.append({"phase":"strict_work_pattern_same_corridor_FEASIBILITY","seconds":round(_retry,1),"first_status":int(_diag.get("status",99))})
         _diag2={}
         pattern=_v2564_work_pattern(
             year,month,people,slots,targets,fixed_gaps,seconds=_retry,
-            structural_relaxation=False,weekend_spread_cap=1,friday_relaxation_radius=0,diagnostics=_diag2
+            structural_relaxation=False,weekend_spread_cap=1,friday_relaxation_radius=0,diagnostics=_diag2,
+            feasibility_only=True
         )
         _diag=_diag2
         if pattern is None and int(_diag.get("status",99))!=2:
@@ -3876,7 +3895,8 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
                 retry_trace.append({"phase":"same_structural_frontier_retry","friday_radius":_fr,"weekend_cap":_cap,"seconds":round(_retry,1),"first_status":int(_d.get("status",99))})
                 pattern=_v2564_work_pattern(
                     year,month,people,slots,targets,fixed_gaps,seconds=_retry,
-                    structural_relaxation=True,weekend_spread_cap=_cap,friday_relaxation_radius=_fr,diagnostics=_d2
+                    structural_relaxation=True,weekend_spread_cap=_cap,friday_relaxation_radius=_fr,diagnostics=_d2,
+                    feasibility_only=True
                 )
                 if pattern is not None:
                     break
@@ -4765,11 +4785,10 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
                 f"V2553 free-day rolling7 {p.initials} {start_d}"
             )
 
-    # V2.5.53: 60h in one week is no longer an acceptable generated pattern.
-    # Keep <=48 known scheduled hours in every rolling 7 days as an ABSOLUTE
-    # fatigue guardrail, while the staged optimizer below actively aims around
-    # 40h and water-fills weekly burden across residents. A Rule Profile value
-    # below 48 tightens the cap; a value above 48 cannot weaken it.
+    # V2.5.167: rolling-7 generation follows the ACTIVE rule-profile HARD cap
+    # (up to the engine safety maximum of 60h). ~40h remains the preferred load
+    # target and >48h remains an explicit fatigue/workload warning, but 48h is no
+    # longer a hidden feasibility ceiling that can make a valid month look impossible.
     effective_max_hours7=min(
         float(rule_value("max_hours_rolling7")),
         float(FATIGUE_ROLLING7_HARD_CEILING_HOURS),
@@ -4795,7 +4814,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
             rolling7_hours[(pi,start_d)]=hv
             co={x[(pi,s.idx)]:_known_hours(s) for s in win}; co[hv]=-1.0
             mb.constraint(co,0.0,0.0,f"V2553 rolling7 hours identity {p.initials} {start_d}")
-            mb.constraint({hv:1.0},0.0,effective_max_hours7,f"V2553 rolling7 48h cap {p.initials} {start_d}")
+            mb.constraint({hv:1.0},0.0,effective_max_hours7,f"V25167 rolling7 active hard cap {p.initials} {start_d}")
             ov=mb.var(
                 f"rolling7_over40[{p.initials},{start_d}]",cost=0.0,lb=0.0,
                 ub=max(0.0,effective_max_hours7-WEEKLY_LOAD_SOFT_TARGET_HOURS),integer=False
@@ -5834,7 +5853,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     # V2.5.53 STAGED SOLVE — CRITICAL EXPOSURE + WEEKLY RECOVERY + GOLDEN MIDDLE.
     # Strict vertical order:
     #   A) TRUE ABSOLUTE HARD + RESIDENT-HARD zero-loss feasibility
-    #      (including <=48h/rolling7, >=1 free day/7 and every `Negaliu dirbti`),
+    #      (including the active rolling-7 hard cap, >=1 free day/7 and every `Negaliu dirbti`),
     #   B) CRITICAL STRUCTURAL WATER-FILL: SPS UG raw + SPS RO/WEEKENDS
     #      volunteer-adjusted in the first no-history month; remaining burden 0-1,
     #   C) RESIDENT-HARD audit compatibility only (losses remain fixed at zero),
@@ -6618,7 +6637,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     stats["global"]["resident_hard_current_max_lock"] = int(resident_hard_current_max_lock)
     stats["global"]["resident_hard_cumulative_spread_lock"] = int(resident_hard_cumulative_spread_lock)
     stats["global"]["hard_classification"] = {
-        "ABSOLUTE_HARD":"Generation and ACTUAL: safety/rest, justified absence, physical impossibility, coverage/overlap/qualification, exact monthly workload and even Onko pairing (0/2/4/...). Generation also applies <=48 known hours and <=6 workdays in every rolling 7 days. Post-publication bilateral voluntary NORMAL swaps may exceed only the 48h generation ceiling with explicit acknowledgement and may ACK consecutive Onko; exact workload and Onko parity remain non-relaxable.",
+        "ABSOLUTE_HARD":"Generation and ACTUAL: safety/rest, justified absence, physical impossibility, coverage/overlap/qualification, exact monthly workload and even Onko pairing (0/2/4/...). Generation applies the active rule-profile rolling-7 hard cap (maximum 60h) and <=6 workdays in every rolling 7 days; >48h remains a workload warning/avoidance target. Post-publication bilateral voluntary NORMAL swaps keep the same absolute rolling-7 envelope; >48h is shown as an explicit ACK workload warning. Exact workload and Onko parity remain non-relaxable.",
         "WEEKLY_RECOVERY":"Around-40h planning target is water-filled across residents; repeated doubles are de-clustered, and after two consecutive doubles the next day is PM-only or off.",
         "CRITICAL_STRUCTURAL":"SPS RO + SPS UG + weekends + Friday use raw current-month structural water-fill during SYSTEM generation. Preferences cannot widen the baseline corridor; only later ACTUAL swaps/overrides may change real exposure.",
         "RESIDENT_HARD":"`Negaliu dirbti` is mandatory during SYSTEM generation: zero violations are required and it is never traded against structural fairness or SOFT satisfaction. If mandatory availability cannot coexist with safety/coverage/exact workload, no SYSTEM draft is returned.",
@@ -6681,7 +6700,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
             "WEEKLY LOAD/RECOVERY WATER-FILL ACTIVE; ORDINARY POSTS STRUCTURALLY WATER-FILLED."
             if baseline_weekend_volunteer_mode else
             "VALIDATION — PASSED — CRITICAL SPS/WEEKEND 0-1 PROTECTED; "
-            "WEEKLY LOAD/RECOVERY WATER-FILL ACTIVE (40h target, <=48h rolling-7 GENERATION ceiling; voluntary normal-swap >48h only with explicit ACK); "
+            "WEEKLY LOAD/RECOVERY WATER-FILL ACTIVE (~40h target, >48h warning/avoidance, active-profile rolling-7 GENERATION hard cap up to 60h); "
             "ORDINARY POSTS STRUCTURALLY WATER-FILLED TOWARD <=1 BEFORE SOFT; LONGITUDINAL POST-DEBT OPTIMIZATION APPLIED."
         )
 
@@ -7158,7 +7177,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                 errors.append(f"{p.initials}: {h:g}h on day {day} exceeds max hours/day")
 
         rolling7_values=[]
-        # Generation: strict 48h/7d fatigue/scheduling ceiling. Voluntary swap:
+        # Generation: active-profile rolling-7 hard cap (up to 60h); >48h is warning/avoidance. Voluntary swap:
         # preserve the user's requested real-world flexibility, but never exceed
         # the 60h absolute envelope or 6 working days in any rolling 7.
         effective_days7=(
