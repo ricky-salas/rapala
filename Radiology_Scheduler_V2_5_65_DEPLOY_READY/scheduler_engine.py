@@ -1,13 +1,14 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.172"
+ENGINE_API_VERSION = "2.5.174"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
 import calendar
 import math
 import hashlib
+import re
 from typing import Dict, List, Tuple, Optional, Set
 
 import numpy as np
@@ -4130,6 +4131,308 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
     obj=float(pattern.get("objective_value",0.0) or 0.0)+float(post_obj or 0.0)
     return SolveResult(True,msg,assigned,targets,stats,obj,request_snapshot=request_snapshot)
 
+
+
+# ---------------------------------------------------------------------------
+# V2.5.174 REPAIR-DRAFT FALLBACK
+# ---------------------------------------------------------------------------
+# A normal SYSTEM solve still has to be fully valid.  If the optimizer cannot
+# return a verified candidate, the operator may receive a *repair draft* instead
+# of an empty screen.  A repair draft is deliberately NOT publishable.  It keeps
+# true safety / resident-HARD rules intact and turns only repairable structural
+# requirements (coverage, exact workload, parity/fairness, etc.) into an explicit
+# operator to-do list.
+
+_REPAIR_PROTECTED_ERROR_PATTERNS = (
+    "absolute-hard",
+    "resident-hard",
+    "blocked slot filled",
+    "overlapping assignments",
+    "assignments/day cap exceeded",
+    "exceeds max hours/day",
+    "workdays/7d cap exceeded",
+    "hours/7d cap exceeded",
+    "only ",  # paired with the 'rest between days' check below
+    "very hard duty-day exclusivity",
+    "very hard >=24h post-night rest",
+    "work on mandatory post-duty rest day",
+    "consecutive onko ro days are forbidden",
+    "explicit hard night duty",
+)
+
+def repair_protected_errors(errors) -> List[str]:
+    """Return errors that a repair draft is never allowed to introduce."""
+    out=[]
+    for raw in (errors or []):
+        txt=str(raw or "")
+        low=txt.lower()
+        protected=False
+        for pat in _REPAIR_PROTECTED_ERROR_PATTERNS:
+            if pat == "only ":
+                if "only " in low and "rest between days" in low:
+                    protected=True; break
+            elif pat in low:
+                protected=True; break
+        if protected:
+            out.append(txt)
+    return out
+
+def _repair_day_from_error(txt: str) -> Optional[int]:
+    for pat in (r"day\s+(\d+)", r"unfilled:\s*(\d+)", r"duty\s+(\d+)"):
+        m=re.search(pat,str(txt),flags=re.I)
+        if m:
+            try: return int(m.group(1))
+            except Exception: pass
+    return None
+
+def repair_items_from_validation(year: int, month: int, slots: List[Slot], assignments: Dict[int,str], stats: dict) -> List[dict]:
+    """Human-facing repair list for a non-publishable recovery draft."""
+    items=[]
+    _container=(stats or {})
+    _global=(_container.get("global",{}) or {}) if isinstance(_container,dict) and "global" in _container else (_container if isinstance(_container,dict) else {})
+    errors=list(_global.get("errors") or [])
+    protected=set(repair_protected_errors(errors))
+    # Every remaining validator error is repairable/operator-facing.
+    for raw in errors:
+        txt=str(raw)
+        if txt in protected:
+            continue
+        low=txt.lower(); day=_repair_day_from_error(txt)
+        row={"day":day,"problem":"Reikia korekcijos","why":txt,"action":"Peržiūrėti ir pakoreguoti Seniūnei."}
+        m=re.search(r"Mandatory slot unfilled:\s*(\d+)\s+(.+?)\s+(AM|PM|FULL|NIGHT)$",txt,re.I)
+        if m:
+            row.update(day=int(m.group(1)),problem=f"Neužpildyta privaloma vieta: {m.group(2)} · {m.group(3).upper()}",why="Saugiai tinkamo rezidento automatinis recovery paskirstymas nerado.",action="Parinkti rezidentą rankiniu būdu arba perskirstyti kitą pamainą.")
+        elif "onko coverage" in low:
+            row.update(problem="Onko/TBL padengimas nepilnas",why="Recovery juodraštyje nepavyko saugiai užpildyti visų Onko/TBL dienų.",action="Užpildyti trūkstamą Onko/TBL dieną ir išlaikyti porinį skaičių.")
+        elif "odd onko count" in low:
+            who=txt.split(":",1)[0].strip()
+            row.update(problem=f"{who}: Onko/TBL skaičius neporinis",why="Recovery generatorius saugojo saugą, bet ne visada gali užbaigti Onko porą.",action="Perkelti vieną Onko/TBL dieną, kad kiekvienam liktų 0/2/4/... dienos.")
+        elif ": workload " in low and "exact target" in low:
+            who=txt.split(":",1)[0].strip()
+            row.update(problem=f"{who}: mėnesio krūvis nesutampa",why="Recovery režimas pirmiausia užpildė saugiai įmanomas vietas, todėl tikslus mėnesio targetas liko taisytinas.",action="Perkelti / pridėti / nuimti pamainą, kol krūvis sutaps su targetu.")
+        elif "no hard-available non-overlapping backup resident" in low:
+            row.update(problem="Nėra saugaus teorinio dublio šiai pamainai",why="Esant dabartiniam pagrindiniam paskirstymui, kitas tinkamas rezidentas tuo pačiu laiku nėra saugiai laisvas standby vaidmeniui.",action="Perkelti pagrindinę pamainą arba vėliau pakoreguoti atskirą dublių sluoksnį.")
+        elif "sps ro duty water-fill" in low:
+            row.update(problem="SPS RO budėjimų water-fill nesulygintas",why="Budėjimų skaičius recovery juodraštyje dar nėra galutinai išlygintas.",action="Perskirstyti budėjimą taip, kad galutinis skaičius būtų floor/ceil koridoriuje.")
+        elif "friday" in low:
+            row.update(problem="Penktadienių balansas dar netobulas",why="Recovery režimas neaukojo saugos vien dėl struktūrinio penktadienių balanso.",action="Jei įmanoma, sukeisti lygiaverčias penktadienio pamainas.")
+        elif "gap" in low or "spread" in low or "water-fill" in low:
+            row.update(problem="Struktūrinis balansas dar taisytinas",why="Tai fairness / postų paskirstymo taisyklė, kuri recovery režime yra žemiau saugos.",action="Sukeisti lygiavertes pamainas, jei norite atstatyti optimalų balansą.")
+        items.append(row)
+
+    # Add explicit visible rows for open mandatory slots even if a future validator
+    # message wording changes.
+    seen={(r.get("day"),r.get("problem")) for r in items}
+    for sl in slots:
+        if sl.blocked or (not sl.mandatory) or sl.idx in assignments:
+            continue
+        key=(sl.day,f"Neužpildyta privaloma vieta: {sl.department} · {sl.block}")
+        if key in seen: continue
+        items.append({
+            "day":int(sl.day),
+            "problem":key[1],
+            "why":"Recovery juodraštis nepažeidė HARD / poilsio taisyklių vien tam, kad užpildytų šią vietą.",
+            "action":"Parinkti tinkamą rezidentą rankiniu būdu arba perskirstyti kitą pamainą.",
+            "slot_id":int(sl.idx),
+        })
+    return sorted(items,key=lambda r:((999 if r.get("day") is None else int(r.get("day"))),str(r.get("problem"))))
+
+def _repair_candidate_safe(year: int, month: int, person: Person, slot: Slot, current_slots: List[Slot]) -> bool:
+    """Fast safety gate used only by the fallback greedy repair-draft builder."""
+    if slot.blocked or normal_assignment_blocked(person,slot.day,slot.block):
+        return False
+    owner=explicit_night_duty_owner(year,month,slot.day) if slot.block=="NIGHT" else None
+    if owner and person.initials!=owner:
+        return False
+    if bool(getattr(person,"prior_last_day_duty",False)) and slot.day==1:
+        return False
+    if is_onko_slot(slot) and bool(getattr(person,"prior_last_day_onko",False)) and slot.day==1:
+        return False
+
+    hyp=list(current_slots)+[slot]
+    # Same-day overlap / duty exclusivity / daily hours.
+    same=[s for s in hyp if s.day==slot.day]
+    if len(same)>int(rule_value("max_assignments_per_day")):
+        return False
+    if any(is_duty_slot(s) for s in same) and len(same)>1:
+        return False
+    for i,a in enumerate(same):
+        for b in same[i+1:]:
+            if blocks_overlap(a.block,b.block):
+                return False
+    if sum(scheduled_slot_hours(s) for s in same)>float(rule_value("max_hours_per_day"))+1e-9:
+        return False
+
+    # Universal post-NIGHT full next-day rest, in both directions.
+    night_days={s.day for s in hyp if s.block=="NIGHT"}
+    if any(any(s.day==d+1 for s in hyp) for d in night_days):
+        return False
+
+    # Consecutive Onko generation guard.
+    onko_days=sorted({s.day for s in hyp if is_onko_slot(s)})
+    if any(b==a+1 for a,b in zip(onko_days,onko_days[1:])):
+        return False
+
+    # Adjacent-day minimum rest.
+    for a in hyp:
+        for b in hyp:
+            if b.day!=a.day+1:
+                continue
+            _,aend=scheduled_slot_clock(a); bstart,_=scheduled_slot_clock(b)
+            if (24+bstart)-aend < float(rule_value("min_rest_hours"))-1e-9:
+                return False
+
+    # Rolling-7 workday / hour safety caps.
+    ndays=calendar.monthrange(year,month)[1]
+    max_days=min(int(rule_value("max_workdays_rolling7")),int(FATIGUE_MAX_WORKDAYS_ROLLING7))
+    max_hours=min(float(rule_value("max_hours_rolling7")),float(FATIGUE_ROLLING7_HARD_CEILING_HOURS))
+    for start in range(max(1,slot.day-6),min(slot.day,ndays-6)+1):
+        end=start+6
+        ss=[s for s in hyp if start<=s.day<=end]
+        if len({s.day for s in ss})>max_days:
+            return False
+        if sum(scheduled_slot_hours(s) for s in ss)>max_hours+1e-9:
+            return False
+
+    # Existing generator recovery shape: after two consecutive double days, the
+    # following day is PM-only or free.
+    byday={}
+    for s in hyp: byday.setdefault(s.day,[]).append(s)
+    doubles={d for d,ss in byday.items() if len(ss)>=2}
+    for d in range(3,ndays+1):
+        if d-2 in doubles and d-1 in doubles:
+            if any(blocks_overlap(s.block,"AM") for s in byday.get(d,[])):
+                return False
+    return True
+
+def build_repair_draft(year: int, month: int, people: List[Person]) -> SolveResult:
+    """Create a useful, non-publishable fallback schedule with explicit repair items.
+
+    It never trades away ABSOLUTE/RESIDENT HARD, overlap/rest/fatigue rules, the
+    explicit NIGHT owner, duty-day exclusivity, or post-NIGHT 24 h recovery.
+    Structural / exact-target requirements may remain as visible repair items.
+    """
+    # Same clean-month semantics as the normal solver.
+    people=[replace(
+        p,prior_weekend_count=0,prior_holiday_count=0,prior_friday_count=0,
+        prior_double_count=0,prior_weekday_day_count=0,
+        prior_rotation_counts={cat:(int((p.prior_rotation_counts or {}).get(cat,0) or 0) if cat in ("Onko RO","Onko/TBL") else 0) for cat in ROTATION_CATEGORIES},
+        prior_resident_hard_loss_count=0,
+    ) for p in people]
+    people,_norm=normalize_preferences_against_engine(people,year,month)
+    slots=make_slots(year,month)
+    targets=calculate_targets(year,month,people)
+    pmap={p.initials:p for p in people}
+    assigned: Dict[int,str]={}
+    pslots={p.initials:[] for p in people}
+    workload2={p.initials:0 for p in people}
+    duty_count={p.initials:0 for p in people}
+    friday_count={p.initials:0 for p in people}
+    weekend_count={p.initials:0 for p in people}
+    onko_count={p.initials:0 for p in people}
+    rot_count={p.initials:{} for p in people}
+    target2={k:int(v)*2 for k,v in targets.items()}
+
+    def slot_order(sl: Slot):
+        explicit=0 if (sl.block=="NIGHT" and explicit_night_duty_owner(year,month,sl.day)) else 1
+        duty=0 if is_duty_slot(sl) else 1
+        mandatory=0 if sl.mandatory else 1
+        onko=0 if is_onko_slot(sl) else 1
+        tier=admin_coverage_priority_tier(sl,year,month)
+        return (explicit,duty,mandatory,onko,tier,sl.day,{"AM":0,"FULL":1,"PM":2,"NIGHT":3}.get(sl.block,9),sl.idx)
+
+    active=[s for s in slots if not s.blocked]
+    mandatory_or_onko=[s for s in active if s.mandatory or is_onko_slot(s) or is_duty_slot(s)]
+    optional=[s for s in active if s not in mandatory_or_onko]
+    mandatory_or_onko.sort(key=slot_order); optional.sort(key=slot_order)
+
+    def candidate_score(p: Person, sl: Slot):
+        who=p.initials
+        score=0.0
+        after=workload2[who]+int(sl.workload2)
+        # Avoid overshooting target, but never at the expense of mandatory coverage.
+        score += max(0,after-target2.get(who,0))*40.0
+        score += abs(after-target2.get(who,0))*0.4
+        if is_duty_slot(sl): score += duty_count[who]*120.0
+        if date(year,month,sl.day).weekday()==4: score += friday_count[who]*12.0
+        if sl.weekday>=5: score += weekend_count[who]*20.0
+        cat=rotation_category(sl); score += float(rot_count[who].get(cat,0))*3.0
+        # Encourage completing an Onko pair once safely possible.
+        if is_onko_slot(sl):
+            score += (0.0 if onko_count[who]%2==1 else 8.0)
+        # Respect SOFT where it does not endanger feasibility.
+        if sl.day in p.soft_free: score += 12.0
+        if sl.block in ("AM","FULL") and sl.day in p.soft_free_am: score += 6.0
+        if sl.block in ("PM","FULL") and sl.day in p.soft_free_pm: score += 6.0
+        if preferred_for_slot(p,sl.day,sl.block): score -= 6.0
+        score += len(pslots[who])*0.01
+        return score
+
+    def assign_slot(sl: Slot, allow_over_target: bool=True):
+        owner=explicit_night_duty_owner(year,month,sl.day) if sl.block=="NIGHT" else None
+        candidates=[]
+        for p in people:
+            if owner and p.initials!=owner: continue
+            if not _repair_candidate_safe(year,month,p,sl,pslots[p.initials]): continue
+            if (not allow_over_target) and workload2[p.initials]+int(sl.workload2)>target2.get(p.initials,0):
+                continue
+            candidates.append(p)
+        if not candidates:
+            return False
+        chosen=min(candidates,key=lambda p:(candidate_score(p,sl),p.initials))
+        who=chosen.initials; assigned[sl.idx]=who; pslots[who].append(sl)
+        workload2[who]+=int(sl.workload2)
+        if is_duty_slot(sl): duty_count[who]+=1
+        if date(year,month,sl.day).weekday()==4: friday_count[who]+=1
+        if sl.weekday>=5: weekend_count[who]+=1
+        if is_onko_slot(sl): onko_count[who]+=1
+        cat=rotation_category(sl); rot_count[who][cat]=rot_count[who].get(cat,0)+1
+        return True
+
+    # Cover the operational skeleton first.
+    for sl in mandatory_or_onko:
+        assign_slot(sl,allow_over_target=True)
+
+    # Fill optional service rows while total clinical workload is still below the
+    # canonical monthly target pool.  Leave safe visible gaps instead of inventing
+    # unsafe/overlapping work.
+    total_target2=sum(target2.values())
+    for sl in optional:
+        if sum(workload2.values())>=total_target2:
+            break
+        if not assign_slot(sl,allow_over_target=False):
+            assign_slot(sl,allow_over_target=True)
+
+    stats=validate_schedule(year,month,people,slots,assigned,targets)
+    g=stats.setdefault("global",{})
+    protected=repair_protected_errors(g.get("errors") or [])
+    # The greedy gate should make this zero.  If a future rule adds a new safety
+    # invariant we fail closed rather than mislabel an unsafe fallback as repairable.
+    if protected:
+        return SolveResult(
+            False,
+            "REPAIR-DRAFT FALLBACK ABORTED: protected safety errors remained.",
+            assignments=assigned,targets=targets,stats=stats,
+            request_snapshot=serialize_people_request_snapshot(people),
+        )
+    items=repair_items_from_validation(year,month,slots,assigned,stats)
+    g.update({
+        "repair_draft":True,
+        "repair_required":bool(items),
+        "repair_item_count":len(items),
+        "repair_items":items,
+        "repair_protected_error_count":0,
+        "repair_publishable":False,
+        "solve_stage":"V25174_SAFE_GREEDY_REPAIR_DRAFT",
+        "generation_source":"RECOVERY_REPAIR_DRAFT",
+        "repair_policy":"SAFETY_AND_RESIDENT_HARD_NEVER_RELAXED; STRUCTURAL_AND_TARGET_ISSUES_EXPLICIT_FOR_OPERATOR",
+    })
+    return SolveResult(
+        True,
+        f"REPAIR DRAFT — {len(items)} operator repair items; publication blocked until zero-HARD validation passes.",
+        assignments=assigned,targets=targets,stats=stats,objective_value=None,
+        request_snapshot=serialize_people_request_snapshot(people),
+    )
 
 def solve_schedule(year: int, month: int, people: List[Person], time_limit: float = 45.0, slots_override: Optional[List[Slot]] = None, targets_override: Optional[Dict[str,int]] = None) -> SolveResult:
     # V2.5.96 MONTHLY BASELINE FAIRNESS CONSTITUTION.

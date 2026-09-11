@@ -209,3 +209,6 @@ Grafikų sudarymo metodų palyginimas yra perkeltas į **Tyrimo** langą ir nėr
 ## V2.5.167 — GENERATION RECOVERY
 
 Generuojant rolling-7 HARD limitas imamas iš aktyvaus Rule Profile (iki 60 val./7 d.). ~40 val. yra planavimo tikslas, o >48 val. rodomas kaip didelio krūvio perspėjimas / avoidance, ne paslėptas HARD ceiling. Weighted solveriui timeoutinus be kandidato, RAPA bando tą patį Friday/weekend fairness koridorių su feasibility recovery ir fairness dėl timeouto neplatina.
+
+## V2.5.174 — jei normalus solveris neužsibaigia
+Sudarymas vis tiek gali rodyti **ATLIKTA**, jei parengtas saugus **taisytinas juodraštis**. Tai nereiškia, kad grafikas jau tvirtinamas. Eikite į **Grafikas**: ten matysis pats darbinis grafikas, trumpas sąrašas „Problema / Kodėl / Ką reikia padaryti“ ir rankinis vienos vietos taisymas. Sistema neleis išsaugoti rankinio pakeitimo, jei jis sukurtų „Negaliu dirbti“, persidengimą, >12 h per dieną, rolling-7 ribos, poilsio, 24 h po NIGHT, duty-day ar kitą saugos pažeidimą. Kai likusios problemos sutvarkomos ir validatorius pasiekia 0 HARD, juodraštis automatiškai tampa normaliu tvirtinamu juodraščiu.

@@ -40,6 +40,7 @@ from scheduler_engine import (
     serialize_result, deserialize_result, revalidate_loaded_result, calculate_targets, blocks_overlap, hard_unavailable_for_block,
     resident_hard_unavailable_for_block, absolute_unavailable_for_block,
     serialize_people_request_snapshot, people_from_request_snapshot,
+    build_repair_draft, repair_items_from_validation, repair_protected_errors,
     ROTATION_CATEGORIES, rotation_category, backup_required_slot, backup_best_effort_slot, weekend_fcfs_backup_mode, weekend_fcfs_backup_slots,
     effective_actual_assignments, calculate_live_fairness_snapshot,
     is_emergency_critical_slot, is_emergency_lower_priority_donor_slot,
@@ -67,9 +68,9 @@ from opto_research import (
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.172 RESIDENT SIMPLE PROFILE"
-EXPECTED_ENGINE_API_VERSION = "2.5.172"
-COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.172"}
+APP_VERSION = "2.5.174 SAFE REPAIR DRAFT"
+EXPECTED_ENGINE_API_VERSION = "2.5.174"
+COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.174"}
 
 # V2.5.139: import-safe reward credit compatibility. Older deployed engines used
 # by the same app already contain the scheduling API but predate the credit helpers.
@@ -3205,6 +3206,8 @@ def draft_compatibility_status(payload, y, m):
             or "LEGACY / UNKNOWN"
         )
         info["stored_solve_stage"]=((stored.stats or {}).get("global",{}) or {}).get("solve_stage")
+        stored_g=((stored.stats or {}).get("global",{}) or {})
+        stored_repair=bool(stored_g.get("repair_draft"))
         current_people=load_people(y,m)
         expected_targets=calculate_targets(y,m,current_people)
         current_snapshot=serialize_people_request_snapshot(current_people)
@@ -3225,6 +3228,37 @@ def draft_compatibility_status(payload, y, m):
         info["hard_errors"]=hard
         info["hard_missed"]=hard_missed
         info["rows"]=list(g.get("errors") or [])
+
+        # V2.5.174: a recovery repair draft is a first-class, intentionally
+        # non-publishable operator artifact. Revalidate it against CURRENT inputs,
+        # prove that no protected safety/Resident-HARD errors exist, and expose the
+        # remaining structural/coverage/target issues as the repair list.
+        if stored_repair:
+            protected=repair_protected_errors(g.get("errors") or [])
+            items=repair_items_from_validation(y,m,make_slots(y,m),refreshed.assignments,g)
+            rg=refreshed.stats.setdefault("global",{})
+            rg["repair_draft"]=True
+            rg["repair_required"]=bool(items)
+            rg["repair_item_count"]=len(items)
+            rg["repair_items"]=items
+            rg["repair_protected_error_count"]=len(protected)
+            rg["repair_publishable"]=False
+            info["repair_items"]=items
+            info["repair_item_count"]=len(items)
+            info["repair_protected_errors"]=protected
+            info["repair_safe"]=bool(snapshot_matches and not protected)
+            if not snapshot_matches:
+                info["kind"]="repair_draft_outdated"
+            elif protected:
+                info["kind"]="repair_draft_unsafe"
+            else:
+                info["kind"]="repair_draft"
+            # Never publish a repair draft directly. Once manual edits bring the
+            # validator to zero HARD, the editor converts it into a normal draft.
+            info["publishable"]=False
+            info["valid_for_improve"]=False
+            return info
+
         zero_hard=(hard==0 and hard_missed==0 and bool(refreshed.ok))
         if not zero_hard:
             info["kind"]="invalid_current_engine"
@@ -3249,20 +3283,35 @@ def render_invalid_draft_guard(health, *, compact=False):
     """Visible fail-closed warning for legacy/outdated draft rows."""
     if not health or not health.get("exists") or health.get("publishable"):
         return
+    if health.get("kind")=="repair_draft":
+        n=int(health.get("repair_item_count",0) or 0)
+        st.warning(
+            (f"ATLIKTA — sukurtas taisytinas juodraštis. Reikia {n} operatoriaus pataisymų prieš tvirtinimą. Saugos ir „Negaliu dirbti“ taisyklės nebuvo apeitos."
+             if lang=="LT" else
+             f"DONE — a repair draft was created. {n} operator fixes are required before confirmation. Safety and Cannot-work rules were not bypassed.")
+        )
+        return
+    if health.get("kind") in ("repair_draft_outdated","repair_draft_unsafe"):
+        st.error(
+            "NEATLIKTA — ankstesnis taisytinas juodraštis po naujų įvesčių nebėra saugus darbui. Sugeneruokite iš naujo."
+            if lang=="LT" else
+            "NOT DONE — the previous repair draft is no longer safe after input changes. Generate again."
+        )
+        return
     hard=health.get("hard_errors")
     hard_missed=health.get("hard_missed")
     engine=health.get("stored_engine") or "LEGACY / UNKNOWN"
     stage=health.get("stored_solve_stage") or "—"
     if lang=="LT":
         if health.get("kind")=="outdated_inputs":
-            msg=("NEGALIOJANTIS / PASENĘS JUODRAŠTIS — SKELBTI NEGALIMA. Po jo sugeneravimo pasikeitė "
-                 "rezidentų inputai arba darbo targetai. Jis paliktas tik auditui; GENERUOTI / PERKURTI turi sukurti naują 0-HARD kandidatą.")
+            msg=("NEATLIKTA — šio juodraščio tvirtinti negalima. Po jo sugeneravimo pasikeitė "
+                 "rezidentų įvestys arba darbo tikslai. Sugeneruokite naują juodraštį.")
         elif health.get("kind")=="unreadable":
-            msg="NEGALIOJANTIS JUODRAŠTIS — dabartinis engine negali jo saugiai perskaityti / patikrinti. Skelbimas ir gerinimas užblokuoti."
+            msg="NEATLIKTA — šio juodraščio saugiai patikrinti nepavyko. Tvirtinimas užblokuotas; sugeneruokite naują juodraštį."
         else:
-            msg=(f"LEGACY / INVALID DRAFT — SKELBTI NEGALIMA. Dabartinis engine rado {hard if hard is not None else '—'} "
+            msg=(f"NEATLIKTA — šio juodraščio tvirtinti negalima. Patikroje rasta {hard if hard is not None else '—'} "
                  f"privalomų taisyklių klaidų ir {hard_missed if hard_missed is not None else '—'} „Negaliu dirbti“ pažeidimų. "
-                 "Šis DB įrašas paliktas tik istorinei peržiūrai ir NEGALI būti naudojamas kaip GERINTI bazė.")
+                 "Sugeneruokite naują juodraštį.")
         st.error(msg)
         if not compact:
             st.caption(f"Stored engine: {engine} · solve stage: {stage} · current engine: {ENGINE_API_VERSION}")
@@ -5062,12 +5111,15 @@ def render_operator_email_smtp_admin(current_operator):
                     except Exception as exc:
                         st.error(str(exc))
 
-        c1=st.container()
-        with c1:
+        # V2.5.173: these channel-action columns must exist regardless of whether
+        # any resident email is missing. Reusing `c2` from the conditional edit
+        # row caused UnboundLocalError when all 16 addresses were already filled.
+        _smtp_c1,_smtp_c2=st.columns(2)
+        with _smtp_c1:
             if st.button("PATIKRINTI KANALĄ" if lang=="LT" else "CHECK CHANNEL",use_container_width=True,disabled=bool(smtp_missing),key="smtp_probe_v25100"):
                 ok,detail=smtp_probe()
                 st.session_state["_smtp_probe_v25100"]=(ok,detail,datetime.now().isoformat(timespec="seconds"))
-        with c2:
+        with _smtp_c2:
             operator_email=str((settings.get(current_operator,{}) or {}).get("email") or "").strip()
             if st.button("SIŲSTI TESTĄ MAN" if lang=="LT" else "SEND TEST TO ME",use_container_width=True,disabled=bool(smtp_missing or not operator_email),key="smtp_test_v25100"):
                 ok,detail=send_email(
@@ -7111,23 +7163,136 @@ def _draft_quality_tuple(result):
         -(float(overall_mean) if overall_mean is not None else 100.0),
     )
 
+
+def _repair_items_table(items):
+    rows=[]
+    for r in (items or []):
+        day=r.get("day")
+        rows.append({
+            ("Data" if lang=="LT" else "Date"):(f"{month_label(year,month)} {int(day)} d." if day else "—"),
+            ("Problema" if lang=="LT" else "Issue"):r.get("problem") or "—",
+            ("Kodėl" if lang=="LT" else "Why"):r.get("why") or "—",
+            ("Ką reikia padaryti" if lang=="LT" else "What to do"):r.get("action") or "—",
+        })
+    return pd.DataFrame(rows)
+
+def _create_and_save_repair_draft(y,m,source_reason="normal_solve_failed"):
+    """Build/save V2.5.174 operator repair draft after normal solver failure."""
+    try:
+        rr=build_repair_draft(y,m,load_people(y,m))
+    except Exception as exc:
+        return None,f"repair builder error: {exc}"
+    if rr is None or not rr.ok:
+        return None,(getattr(rr,"message",None) or "repair draft unavailable")
+    g=(rr.stats or {}).setdefault("global",{})
+    protected=repair_protected_errors(g.get("errors") or [])
+    if protected:
+        return None,"; ".join(protected[:5])
+    g["repair_trigger_reason"]=str(source_reason or "normal_solve_failed")
+    rr=stamp_generation_provenance(rr,"recovery_repair_draft")
+    db.save_draft(y,m,serialize_result(rr))
+    return rr,None
+
+def render_repair_draft_editor(y,m,draft_payload,draft_health):
+    """SP/ŠR manual repair surface for a safe, non-publishable recovery draft."""
+    if not draft_payload or not draft_health or draft_health.get("kind")!="repair_draft":
+        return
+    rr=draft_health.get("result") or refresh_result_payload(draft_payload,y,m,use_actual_backups=False)
+    g=((rr.stats or {}).get("global",{}) or {})
+    items=list(draft_health.get("repair_items") or g.get("repair_items") or [])
+    st.markdown("### Taisytinas juodraštis" if lang=="LT" else "### Repair draft")
+    st.warning(
+        (f"Automatinis 0-HARD optimizavimas neužsibaigė, todėl RAPA paruošė saugų darbinį juodraštį. "
+         f"Likę {len(items)} taisytini punktai. Šio juodraščio tvirtinti negalima, kol patikra nepasiekia 0 HARD.")
+        if lang=="LT" else
+        (f"The normal zero-HARD optimization did not finish, so RAPA prepared a safe working repair draft. "
+         f"{len(items)} repair items remain. It cannot be published until validation reaches zero HARD.")
+    )
+    # Visible schedule first — this is the useful operational artifact the fallback exists for.
+    st.dataframe(style_schedule(schedule_grid(y,m,rr)),use_container_width=True,height=620)
+    if items:
+        st.markdown("#### Ką dar reikia pataisyti" if lang=="LT" else "#### Remaining repairs")
+        st.dataframe(_repair_items_table(items),use_container_width=True,hide_index=True,height=min(420,90+58*min(len(items),6)))
+    else:
+        st.success("Taisytinų punktų neliko. Patikrinkite ir išsaugokite kaip normalų juodraštį." if lang=="LT" else "No repair items remain. Validate and save as a normal draft.")
+
+    slots=[sl for sl in make_slots(y,m) if not sl.blocked]
+    slots_by_id={sl.idx:sl for sl in slots}
+    # Put unresolved mandatory gaps first, then the rest chronologically.
+    def _slot_sort(sl):
+        return (0 if (sl.mandatory and sl.idx not in rr.assignments) else 1,sl.day,{"AM":0,"FULL":1,"PM":2,"NIGHT":3}.get(sl.block,9),sl.department,sl.idx)
+    slots=sorted(slots,key=_slot_sort)
+    def _slot_label(sl):
+        who=rr.assignments.get(sl.idx) or "TUŠČIA"
+        return f"{sl.day:02d} · {sl.department} · {block_label(sl.block)} · {who}"
+    with st.expander("Rankiniu būdu pataisyti vieną vietą" if lang=="LT" else "Manually repair one slot",expanded=bool(items)):
+        chosen=st.selectbox("Pamaina / vieta" if lang=="LT" else "Shift / slot",slots,format_func=_slot_label,key=f"repairdraft_slot_{y}_{m}")
+        current=rr.assignments.get(chosen.idx)
+        people_now=load_people(y,m)
+        choices=["— TUŠČIA —"]+[p.initials for p in people_now]
+        default_idx=(choices.index(current) if current in choices else 0)
+        selected=st.selectbox("Paskirti" if lang=="LT" else "Assign",choices,index=default_idx,key=f"repairdraft_person_{y}_{m}_{chosen.idx}")
+        st.caption(
+            "Sistema neleis išsaugoti pakeitimo, jei jis sukurtų „Negaliu dirbti“, persidengimą, >12 h/d., rolling-7, poilsio, post-NIGHT 24 h, duty-day ar kitą saugos pažeidimą."
+            if lang=="LT" else
+            "The change cannot be saved if it introduces Cannot-work, overlap, >12 h/day, rolling-7, rest, post-NIGHT 24 h, duty-day, or another protected safety violation."
+        )
+        if st.button("IŠSAUGOTI ŠĮ PATAISYMĄ" if lang=="LT" else "SAVE THIS REPAIR",type="primary",use_container_width=True,key=f"repairdraft_apply_{y}_{m}_{chosen.idx}"):
+            new_assign=dict(rr.assignments)
+            if selected.startswith("—"):
+                new_assign.pop(chosen.idx,None)
+            else:
+                new_assign[chosen.idx]=selected
+            current_people=load_people(y,m)
+            targets=calculate_targets(y,m,current_people)
+            frozen=people_from_request_snapshot(rr.request_snapshot) or current_people
+            new_stats=validate_schedule(y,m,current_people,make_slots(y,m),new_assign,targets,satisfaction_people=frozen,backup_assignments=[])
+            protected=repair_protected_errors((new_stats.get("global",{}) or {}).get("errors") or [])
+            if protected:
+                st.error("Pakeitimas užblokuotas — jis sukurtų saugos / HARD pažeidimą:" if lang=="LT" else "Change blocked — it would create a protected safety / HARD violation:")
+                st.dataframe(pd.DataFrame({"Klaida" if lang=="LT" else "Error":protected[:8]}),use_container_width=True,hide_index=True)
+            else:
+                new_items=repair_items_from_validation(y,m,make_slots(y,m),new_assign,new_stats)
+                rr.assignments=new_assign; rr.targets=targets; rr.stats=new_stats; rr.request_snapshot=serialize_people_request_snapshot(current_people)
+                ng=rr.stats.setdefault("global",{})
+                if int(ng.get("hard_errors",0) or 0)==0 and not new_items:
+                    ng.update({"repair_draft":False,"repair_required":False,"repair_item_count":0,"repair_items":[],"repair_publishable":True,"solve_stage":"V25174_MANUALLY_REPAIRED_TO_ZERO_HARD"})
+                    rr.ok=True
+                    rr=stamp_generation_provenance(rr,"repair_draft_completed_manually")
+                    db.save_draft(y,m,serialize_result(rr))
+                    st.success("Pataisyta — juodraštis pasiekė 0 HARD ir dabar yra normalus tvirtinamas juodraštis." if lang=="LT" else "Repaired — the draft reached zero HARD and is now a normal confirmable draft.")
+                else:
+                    ng.update({"repair_draft":True,"repair_required":True,"repair_item_count":len(new_items),"repair_items":new_items,"repair_protected_error_count":0,"repair_publishable":False,"solve_stage":"V25174_MANUAL_REPAIR_IN_PROGRESS"})
+                    rr.ok=True
+                    rr=stamp_generation_provenance(rr,"repair_draft_manual_edit")
+                    db.save_draft(y,m,serialize_result(rr))
+                    st.success((f"Pataisymas išsaugotas. Liko {len(new_items)} punktai." if lang=="LT" else f"Repair saved. {len(new_items)} items remain."))
+                st.rerun()
+
+
 # --- Generation ---
 if senior_mode:
     with tabs[pos]:
         st.subheader(tr("generation_title")); state=db.get_schedule_state(year,month)
         _state_draft_payload=db.load_schedule(year,month,"draft") if state.get("has_draft") else None
         _state_draft_health=draft_compatibility_status(_state_draft_payload,year,month) if _state_draft_payload else None
-        if state.get("has_published"):
-            status=tr("published_state")
-        elif _state_draft_payload and not (_state_draft_health or {}).get("publishable"):
-            status=("NEGALIOJANTIS JUODRAŠTIS" if lang=="LT" else "INVALID DRAFT")
-        elif state.get("has_draft"):
-            status=tr("draft")
-        else:
-            status=tr("not_created")
+        # V2.5.173 — Sudarymas answers one question only: is there a usable
+        # generated result or not? Legacy/outdated DB rows remain available to
+        # the audit layer, but are not presented here as a scary third state.
+        _repair_ready=bool((_state_draft_health or {}).get("kind")=="repair_draft" and (_state_draft_health or {}).get("repair_safe"))
+        _generation_done=bool(
+            state.get("has_published")
+            or (_state_draft_payload and (_state_draft_health or {}).get("publishable"))
+            or _repair_ready
+        )
+        status=("ATLIKTA" if lang=="LT" else "DONE") if _generation_done else ("NEATLIKTA" if lang=="LT" else "NOT DONE")
         st.metric(tr("state"),status)
-        if _state_draft_health and not _state_draft_health.get("publishable"):
-            render_invalid_draft_guard(_state_draft_health,compact=True)
+        if _state_draft_payload and not (_state_draft_health or {}).get("publishable") and not _repair_ready:
+            st.warning(
+                "Po ankstesnio generavimo pasikeitė įvestys arba taisyklės. Reikia sugeneruoti naują juodraštį."
+                if lang=="LT" else
+                "Inputs or rules changed after the previous generation. Generate a new draft."
+            )
         lifecycle_generation=db.get_schedule_lifecycle(year,month)
         generation_locked=bool(state.get("has_published")) or str(lifecycle_generation.get("state") or "") in ("working","swap_open","swap_closed","final")
         # V2.5.128: SP ir ŠR generavimo metu gauna tą patį privatų refinemento
@@ -7138,17 +7303,17 @@ if senior_mode:
         prefs=db.all_preferences(year,month); missing=[p["initials"] for p in DEFAULT_PEOPLE if p["initials"] not in prefs]
         _submitted_count=len(DEFAULT_PEOPLE)-len(missing)
         st.caption(
-            (f"{year}-{month:02d} · pateikė {_submitted_count}/{len(DEFAULT_PEOPLE)} · juodraštis: " + ("yra" if state.get("has_draft") else "nėra"))
+            (f"{year}-{month:02d} · pageidavimus pateikė {_submitted_count}/{len(DEFAULT_PEOPLE)}")
             if lang=="LT" else
-            (f"{year}-{month:02d} · submitted {_submitted_count}/{len(DEFAULT_PEOPLE)} · draft: " + ("present" if state.get("has_draft") else "none"))
+            (f"{year}-{month:02d} · preferences submitted {_submitted_count}/{len(DEFAULT_PEOPLE)}")
         )
         if missing: st.warning(f"{tr('missing_preferences')}: {', '.join(missing)}")
         c1=st.container()
         with c1:
             _generate_button_label=(
                 ("GENERUOTI IŠ NAUJO" if lang=="LT" else "GENERATE AGAIN")
-                if state.get("has_draft") else
-                ("GENERUOTI JUODRAŠTĮ" if lang=="LT" else "GENERATE DRAFT")
+                if _generation_done else
+                ("GENERUOTI" if lang=="LT" else "GENERATE")
             )
             if st.button(_generate_button_label,type="primary",use_container_width=True,disabled=(generation_locked or _sp_private_generation_gate)):
                 if active_user==SENIOR_INITIALS:
@@ -7162,7 +7327,11 @@ if senior_mode:
                         )
                 credit_err=credit_selection_errors(year,month)
                 if credit_err:
-                    st.error(tr("bonus_insufficient")); st.dataframe(pd.DataFrame(credit_err),use_container_width=True,hide_index=True)
+                    st.error(
+                        ("NEATLIKTA. Kreditų pasirinkimas šiuo metu nesuderinamas su turimu balansu. Patikrinkite Kreditai skiltį ir bandykite dar kartą.")
+                        if lang=="LT" else
+                        ("NOT DONE. The selected credit redemption does not fit the available balance. Check Credits and try again.")
+                    )
                 else:
                     t0=perf_counter()
                     with st.spinner(tr("solver_wait")): result=solve_schedule_isolated(year,month,load_people(year,month),time_limit=90)
@@ -7186,9 +7355,14 @@ if senior_mode:
                             backup_assignments=[]
                         )
                         if result.stats.get("global",{}).get("hard_errors",0):
-                            st.error(tr("draft_outdated"))
-                            _berr=result.stats.get("global",{}).get("errors",[])
-                            if _berr: st.dataframe(pd.DataFrame(_berr),use_container_width=True,hide_index=True)
+                            _repair,_repair_err=_create_and_save_repair_draft(year,month,"verified_candidate_failed_current_validation")
+                            if _repair is not None:
+                                st.rerun()
+                            st.error(
+                                (("NEATLIKTA. Normalus kandidatas nepraėjo patikros ir saugaus taisytino juodraščio sukurti nepavyko: " + str(_repair_err))
+                                 if lang=="LT" else
+                                 ("NOT DONE. The normal candidate failed validation and a safe repair draft could not be created: " + str(_repair_err)))
+                            )
                         else:
                             desired,backup_errors=plan_backups(year,month,result)
                             result.backup_snapshot=[dict(x) for x in desired]
@@ -7203,41 +7377,47 @@ if senior_mode:
                             st.rerun()
                     else:
                         _msg=result.message if getattr(result,"message",None) else tr("no_solution")
-                        if ("PREFERENCE-AWARE GENERATION DID NOT FINISH" in str(_msg) or "ISOLATED GENERATION" in str(_msg)):
-                            _after_fail_payload=db.load_schedule(year,month,"draft")
-                            _after_fail_health=draft_compatibility_status(_after_fail_payload,year,month) if _after_fail_payload else None
-                            if _after_fail_health and not _after_fail_health.get("publishable"):
-                                st.error(
-                                    "NAUJAS GRAFIKAS NESUGENERUOTAS. Solveris neįrodė neįmanomumo, bet ir negavo patvirtinto 0-HARD kandidato. "
-                                    "Esamas DB juodraštis yra NEGALIOJANTIS pagal dabartinį engine, todėl jis paliktas tik auditui — jo skelbti ar gerinti negalima. "
-                                    "Spausk GENERUOTI / PERKURTI dar kartą."
-                                    if lang=="LT" else
-                                    "NEW SCHEDULE NOT GENERATED. The solver did not prove infeasibility, but it also did not return a verified zero-HARD candidate. "
-                                    "The stored DB draft is INVALID under the current engine and is retained for audit only — it cannot be published or improved. "
-                                    "Run GENERATE / REBUILD again."
-                                )
-                                render_invalid_draft_guard(_after_fail_health,compact=True)
-                            else:
-                                st.warning(
-                                    "Solveris neįrodė, kad grafikas neįmanomas — jis tiesiog negavo patvirtinto kandidato net po automatinio retry. "
-                                    "Esamas CURRENT-engine validus juodraštis, jei yra, nepakeistas. Galima spausti GENERUOTI / PERKURTI dar kartą."
-                                    if lang=="LT" else
-                                    "The solver did not prove the schedule infeasible; it simply did not obtain a verified candidate even after automatic retry. "
-                                    "Any CURRENT-engine-valid draft is preserved. You can run GENERATE / REBUILD again."
-                                )
-                        else:
-                            st.error(_msg)
+                        # V2.5.174: no more empty operational outcome after a normal
+                        # optimizer timeout/no-candidate. Build a safe, explicitly
+                        # non-publishable repair draft instead. It may leave coverage,
+                        # exact-target or structural fairness items for SP/ŠR, but it
+                        # must keep safety + Resident-HARD at zero.
+                        _repair,_repair_err=_create_and_save_repair_draft(year,month,str(_msg)[:500])
+                        if _repair is not None:
+                            st.rerun()
+                        st.error(
+                            (("NEATLIKTA. Normalus solveris kandidato negrąžino, o saugaus taisytino juodraščio sukurti nepavyko: " + str(_repair_err))
+                             if lang=="LT" else
+                             ("NOT DONE. The normal solver returned no candidate and a safe repair draft could not be created: " + str(_repair_err)))
+                        )
         draftp=db.load_schedule(year,month,"draft")
         if draftp:
             _display_health=draft_compatibility_status(draftp,year,month)
-            if not _display_health.get("publishable"):
-                render_invalid_draft_guard(_display_health,compact=True)
-            else:
+            if _display_health.get("publishable"):
                 st.success(
-                    "Juodraštis sukurtas. Eikite į Grafikas → Grafiko tvirtinimas patvirtinti grafiką arba spauskite GENERUOTI IŠ NAUJO, jei norite kito varianto."
+                    "ATLIKTA. Juodraštis paruoštas. Eikite į Grafikas → Grafiko tvirtinimas patvirtinti arba generuokite iš naujo, jei norite kito varianto."
                     if lang=="LT" else
-                    "Draft created. Go to Schedule → Confirmation to approve it, or press GENERATE AGAIN if you want another version."
+                    "DONE. The draft is ready. Go to Schedule → Confirmation to approve it, or generate again if you want another version."
                 )
+                _generation_check_rows=[
+                    {( "Patikra" if lang=="LT" else "Check"):("Pageidavimai" if lang=="LT" else "Preferences"),("Rezultatas" if lang=="LT" else "Result"):f"{_submitted_count}/{len(DEFAULT_PEOPLE)}"},
+                    {( "Patikra" if lang=="LT" else "Check"):("Privalomos taisyklės" if lang=="LT" else "Mandatory rules"),("Rezultatas" if lang=="LT" else "Result"):("0 klaidų" if lang=="LT" else "0 errors")},
+                    {( "Patikra" if lang=="LT" else "Check"):("Juodraštis" if lang=="LT" else "Draft"),("Rezultatas" if lang=="LT" else "Result"):("Paruoštas tvirtinti" if lang=="LT" else "Ready for confirmation")},
+                ]
+                st.dataframe(pd.DataFrame(_generation_check_rows),use_container_width=True,hide_index=True,height=143)
+            elif _display_health.get("kind")=="repair_draft":
+                _rn=int(_display_health.get("repair_item_count",0) or 0)
+                st.warning(
+                    (f"ATLIKTA. Parengtas taisytinas juodraštis — liko {_rn} punktai. Eikite į Grafikas juos peržiūrėti / pataisyti arba generuokite iš naujo.")
+                    if lang=="LT" else
+                    (f"DONE. A repair draft was created — {_rn} items remain. Go to Schedule to review/repair it, or generate again.")
+                )
+                _generation_check_rows=[
+                    {( "Patikra" if lang=="LT" else "Check"):("Sauga + „Negaliu dirbti“" if lang=="LT" else "Safety + Cannot-work"),("Rezultatas" if lang=="LT" else "Result"):("0 pažeidimų" if lang=="LT" else "0 violations")},
+                    {( "Patikra" if lang=="LT" else "Check"):("Taisytini punktai" if lang=="LT" else "Repair items"),("Rezultatas" if lang=="LT" else "Result"):str(_rn)},
+                    {( "Patikra" if lang=="LT" else "Check"):("Tvirtinimas" if lang=="LT" else "Confirmation"),("Rezultatas" if lang=="LT" else "Result"):("Užblokuotas iki pataisymo" if lang=="LT" else "Blocked until repaired")},
+                ]
+                st.dataframe(pd.DataFrame(_generation_check_rows),use_container_width=True,hide_index=True,height=143)
 
         state_now=db.get_schedule_state(year,month)
 
@@ -7310,11 +7490,19 @@ with tabs[pos]:
         st.markdown("## GRAFIKO TVIRTINIMAS" if lang=="LT" else "## SCHEDULE CONTROL")
         if draft_payload and not payload and not _schedule_draft_publishable:
             render_invalid_draft_guard(_schedule_draft_health)
-            st.info(
-                "Publikavimo veiksmai lieka užblokuoti, kol GENERUOTI / PERKURTI sukuria naują 0-HARD juodraštį."
-                if lang=="LT" else
-                "Publication actions remain blocked until GENERATE / REBUILD creates a new zero-HARD draft."
-            )
+            if (_schedule_draft_health or {}).get("kind")=="repair_draft":
+                render_repair_draft_editor(year,month,draft_payload,_schedule_draft_health)
+                st.info(
+                    "Tvirtinimas užblokuotas, kol taisytinas juodraštis rankiniu būdu arba nauju generavimu pasiekia 0 HARD."
+                    if lang=="LT" else
+                    "Confirmation is blocked until the repair draft reaches zero HARD through manual repair or a new generation."
+                )
+            else:
+                st.info(
+                    "Publikavimo veiksmai lieka užblokuoti, kol GENERUOTI / PERKURTI sukuria naują 0-HARD juodraštį."
+                    if lang=="LT" else
+                    "Publication actions remain blocked until GENERATE / REBUILD creates a new zero-HARD draft."
+                )
         if is_researcher_account:
             st.info(
                 "Kontingencinis valdymas aktyvus Išplėstiniame režime. Veiksmai atliekami ir audituojami kaip ŠR; SP paskyra niekada neperimama."
@@ -7401,7 +7589,7 @@ with tabs[pos]:
             # V2.5.120 automatic FCFS cycles use one explicit PRELIMINARY publication action
             # below, so SP sees a clean two-publication workflow: PRELIMINARY → FINAL.
             if not weekend_fcfs_backup_mode(year,month) and not payload and draft_payload:
-                if not _schedule_draft_publishable:
+                if not _schedule_draft_publishable and (_schedule_draft_health or {}).get("kind")!="repair_draft":
                     st.error("SYSTEM užšaldymas užblokuotas — DB juodraštis nepraeina dabartinio engine 0-HARD patikros." if lang=="LT" else "SYSTEM freeze blocked — the DB draft fails current-engine zero-HARD validation.")
                 if st.button(
                     "UŽŠALDYTI SYSTEM IR ATIDARYTI ACTUAL KOREGAVIMĄ (BE EMAIL)" if lang=="LT" else "FREEZE SYSTEM AND OPEN ACTUAL CORRECTION (NO EMAIL)",
@@ -7455,7 +7643,7 @@ with tabs[pos]:
                         "draft"
                     )
                     if draft_payload and not payload:
-                        if not _schedule_draft_publishable:
+                        if not _schedule_draft_publishable and (_schedule_draft_health or {}).get("kind")!="repair_draft":
                             st.error("PRELIMINARUS PUBLIKAVIMAS UŽBLOKUOTAS — reikia naujo CURRENT-engine 0-HARD juodraščio." if lang=="LT" else "PRELIMINARY PUBLICATION BLOCKED — a new CURRENT-engine zero-HARD draft is required.")
                         if st.button("1/2 — Paskelbti preliminarų grafiką",type="primary",use_container_width=True,disabled=not _schedule_draft_publishable,key=f"publish_preliminary_build_{year}_{month}"):
                             try:
@@ -7482,7 +7670,7 @@ with tabs[pos]:
                             "15 d. 00:00 jau prasidėjo apsikeitimų laikas, todėl preliminarų grafiką reikia paskelbti nedelsiant. Kuo vėliau jis paskelbiamas, tuo mažiau iš 24 valandų lieka rezidentams.",
                             "draft"
                         )
-                        if not _schedule_draft_publishable:
+                        if not _schedule_draft_publishable and (_schedule_draft_health or {}).get("kind")!="repair_draft":
                             st.error("PRELIMINARUS PUBLIKAVIMAS UŽBLOKUOTAS — DB juodraštis nepraeina dabartinio engine 0-HARD patikros." if lang=="LT" else "PRELIMINARY PUBLICATION BLOCKED — the DB draft fails current-engine zero-HARD validation.")
                         if st.button("1/2 — Paskelbti preliminarų grafiką" if lang=="LT" else "PUBLISH PRELIMINARY AND OPEN RESIDENT SWAPS",type="primary",use_container_width=True,disabled=not _schedule_draft_publishable,key=f"publish_preliminary_{year}_{month}"):
                             try:
@@ -7517,7 +7705,7 @@ with tabs[pos]:
                             pass
                     if not payload and draft_payload:
                         st.warning("Preliminarus grafikas nebuvo paskelbtas iki apsikeitimų laikotarpio pabaigos. Rezidentų savitarna jau uždaryta, tačiau seniūnė gali pasirinkti norimą juodraštį galutinei peržiūrai. Tai apsikeitimų laikotarpio iš naujo neatidaro." if lang=="LT" else "PRELIMINARY was not published before the swap window ended. Resident self-service is already closed, but the senior may freeze the chosen SYSTEM as the ACTUAL review version; this does not reopen resident swaps.")
-                        if not _schedule_draft_publishable:
+                        if not _schedule_draft_publishable and (_schedule_draft_health or {}).get("kind")!="repair_draft":
                             st.error("Šio juodraščio užšaldyti seniūnės peržiūrai negalima — pirmiausia reikia naujo CURRENT-engine 0-HARD juodraščio." if lang=="LT" else "This draft cannot be frozen for senior review — first generate a new CURRENT-engine zero-HARD draft.")
                         if st.button("Paruošti pasirinktą juodraštį seniūnės peržiūrai" if lang=="LT" else "FREEZE CHOSEN SYSTEM FOR SENIOR REVIEW",use_container_width=True,disabled=not _schedule_draft_publishable,key=f"freeze_for_review_{year}_{month}"):
                             try:
@@ -7634,7 +7822,7 @@ with tabs[pos]:
             candidate_payload=payload or draft_payload
             _candidate_source_valid=bool(payload or (draft_payload and _schedule_draft_publishable))
             candidate_result=refresh_result_payload(candidate_payload,year,month,use_actual_backups=bool(payload)) if candidate_payload else None
-            if draft_payload and not payload and not _schedule_draft_publishable:
+            if draft_payload and not payload and not _schedule_draft_publishable and (_schedule_draft_health or {}).get("kind")!="repair_draft":
                 st.error("FINAL blokuotas: vienintelis kandidatas yra negaliojantis / pasenęs DB juodraštis. Pirmiausia GENERUOTI / PERKURTI naują 0-HARD versiją." if lang=="LT" else "FINAL blocked: the only candidate is an invalid/outdated DB draft. GENERATE / REBUILD a new zero-HARD version first.")
             if candidate_result is not None:
                 candidate_is_actual=bool(payload)
