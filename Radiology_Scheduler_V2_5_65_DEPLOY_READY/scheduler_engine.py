@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.165"
+ENGINE_API_VERSION = "2.5.169"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -14,6 +14,12 @@ import numpy as np
 from scipy.optimize import milp, LinearConstraint, Bounds
 from scipy.sparse import lil_matrix, csr_matrix
 
+
+# V2.5.169 POST-NIGHT RECOVERY CONSTITUTION.
+# Every 12 h NIGHT is 20:00-08:00. After it ends, the resident must receive at
+# least 24 continuous hours with no RAPA work. With RAPA's earliest normal start
+# at 08:00, this is enforced by keeping the entire next calendar day OFF.
+POST_NIGHT_MIN_REST_HOURS = 24.0
 
 # ---------------------------------------------------------------------------
 # V2.5.34 VERSIONED RULE PROFILE / RESCUE LAYER
@@ -211,7 +217,10 @@ def explicit_night_duty_owner(year: int, month: int, day: int) -> Optional[str]:
 
 
 def is_duty_slot(slot: "Slot") -> bool:
-    """Internal RAPA SPS RO duty. Every duty is same-day exclusive; only NIGHT requires next-day OFF."""
+    """Internal RAPA SPS RO duty. Every duty is same-day exclusive.
+
+    Post-night recovery is universal for every 12 h NIGHT shift, not only SPS RO.
+    """
     d=str(getattr(slot,"department","") or "")
     return d.startswith("SPS RO budėjimai") or d.startswith("SPS RO naktinis budėjimas")
 
@@ -995,11 +1004,11 @@ def _configured_dream_teams(people):
 # These are safety/fatigue guardrails, not user-selectable SOFT preferences.
 # The Rule Profile may tighten them, but cannot weaken them.
 FATIGUE_MAX_WORKDAYS_ROLLING7 = 6
-FATIGUE_ROLLING7_HARD_CEILING_HOURS = 48.0
+FATIGUE_ROLLING7_HARD_CEILING_HOURS = 60.0
 WEEKLY_LOAD_SOFT_TARGET_HOURS = 40.0
 
 # V2.5.55 voluntary-swap reality guardrails. Generation remains deliberately
-# stricter (48h/7d + recovery shaping), but a bilateral post-publication swap
+# stricter (~40h target + >48h warning + recovery shaping), while generation follows the active rule-profile hard cap (up to 60h/7d). A bilateral post-publication swap
 # may use the wider legal/operational envelope below. Acknowledgement never
 # overrides these blockers.
 SWAP_ABSOLUTE_MAX_HOURS_ROLLING7 = 60.0
@@ -2006,7 +2015,7 @@ def _v2564_choose_fixed_gaps(year, month, slots, gap_meta, seconds=5.0):
     return fixed
 
 
-def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds=60.0, structural_relaxation=False, weekend_spread_cap=4, friday_relaxation_radius=0, diagnostics=None):
+def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds=60.0, structural_relaxation=False, weekend_spread_cap=4, friday_relaxation_radius=0, diagnostics=None, feasibility_only=False):
     """Phase 1: choose dates/AM/PM/FULL without deciding weekday post labels.
 
     V2.5.107 keeps every `Negaliu dirbti` block mandatory. The normal pass uses
@@ -2085,17 +2094,18 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
                 mb.constraint({long[(pi,d)]:1.0},0.0,0.0)
             if normal_assignment_blocked(p,d,"NIGHT"):
                 mb.constraint({night[(pi,d)]:1.0},0.0,0.0)
-        # V2.5.165 VERY HARD DUTY SAFETY:
+        # V2.5.169 VERY HARD DUTY / POST-NIGHT SAFETY:
         # 1) ANY SPS RO duty is exclusive on its calendar day: no AM/PM/Onko/other
         #    FULL/NIGHT assignment may coexist. The aggregate rows above enforce it.
-        # 2) NEXT-DAY OFF applies ONLY after an internal RAPA NIGHT duty. A daytime
-        #    / weekend FULL duty does NOT automatically block the following day.
-        #    prior_last_day_duty is retained as a compatibility field but now means
-        #    prior-month LAST-DAY NIGHT duty only. No ACK/soft override.
+        # 2) EVERY 12 h NIGHT (20:00-08:00), regardless of department, requires
+        #    >=24 continuous hours of recovery after 08:00. Because RAPA's earliest
+        #    normal start is 08:00, the whole next calendar day must be OFF.
+        #    A daytime/weekend FULL duty does NOT create this rule.
+        #    prior_last_day_duty means prior-month LAST-DAY NIGHT. No ACK override.
         if bool(getattr(p,"prior_last_day_duty",False)):
             mb.constraint({work[(pi,1)]:1.0},0.0,0.0)
         for _duty_day in range(1,ndays):
-            mb.constraint({night[(pi,_duty_day)]:1.0,work[(pi,_duty_day+1)]:1.0},-np.inf,1.0)
+            mb.constraint({night[(pi,_duty_day)]:1.0,work[(pi,_duty_day+1)]:1.0},-np.inf,1.0)  # >=24 h post-NIGHT rest
         co={}
         for d in range(1,ndays+1):
             co[am[(pi,d)]]=2.0; co[pm[(pi,d)]]=2.0; co[full[(pi,d)]]=3.0; co[long[(pi,d)]]=4.0; co[night[(pi,d)]]=4.0
@@ -2299,6 +2309,10 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         mb.constraint(busy,-np.inf,float(len(candidates)-1))
 
     max_days7=min(int(rule_value("max_workdays_rolling7")),int(FATIGUE_MAX_WORKDAYS_ROLLING7))
+    # V2.5.167: generation obeys the ACTIVE rule-profile hard cap. 48h is a
+    # workload warning/shape threshold, not a hidden constitutional ceiling.
+    # The engine-wide safety maximum is 60h/rolling-7; an active profile may be
+    # stricter but never looser.
     max_hours7=min(float(rule_value("max_hours_rolling7")),float(FATIGUE_ROLLING7_HARD_CEILING_HOURS))
     for pi,p in enumerate(people):
         for start in range(1,ndays-6+1):
@@ -2810,7 +2824,21 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
         for (pi,d),v in long.items(): mb.c[v]+=(((pi+1)*19+d*17)%79)*1e-8
         for (pi,d),v in night.items(): mb.c[v]+=(((pi+1)*17+d*19)%73)*1e-8
     else:
-        mb.c=single_costs
+        if feasibility_only:
+            # V2.5.168 SAME-CORRIDOR FEASIBILITY-FIRST / RECOVERY. When the rich weighted
+            # objective times out without an incumbent, retry the IDENTICAL HARD +
+            # Friday/weekend fairness corridor with a near-zero deterministic
+            # objective. This asks only "does a valid schedule exist here?" and
+            # never widens fairness because of timeout. Exact SOFT max-count stages
+            # still run after an incumbent is found.
+            mb.c=[0.0 for _ in mb.c]
+            for (pi,d),v in am.items(): mb.c[v]+=(((pi+1)*31+d*7)%97)*1e-9
+            for (pi,d),v in pm.items(): mb.c[v]+=(((pi+1)*29+d*11)%89)*1e-9
+            for (pi,d),v in full.items(): mb.c[v]+=(((pi+1)*23+d*13)%83)*1e-9
+            for (pi,d),v in long.items(): mb.c[v]+=(((pi+1)*19+d*17)%79)*1e-9
+            for (pi,d),v in night.items(): mb.c[v]+=(((pi+1)*17+d*19)%73)*1e-9
+        else:
+            mb.c=single_costs
 
     # V2.5.107 ZERO-LOSS RESIDENT-HARD GATE.
     # `Negaliu dirbti` is already encoded above as a hard assignment prohibition.
@@ -2820,7 +2848,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
     _rh_loss_vars=[lv for vals in rh_by_person.values() for lv in vals]
     if _rh_loss_vars:
         mb.constraint({lv:1.0 for lv in _rh_loss_vars},0.0,0.0)
-    _fallback_mode="WEIGHTED_STRICT"
+    _fallback_mode=("STRICT_CORRIDOR_FEASIBILITY_RECOVERY" if feasibility_only and not structural_relaxation else "WEIGHTED_STRICT")
     _bounded=max(12.0,min(float(seconds),18.0)) if structural_relaxation else max(12.0,float(seconds))
     res=mb.solve(_bounded)
     if res.x is not None and structural_relaxation:
@@ -2847,7 +2875,7 @@ def _v2564_work_pattern(year, month, people, slots, targets, fixed_gaps, seconds
             _fallback_mode="PRIORITY_WEIGHTED_SOFT_CONFLICT_RESOLUTION"
     if res.x is None:
         if diagnostics is not None:
-            diagnostics.update({"status":int(getattr(res,"status",99)),"incumbent":False})
+            diagnostics.update({"status":int(getattr(res,"status",99)),"incumbent":False,"feasibility_only":bool(feasibility_only)})
         return None
 
     # V2.5.152 EXACT-WISH MAX-COUNT + SUBMISSION-RANK TIE-BREAK.
@@ -3832,23 +3860,40 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
     # Retry the identical strict model first. Only HiGHS status=2 (proven infeasible)
     # may advance to a wider structural corridor. Friday and weekend relaxations are
     # searched by the smallest joint radius so neither burden is casually sacrificed.
-    work_first=(18.0 if cohort_october_model(year,month) else min(35.0,max(30.0,time_limit*0.20)))
+    # V2.5.168 OCT+ FEASIBILITY-FIRST.
+    # The Oct+ model is much denser (4+4 Centro RO, Onko/TBL, Skopijos, SPS RO
+    # AM+PM, restored SPS UG PM and HARD duty water-fill). On constrained cloud
+    # workers the rich weighted objective could spend its first time slice proving
+    # cosmetic optimality before finding *any* incumbent. That produced the yellow
+    # "not proven impossible / no candidate" loop even though the same live inputs
+    # are feasible.
+    #
+    # Start Oct+ directly with the identical HARD + Friday/weekend fairness corridor
+    # but a near-zero deterministic objective. `_v2564_work_pattern` still runs the
+    # exact SOFT1/SOFT2 max-count + submission-rank lock stages after it obtains an
+    # incumbent, so resident wishes are still maximized inside the same structural
+    # fairness corridor. Older cohorts retain the weighted-first path.
+    _oct_feasibility_first=cohort_october_model(year,month)
+    work_first=(24.0 if _oct_feasibility_first else min(35.0,max(30.0,time_limit*0.20)))
     _diag={}
     pattern=_v2564_work_pattern(
         year,month,people,slots,targets,fixed_gaps,seconds=work_first,
-        structural_relaxation=False,weekend_spread_cap=1,friday_relaxation_radius=0,diagnostics=_diag
+        structural_relaxation=False,weekend_spread_cap=1,friday_relaxation_radius=0,diagnostics=_diag,
+        feasibility_only=bool(_oct_feasibility_first)
     )
     if pattern is None and int(_diag.get("status",99))!=2:
-        _retry=(32.0 if cohort_october_model(year,month) else min(60.0,max(40.0,time_limit*0.35)))
-        retry_trace.append({"phase":"strict_work_pattern_same_corridor_retry","seconds":round(_retry,1),"first_status":int(_diag.get("status",99))})
+        _retry=(42.0 if _oct_feasibility_first else min(60.0,max(40.0,time_limit*0.35)))
+        retry_trace.append({"phase":"strict_work_pattern_same_corridor_FEASIBILITY","seconds":round(_retry,1),"first_status":int(_diag.get("status",99)),"feasibility_first":bool(_oct_feasibility_first)})
         _diag2={}
         pattern=_v2564_work_pattern(
             year,month,people,slots,targets,fixed_gaps,seconds=_retry,
-            structural_relaxation=False,weekend_spread_cap=1,friday_relaxation_radius=0,diagnostics=_diag2
+            structural_relaxation=False,weekend_spread_cap=1,friday_relaxation_radius=0,diagnostics=_diag2,
+            feasibility_only=True
         )
         _diag=_diag2
         if pattern is None and int(_diag.get("status",99))!=2:
-            # Still only a timeout/no-incumbent: fail closed and let UI retry.
+            # Still only a timeout/no-incumbent: fail closed and let the isolated
+            # worker retry cleanly. No HARD/fairness rule is silently widened.
             return None
 
     if pattern is None:
@@ -3876,7 +3921,8 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
                 retry_trace.append({"phase":"same_structural_frontier_retry","friday_radius":_fr,"weekend_cap":_cap,"seconds":round(_retry,1),"first_status":int(_d.get("status",99))})
                 pattern=_v2564_work_pattern(
                     year,month,people,slots,targets,fixed_gaps,seconds=_retry,
-                    structural_relaxation=True,weekend_spread_cap=_cap,friday_relaxation_radius=_fr,diagnostics=_d2
+                    structural_relaxation=True,weekend_spread_cap=_cap,friday_relaxation_radius=_fr,diagnostics=_d2,
+                    feasibility_only=True
                 )
                 if pattern is not None:
                     break
@@ -4707,27 +4753,35 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
                 f"max hours/day {p.initials} {d}"
             )
 
-    # V2.5.165 VERY HARD internal-duty safety.
+    # V2.5.169 VERY HARD duty / post-night safety.
     # ANY SPS RO duty = no other assignment that same calendar day.
-    # ONLY a NIGHT duty forces the following calendar day completely OFF.
+    # EVERY 12 h NIGHT (20:00-08:00), regardless of department, forces the
+    # following calendar day completely OFF so the next possible 08:00 start is
+    # >=24 continuous hours after the NIGHT ends.
     for pi,p in enumerate(people):
         if bool(getattr(p,"prior_last_day_duty",False)):
             _day1={x[(pi,s.idx)]:1.0 for s in by_day[1] if not s.blocked}
             if _day1:
-                mb.constraint(_day1,0.0,0.0,f"V25165 post-NIGHT previous-month OFF {p.initials} day1")
+                mb.constraint(_day1,0.0,0.0,f"V25169 >=24h post-NIGHT previous-month rest {p.initials} day1")
         for d in range(1,ndays+1):
             _duty=[s for s in by_day[d] if is_duty_slot(s) and not s.blocked]
-            if not _duty:
-                continue
-            _other=[s for s in by_day[d] if not is_duty_slot(s) and not s.blocked]
-            for _ds in _duty:
-                _dv=x[(pi,_ds.idx)]
-                for _os in _other:
-                    mb.constraint({_dv:1.0,x[(pi,_os.idx)]:1.0},0.0,1.0,f"V25165 duty exclusive {p.initials} {d}")
-                if _ds.block=="NIGHT" and d<ndays:
-                    for _ns in by_day[d+1]:
-                        if not _ns.blocked:
-                            mb.constraint({_dv:1.0,x[(pi,_ns.idx)]:1.0},0.0,1.0,f"V25165 post-NIGHT OFF {p.initials} {d}->{d+1}")
+            if _duty:
+                _other=[s for s in by_day[d] if not is_duty_slot(s) and not s.blocked]
+                for _ds in _duty:
+                    _dv=x[(pi,_ds.idx)]
+                    for _os in _other:
+                        mb.constraint({_dv:1.0,x[(pi,_os.idx)]:1.0},0.0,1.0,f"V25165 duty exclusive {p.initials} {d}")
+
+            # Universal 24 h recovery after every NIGHT, including any future
+            # non-SPS NIGHT row. NIGHT ends at 08:00 on d+1; blocking all work
+            # on d+1 makes the earliest next 08:00 start exactly 24 h later.
+            if d < ndays:
+                _night=[s for s in by_day[d] if s.block=="NIGHT" and not s.blocked]
+                for _nsrc in _night:
+                    _nv=x[(pi,_nsrc.idx)]
+                    for _next in by_day[d+1]:
+                        if not _next.blocked:
+                            mb.constraint({_nv:1.0,x[(pi,_next.idx)]:1.0},0.0,1.0,f"V25169 >=24h post-NIGHT rest {p.initials} {d}->{d+1}")
 
     # Legacy NIGHT-specific constraints remain as redundant defense-in-depth when
     # the future recurring night model is activated.
@@ -4765,11 +4819,10 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
                 f"V2553 free-day rolling7 {p.initials} {start_d}"
             )
 
-    # V2.5.53: 60h in one week is no longer an acceptable generated pattern.
-    # Keep <=48 known scheduled hours in every rolling 7 days as an ABSOLUTE
-    # fatigue guardrail, while the staged optimizer below actively aims around
-    # 40h and water-fills weekly burden across residents. A Rule Profile value
-    # below 48 tightens the cap; a value above 48 cannot weaken it.
+    # V2.5.167: rolling-7 generation follows the ACTIVE rule-profile HARD cap
+    # (up to the engine safety maximum of 60h). ~40h remains the preferred load
+    # target and >48h remains an explicit fatigue/workload warning, but 48h is no
+    # longer a hidden feasibility ceiling that can make a valid month look impossible.
     effective_max_hours7=min(
         float(rule_value("max_hours_rolling7")),
         float(FATIGUE_ROLLING7_HARD_CEILING_HOURS),
@@ -4795,7 +4848,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
             rolling7_hours[(pi,start_d)]=hv
             co={x[(pi,s.idx)]:_known_hours(s) for s in win}; co[hv]=-1.0
             mb.constraint(co,0.0,0.0,f"V2553 rolling7 hours identity {p.initials} {start_d}")
-            mb.constraint({hv:1.0},0.0,effective_max_hours7,f"V2553 rolling7 48h cap {p.initials} {start_d}")
+            mb.constraint({hv:1.0},0.0,effective_max_hours7,f"V25167 rolling7 active hard cap {p.initials} {start_d}")
             ov=mb.var(
                 f"rolling7_over40[{p.initials},{start_d}]",cost=0.0,lb=0.0,
                 ub=max(0.0,effective_max_hours7-WEEKLY_LOAD_SOFT_TARGET_HOURS),integer=False
@@ -5834,7 +5887,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     # V2.5.53 STAGED SOLVE — CRITICAL EXPOSURE + WEEKLY RECOVERY + GOLDEN MIDDLE.
     # Strict vertical order:
     #   A) TRUE ABSOLUTE HARD + RESIDENT-HARD zero-loss feasibility
-    #      (including <=48h/rolling7, >=1 free day/7 and every `Negaliu dirbti`),
+    #      (including the active rolling-7 hard cap, >=1 free day/7 and every `Negaliu dirbti`),
     #   B) CRITICAL STRUCTURAL WATER-FILL: SPS UG raw + SPS RO/WEEKENDS
     #      volunteer-adjusted in the first no-history month; remaining burden 0-1,
     #   C) RESIDENT-HARD audit compatibility only (losses remain fixed at zero),
@@ -6618,7 +6671,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     stats["global"]["resident_hard_current_max_lock"] = int(resident_hard_current_max_lock)
     stats["global"]["resident_hard_cumulative_spread_lock"] = int(resident_hard_cumulative_spread_lock)
     stats["global"]["hard_classification"] = {
-        "ABSOLUTE_HARD":"Generation and ACTUAL: safety/rest, justified absence, physical impossibility, coverage/overlap/qualification, exact monthly workload and even Onko pairing (0/2/4/...). Generation also applies <=48 known hours and <=6 workdays in every rolling 7 days. Post-publication bilateral voluntary NORMAL swaps may exceed only the 48h generation ceiling with explicit acknowledgement and may ACK consecutive Onko; exact workload and Onko parity remain non-relaxable.",
+        "ABSOLUTE_HARD":"Generation and ACTUAL: safety/rest, justified absence, physical impossibility, coverage/overlap/qualification, exact monthly workload and even Onko pairing (0/2/4/...). Generation applies the active rule-profile rolling-7 hard cap (maximum 60h) and <=6 workdays in every rolling 7 days; >48h remains a workload warning/avoidance target. Post-publication bilateral voluntary NORMAL swaps keep the same absolute rolling-7 envelope; >48h is shown as an explicit ACK workload warning. Exact workload and Onko parity remain non-relaxable.",
         "WEEKLY_RECOVERY":"Around-40h planning target is water-filled across residents; repeated doubles are de-clustered, and after two consecutive doubles the next day is PM-only or off.",
         "CRITICAL_STRUCTURAL":"SPS RO + SPS UG + weekends + Friday use raw current-month structural water-fill during SYSTEM generation. Preferences cannot widen the baseline corridor; only later ACTUAL swaps/overrides may change real exposure.",
         "RESIDENT_HARD":"`Negaliu dirbti` is mandatory during SYSTEM generation: zero violations are required and it is never traded against structural fairness or SOFT satisfaction. If mandatory availability cannot coexist with safety/coverage/exact workload, no SYSTEM draft is returned.",
@@ -6681,7 +6734,7 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
             "WEEKLY LOAD/RECOVERY WATER-FILL ACTIVE; ORDINARY POSTS STRUCTURALLY WATER-FILLED."
             if baseline_weekend_volunteer_mode else
             "VALIDATION — PASSED — CRITICAL SPS/WEEKEND 0-1 PROTECTED; "
-            "WEEKLY LOAD/RECOVERY WATER-FILL ACTIVE (40h target, <=48h rolling-7 GENERATION ceiling; voluntary normal-swap >48h only with explicit ACK); "
+            "WEEKLY LOAD/RECOVERY WATER-FILL ACTIVE (~40h target, >48h warning/avoidance, active-profile rolling-7 GENERATION hard cap up to 60h); "
             "ORDINARY POSTS STRUCTURALLY WATER-FILLED TOWARD <=1 BEFORE SOFT; LONGITUDINAL POST-DEBT OPTIMIZATION APPLIED."
         )
 
@@ -7079,13 +7132,14 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             if len(ds) == 2:
                 d["doubles"] += 1
 
-        # V2.5.165 post-NIGHT OFF is ABSOLUTE for SYSTEM and ACTUAL: no swap ACK.
-        # Daytime/weekend FULL duties do NOT create an automatic next-day OFF block.
+        # V2.5.169 >=24 h post-NIGHT recovery is ABSOLUTE for SYSTEM and ACTUAL:
+        # no swap ACK. Every 12 h NIGHT is universal; daytime/weekend FULL duties
+        # do NOT create an automatic 24 h post-duty block.
         if bool(getattr(p,"prior_last_day_duty",False)) and any(s.day==1 for s in pslots):
-            errors.append(f"{p.initials}: VERY HARD post-NIGHT rest violated on day 1 after prior-month NIGHT duty")
+            errors.append(f"{p.initials}: VERY HARD >=24h post-NIGHT rest violated on day 1 after prior-month 12h NIGHT")
         for _duty_day in range(1,ndays):
-            if any(s.day==_duty_day and is_duty_slot(s) and s.block=="NIGHT" for s in pslots) and any(s.day==_duty_day+1 for s in pslots):
-                errors.append(f"{p.initials}: VERY HARD post-NIGHT rest violated; day {_duty_day+1} must be completely OFF after NIGHT duty on day {_duty_day}")
+            if any(s.day==_duty_day and s.block=="NIGHT" for s in pslots) and any(s.day==_duty_day+1 for s in pslots):
+                errors.append(f"{p.initials}: VERY HARD >=24h post-NIGHT rest violated; day {_duty_day+1} must be completely OFF after 12h NIGHT on day {_duty_day}")
 
         d["distinct_work_days"] = len(worked_days)
         d["weekday_days"] = len(weekday_days)
@@ -7158,7 +7212,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
                 errors.append(f"{p.initials}: {h:g}h on day {day} exceeds max hours/day")
 
         rolling7_values=[]
-        # Generation: strict 48h/7d fatigue/scheduling ceiling. Voluntary swap:
+        # Generation: active-profile rolling-7 hard cap (up to 60h); >48h is warning/avoidance. Voluntary swap:
         # preserve the user's requested real-world flexibility, but never exceed
         # the 60h absolute envelope or 6 working days in any rolling 7.
         effective_days7=(
@@ -8055,7 +8109,8 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             "sps_ro_duty_counts": dict(_duty_counts_validate),
             "sps_ro_duty_spread": int(_duty_spread_validate),
             "sps_ro_duty_waterfill_passed": bool(_duty_waterfill_passed),
-            "post_duty_rest_policy": "NEXT_DAY_OFF_ONLY_AFTER_INTERNAL_NIGHT_DUTY",
+            "post_duty_rest_policy": "EVERY_12H_NIGHT__MIN_24H_CONTINUOUS_REST__NEXT_CALENDAR_DAY_OFF",
+            "post_night_min_rest_hours": float(POST_NIGHT_MIN_REST_HOURS),
             "weekly_load_model":"V2555_GENERATION_48H_RECOVERY_STRICT__VOLUNTARY_SWAP_12H_11H_6D_60H_REALITY_GUARD",
             "validation_mode":str(validation_mode),
             "voluntary_swap_mode":bool(voluntary_swap_mode),
@@ -8188,7 +8243,7 @@ def validate_schedule(year: int, month: int, people: List[Person], slots: List[S
             "preference_equity_quality_target_pp": 15.0,
             "preference_equity_quality_gate_passed": preference_equity_quality_gate_passed,
             "preference_fairness_model": "V2553_VERTICAL_RANK_HORIZONTAL_WEEKLY_RECOVERY_WATERFILL_GUARDRAILS",
-            "preference_vertical_order": ["ABSOLUTE_HARD","ALL_SPS_RO_DUTIES_EXACT_WATERFILL","DUTY_SAME_DAY_EXCLUSIVE__NIGHT_ONLY_NEXT_DAY_OFF","RESIDENT_HARD_ZERO_LOSS","MANDATORY_COVERAGE_AND_EXACT_WORKLOAD","FRIDAY_STRUCTURAL_WATERFILL","VALID_EXACT_SOFT1_MAX_COUNT","VALID_EXACT_SOFT2_MAX_COUNT","DOUBLE_FAIRNESS_AFTER_WISH_LOCK","CRITICAL_WEEKEND_GUARDRAILS","SOFT3_WORKSTYLE","POST_FAIRNESS"],
+            "preference_vertical_order": ["ABSOLUTE_HARD","ALL_SPS_RO_DUTIES_EXACT_WATERFILL","DUTY_SAME_DAY_EXCLUSIVE__EVERY_NIGHT_MIN_24H_REST","RESIDENT_HARD_ZERO_LOSS","MANDATORY_COVERAGE_AND_EXACT_WORKLOAD","FRIDAY_STRUCTURAL_WATERFILL","VALID_EXACT_SOFT1_MAX_COUNT","VALID_EXACT_SOFT2_MAX_COUNT","DOUBLE_FAIRNESS_AFTER_WISH_LOCK","CRITICAL_WEEKEND_GUARDRAILS","SOFT3_WORKSTYLE","POST_FAIRNESS"],
             "post_fairness_model": "V2577_ALL_POST_PLUS_FRIDAY_STRUCTURAL_WATERFILL",
             "soft_waterfill_locks": {},
         },

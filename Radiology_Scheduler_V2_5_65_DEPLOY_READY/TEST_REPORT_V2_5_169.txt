@@ -1,0 +1,26 @@
+RAPA V2.5.169 — POST-NIGHT 24H REST
+
+RESULT: PASS
+
+Checks performed:
+- Python compile: app.py, scheduler_engine.py, db.py, solver_runner.py — PASS
+- V2.5.169 focused post-NIGHT regression — PASS
+- Historical V2.5.163/165/166/167/168 retained feature regressions — PASS
+- Production-like Oct-2026 isolated solver_runner test using current RAPA preference pattern — PASS
+  * engine API: 2.5.169
+  * result: OK
+  * HARD errors: 0
+  * assignments: 425
+  * isolated subprocess runtime: ~14.4 s in build environment
+
+V2.5.169 safety constitution:
+- Every 12 h NIGHT (20:00–08:00), regardless of department, requires >=24 continuous hours without RAPA work after 08:00.
+- Operational enforcement: entire next calendar day OFF; earliest next RAPA shift is 08:00 on the day after that.
+- Applies across month boundaries.
+- No swap ACK/manual repair may override it.
+- Daytime/weekend 08:00–20:00 SPS RO duty does NOT automatically create this 24 h post-duty rule.
+- Any SPS RO duty remains same-day exclusive.
+- SPS RO duty water-fill remains HARD.
+- GE 2026-10-30 NIGHT -> 2026-10-31 OFF remains HARD.
+
+No Supabase migration required.

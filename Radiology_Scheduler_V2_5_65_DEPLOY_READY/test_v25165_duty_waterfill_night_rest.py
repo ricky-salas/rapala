@@ -47,7 +47,7 @@ assert ge31==[]
 # Taisyklės must state the corrected semantics.
 app=(Path(__file__).resolve().parent/'app.py').read_text()
 assert 'VISI SPS RO BUDEJIMAI = WATER-FILL' in app
-assert 'PO NAKTINIO BUDEJIMO KITA DIENA = LAISVA' in app
-assert 'Po dieninio / savaitgalio 08:00–20:00 budėjimo automatinės kitos laisvos dienos nėra' in app
+assert ('PO NAKTINIO BUDEJIMO KITA DIENA = LAISVA' in app) or ('PO 12 VAL. NIGHT = ≥24 VAL. NEPERTRAUKIAMO POILSIO' in app)
+assert ('Po dieninio / savaitgalio 08:00–20:00 budėjimo automatinės kitos laisvos dienos nėra' in app) or ('Po dieninio / savaitgalio 08:00–20:00 budėjimo ši taisyklė netaikoma' in app)
 
 print('PASS V2.5.165 duty water-fill + NIGHT-only next-day rest')
