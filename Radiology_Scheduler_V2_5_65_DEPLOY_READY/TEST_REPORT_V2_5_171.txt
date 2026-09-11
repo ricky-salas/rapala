@@ -1,0 +1,10 @@
+RAPA V2.5.171 CAUSAL EXPLANATIONS — TEST REPORT
+
+PASS: app.py / scheduler_engine.py / db.py / solver_runner.py compile.
+PASS: retained RESEARCH isolation regression.
+PASS: retained SPS RO duty water-fill + NIGHT rest regression.
+PASS: retained generation UX / feasibility-first / 60h recovery regressions.
+PASS: universal >=24h post-NIGHT regression.
+PASS: clean V2.5.170 Sudarymas UI retained.
+PASS: causal explanation regression: GE 2026-10-23 free-Friday wish is explained from pre-generation Friday entitlement + proven maximum wish count, not from the resulting assignment.
+PASS: 12h outcome formatting renders AM + PM in chronological human-readable order.

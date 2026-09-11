@@ -5,10 +5,10 @@ BASE=Path(__file__).parent
 APP=(BASE/'app.py').read_text(encoding='utf-8')
 ENG=(BASE/'scheduler_engine.py').read_text(encoding='utf-8')
 
-assert se.ENGINE_API_VERSION in {'2.5.167','2.5.168','2.5.169'}
+assert se.ENGINE_API_VERSION in {'2.5.167','2.5.168','2.5.169','2.5.170','2.5.171'}
 assert se.FATIGUE_ROLLING7_HARD_CEILING_HOURS==60.0
-assert ('APP_VERSION = "2.5.167 GENERATION RECOVERY"' in APP) or ('APP_VERSION = "2.5.168 FEASIBILITY FIRST"' in APP) or ('APP_VERSION = "2.5.169 POST-NIGHT 24H REST"' in APP)
-assert ('EXPECTED_ENGINE_API_VERSION = "2.5.167"' in APP) or ('EXPECTED_ENGINE_API_VERSION = "2.5.168"' in APP) or ('EXPECTED_ENGINE_API_VERSION = "2.5.169"' in APP)
+assert ('APP_VERSION = "2.5.167 GENERATION RECOVERY"' in APP) or ('APP_VERSION = "2.5.168 FEASIBILITY FIRST"' in APP) or ('APP_VERSION = "2.5.169 POST-NIGHT 24H REST"' in APP) or ('APP_VERSION = "2.5.170 DRAFT CLEAN UI"' in APP) or ('APP_VERSION = "2.5.171 CAUSAL EXPLANATIONS"' in APP)
+assert ('EXPECTED_ENGINE_API_VERSION = "2.5.167"' in APP) or ('EXPECTED_ENGINE_API_VERSION = "2.5.168"' in APP) or ('EXPECTED_ENGINE_API_VERSION = "2.5.169"' in APP) or ('EXPECTED_ENGINE_API_VERSION = "2.5.170"' in APP) or ('EXPECTED_ENGINE_API_VERSION = "2.5.171"' in APP)
 assert 'feasibility_only=False' in ENG
 assert 'strict_work_pattern_same_corridor_FEASIBILITY' in ENG
 assert 'feasibility_only=True' in ENG

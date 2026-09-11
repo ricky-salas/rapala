@@ -1,7 +1,7 @@
 from pathlib import Path
 import scheduler_engine as se
 
-assert se.ENGINE_API_VERSION == "2.5.169"
+assert se.ENGINE_API_VERSION in {"2.5.169","2.5.170","2.5.171"}
 assert se.POST_NIGHT_MIN_REST_HOURS == 24.0
 
 # Universal NIGHT semantics: NIGHT 20:00-08:00 + any work next calendar day violates >=24h rest.
@@ -45,5 +45,5 @@ assert r.stats['global']['post_duty_rest_policy'].startswith('EVERY_12H_NIGHT')
 
 app=(Path(__file__).resolve().parent/'app.py').read_text(encoding='utf-8')
 assert 'PO 12 VAL. NIGHT = ≥24 VAL. NEPERTRAUKIAMO POILSIO' in app
-assert 'APP_VERSION = "2.5.169 POST-NIGHT 24H REST"' in app
+assert ('APP_VERSION = "2.5.169 POST-NIGHT 24H REST"' in app) or ('APP_VERSION = "2.5.170 DRAFT CLEAN UI"' in app) or ('APP_VERSION = "2.5.171 CAUSAL EXPLANATIONS"' in app)
 print('PASS V2.5.169 universal >=24h post-NIGHT rest')

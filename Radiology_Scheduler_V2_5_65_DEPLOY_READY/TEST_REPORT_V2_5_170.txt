@@ -1,0 +1,21 @@
+RAPA V2.5.170 — DRAFT CLEAN UI
+
+Static/runtime checks:
+- app.py / scheduler_engine.py / db.py / solver_runner.py compile — PASS
+- V2.5.170 clean draft UI regression — PASS
+- V2.5.169 post-NIGHT >=24h rest regression retained — PASS
+- V2.5.168 feasibility-first regression retained — PASS
+- V2.5.167 generation recovery regression retained — PASS
+- V2.5.163 RESEARCH isolation retained — PASS
+- V2.5.163 Scandinavian missed-wish / Friday fairness regression retained — PASS
+
+UI contract:
+- generated Sudarymas view has no request audit table, no draft schedule table, no theoretical-backup review table, no fairness metric block
+- one green draft-success box points to Grafikas → Grafiko tvirtinimas or GENERUOTI IŠ NAUJO
+- detailed request audit remains in Suvestinė, including honored/missed drill-down
+- successful generation reruns into Sudarymas so status/caption refresh correctly
+
+Version sync:
+- app: 2.5.170 DRAFT CLEAN UI
+- expected engine: 2.5.170
+- engine API: 2.5.170
