@@ -1,0 +1,230 @@
+{
+  "schema_version": 1,
+  "extension_id": "lsmu-radiology-r1-2026-10",
+  "name": "LSMU radiologija · I kursas · nuo 2026-10",
+  "people": [
+    {
+      "initials": "PV",
+      "name": "Pileckienė Aistė"
+    },
+    {
+      "initials": "SA",
+      "name": "Sveboda Arminas"
+    },
+    {
+      "initials": "GD",
+      "name": "Giedrimas Deivydas"
+    },
+    {
+      "initials": "GE",
+      "name": "Gertas Ernestas"
+    },
+    {
+      "initials": "KE",
+      "name": "Khatskeleva Elena"
+    },
+    {
+      "initials": "SE",
+      "name": "Stanišauskytė Eglė"
+    },
+    {
+      "initials": "MG",
+      "name": "Maleckaitė Gabrielė"
+    },
+    {
+      "initials": "MŽ",
+      "name": "Mažonavičius Ignas"
+    },
+    {
+      "initials": "GB",
+      "name": "Grumblys Justinas"
+    },
+    {
+      "initials": "SŠ",
+      "name": "Stašinskas Kipras"
+    },
+    {
+      "initials": "VL",
+      "name": "Volkovskaja Laura"
+    },
+    {
+      "initials": "MR",
+      "name": "Montvilaitė Reda"
+    },
+    {
+      "initials": "SP",
+      "name": "Steponavičiūtė Rosita"
+    },
+    {
+      "initials": "ŠR",
+      "name": "Šalaševičius Rapolas"
+    },
+    {
+      "initials": "DU",
+      "name": "Dulkė Sofija Ana"
+    },
+    {
+      "initials": "SN",
+      "name": "Stankevičiūtė Vytautė"
+    }
+  ],
+  "shift_templates": [
+    {
+      "department": "CENTRO RO",
+      "fairness_category": "CENTRO RO",
+      "block": "AM",
+      "count": 4,
+      "when": "weekdays",
+      "from": "2026-10",
+      "workload2": 2
+    },
+    {
+      "department": "CENTRO RO",
+      "fairness_category": "CENTRO RO",
+      "block": "PM",
+      "count": 4,
+      "when": "weekdays",
+      "from": "2026-10",
+      "workload2": 2
+    },
+    {
+      "department": "Onkologinė/TBL",
+      "fairness_category": "Onko/TBL",
+      "block": "FULL",
+      "count": 1,
+      "when": "weekdays",
+      "from": "2026-10",
+      "workload2": 3,
+      "hours": "08:00-17:00"
+    },
+    {
+      "department": "SPS RO d.d.",
+      "fairness_category": "SPS RO",
+      "block": "AM",
+      "count": 1,
+      "when": "weekdays",
+      "from": "2026-10",
+      "workload2": 2
+    },
+    {
+      "department": "SPS RO d.d.",
+      "fairness_category": "SPS RO",
+      "block": "PM",
+      "count": 1,
+      "when": "weekdays",
+      "from": "2026-10",
+      "workload2": 2
+    },
+    {
+      "department": "SPS UG 1035kab",
+      "fairness_category": "SPS UG",
+      "block": "AM",
+      "count": 1,
+      "when": "weekdays",
+      "from": "2026-10",
+      "workload2": 2
+    },
+    {
+      "department": "SPS UG 1035kab",
+      "fairness_category": "SPS UG",
+      "block": "PM",
+      "count": 1,
+      "when": "weekdays",
+      "from": "2026-10",
+      "workload2": 2
+    },
+    {
+      "department": "ADC 144kab",
+      "fairness_category": "ADC 144",
+      "block": "AM",
+      "count": 1,
+      "when": "weekdays",
+      "from": "2026-10",
+      "workload2": 2
+    },
+    {
+      "department": "ADC 144kab",
+      "fairness_category": "ADC 144",
+      "block": "PM",
+      "count": 1,
+      "when": "weekdays",
+      "from": "2026-10",
+      "workload2": 2
+    },
+    {
+      "department": "ADC 145kab",
+      "fairness_category": "ADC 145",
+      "block": "AM",
+      "count": 1,
+      "when": "weekdays",
+      "from": "2026-10",
+      "workload2": 2
+    },
+    {
+      "department": "ADC 145kab",
+      "fairness_category": "ADC 145",
+      "block": "PM",
+      "count": 1,
+      "when": "weekdays",
+      "from": "2026-10",
+      "workload2": 2
+    },
+    {
+      "department": "Vaikų UG 1019kab",
+      "fairness_category": "Vaikų UG",
+      "block": "AM",
+      "count": 1,
+      "when": "weekdays",
+      "from": "2026-10",
+      "workload2": 2
+    },
+    {
+      "department": "SPS RO budėjimai",
+      "fairness_category": "SPS RO",
+      "block": "FULL",
+      "count": 1,
+      "when": "weekends",
+      "from": "2026-10",
+      "workload2": 4
+    },
+    {
+      "department": "Centro UG 120kab",
+      "fairness_category": "Centro UG",
+      "block": "AM",
+      "count": 1,
+      "when": "weekdays",
+      "from": "2026-10",
+      "workload2": 2
+    },
+    {
+      "department": "Centro UG 120kab",
+      "fairness_category": "Centro UG",
+      "block": "PM",
+      "count": 1,
+      "when": "weekdays",
+      "from": "2026-10",
+      "workload2": 2
+    },
+    {
+      "department": "Skopijos",
+      "fairness_category": "Skopijos",
+      "block": "AM",
+      "count": 1,
+      "when": "weekdays",
+      "weekdays": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "from": "2026-10",
+      "workload2": 2
+    }
+  ],
+  "fairness": {
+    "weekend_spread_target": 1,
+    "post_spread_target": 1,
+    "max_workdays_rolling7": 6
+  },
+  "rules_notes": "Patvirtinta 2026-09-10 pagal naujausią SP/admin žinutę: Onko/TBL yra viena 08:00–17:00 FULL pamaina (1,5 pamainos vieneto), ne AM+PM; vienas Onko rezidentas dirba 2 Onko dienas per mėnesį. 2026-10 Onko skiriamas tik rugsėjį Onko nedirbusiems rezidentams pagal ankstesnio mėnesio ACTUAL grafiką. SPS UG 1035 PM grąžintas. Centro UG AM+PM vizualiai rodomi greta. Schedule lentelėje naudojama vienoda balta raidžių spalva. Naktinių SPS RO budėjimų eilutė rodoma kaip vizualus scaffold; operacinės naktinių pamainų datos/valandos negeneruojamos, kol jos nepatvirtintos. Esamas HARD budėjimų modelis nekeistas. BLOCK vartotojui nerodomas."
+}

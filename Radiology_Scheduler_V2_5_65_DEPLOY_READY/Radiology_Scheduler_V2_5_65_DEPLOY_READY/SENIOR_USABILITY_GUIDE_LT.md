@@ -202,10 +202,13 @@ Grafikų sudarymo metodų palyginimas yra perkeltas į **Tyrimo** langą ir nėr
 
 - **Visi SPS RO budėjimai water-fill'inami kartu.** Savaitgalio / šventinis FULL ir NIGHT yra vieno budėjimų skaitiklio dalys. Niekas negauna antro budėjimo, kol kitas HARD-tinkamas rezidentas dar neturi pirmo. Tikslus mėnesio floor/ceil koridorius yra HARD ir neplečiamas fallback režime.
 - **Budėjimo diena yra išskirtinė.** Bet koks SPS RO budėjimas tą pačią kalendorinę dieną negali sutapti su jokia kita RAPA pamaina.
-- **Kita diena laisva tik po NIGHT.** Po SPS RO naktinio budėjimo visa sekanti kalendorinė diena yra ABSOLUTE OFF, taip pat per mėnesio ribą. Dieninis / savaitgalio 08:00–20:00 budėjimas šios automatinės taisyklės nesukuria.
+- **Po kiekvienos 12 val. NIGHT pamainos – ≥24 val. nepertraukiamo poilsio.** NIGHT 20:00–08:00 baigiasi kitos dienos 08:00, todėl visa ta kalendorinė diena yra ABSOLUTE OFF; ankstyviausia kita RAPA pamaina gali prasidėti tik dar kitos dienos 08:00. Taisyklė taikoma visoms NIGHT pamainoms ir per mėnesio ribą. Dieninis / savaitgalio 08:00–20:00 budėjimas šios automatinės 24 val. poilsio taisyklės nesukuria.
 - **2026-10-30 GE NIGHT → 2026-10-31 GE OFF** lieka HARD.
 
 
 ## V2.5.167 — GENERATION RECOVERY
 
 Generuojant rolling-7 HARD limitas imamas iš aktyvaus Rule Profile (iki 60 val./7 d.). ~40 val. yra planavimo tikslas, o >48 val. rodomas kaip didelio krūvio perspėjimas / avoidance, ne paslėptas HARD ceiling. Weighted solveriui timeoutinus be kandidato, RAPA bando tą patį Friday/weekend fairness koridorių su feasibility recovery ir fairness dėl timeouto neplatina.
+
+## V2.5.174 — jei normalus solveris neužsibaigia
+Sudarymas vis tiek gali rodyti **ATLIKTA**, jei parengtas saugus **taisytinas juodraštis**. Tai nereiškia, kad grafikas jau tvirtinamas. Eikite į **Grafikas**: ten matysis pats darbinis grafikas, trumpas sąrašas „Problema / Kodėl / Ką reikia padaryti“ ir rankinis vienos vietos taisymas. Sistema neleis išsaugoti rankinio pakeitimo, jei jis sukurtų „Negaliu dirbti“, persidengimą, >12 h per dieną, rolling-7 ribos, poilsio, 24 h po NIGHT, duty-day ar kitą saugos pažeidimą. Kai likusios problemos sutvarkomos ir validatorius pasiekia 0 HARD, juodraštis automatiškai tampa normaliu tvirtinamu juodraščiu.
