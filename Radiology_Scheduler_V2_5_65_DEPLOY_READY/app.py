@@ -68,9 +68,9 @@ from opto_research import (
 from notification_core import smtp_config as _smtp_config_core, smtp_missing as _smtp_missing_core, smtp_probe as _smtp_probe_core, send_email as _send_email_core
 
 ENGINE_API_VERSION = str(getattr(_scheduler_engine,"ENGINE_API_VERSION","LEGACY_OR_UNKNOWN"))
-APP_VERSION = "2.5.174 SAFE REPAIR DRAFT"
-EXPECTED_ENGINE_API_VERSION = "2.5.174"
-COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.174"}
+APP_VERSION = "2.5.175 ZERO-HARD GENERATION RECOVERY"
+EXPECTED_ENGINE_API_VERSION = "2.5.175"
+COMPATIBLE_ENGINE_API_VERSIONS = {"2.5.175"}
 
 # V2.5.139: import-safe reward credit compatibility. Older deployed engines used
 # by the same app already contain the scheduling API but predate the credit helpers.
@@ -3210,10 +3210,13 @@ def draft_compatibility_status(payload, y, m):
         stored_repair=bool(stored_g.get("repair_draft"))
         current_people=load_people(y,m)
         expected_targets=calculate_targets(y,m,current_people)
-        current_snapshot=serialize_people_request_snapshot(current_people)
+        current_snapshot=_scheduler_engine.canonical_generation_snapshot(y,m,current_people)
+        stored_snapshot=_scheduler_engine.canonical_generation_snapshot(
+            y,m,people_from_request_snapshot(stored.request_snapshot)
+        ) if stored.request_snapshot else None
         snapshot_matches=(
             expected_targets==stored.targets
-            and (not stored.request_snapshot or current_snapshot==stored.request_snapshot)
+            and (stored_snapshot is None or current_snapshot==stored_snapshot)
         )
         info["outdated_inputs"]=not snapshot_matches
         refreshed=revalidate_loaded_result(
@@ -7039,7 +7042,7 @@ def solve_schedule_isolated(year, month, people, time_limit=90.0):
     # First run is deliberately bounded well above the real September regression
     # (~25-35 s on the direct regression; slower clean workers can take longer).
     # The second run is a clean process with additional room for cloud variance.
-    watchdogs=(100.0,130.0)
+    watchdogs=(180.0,240.0)
     for attempt_no,watchdog in enumerate(watchdogs,1):
         with tempfile.TemporaryDirectory(prefix="shift_happens_solver_") as td:
             ip=Path(td)/"input.json"
@@ -7270,6 +7273,18 @@ def render_repair_draft_editor(y,m,draft_payload,draft_health):
                 st.rerun()
 
 
+def render_generation_draft_preview(health, y, m):
+    """Read-only preview of the already validated draft; never publishes it."""
+    result = (health or {}).get("result")
+    if not (health or {}).get("publishable") or result is None:
+        return
+    st.markdown("### Sugeneruotas grafikas — juodraštis" if lang=="LT" else "### Generated schedule — draft")
+    st.caption("Tai juodraščio peržiūra, ne paskelbimas. Tvirtinimas: Grafikas → Grafiko tvirtinimas."
+               if lang=="LT" else "Draft preview only, not publication. Confirm under Schedule → Confirmation.")
+    st.markdown("".join(badge(p["initials"],False) for p in DEFAULT_PEOPLE),unsafe_allow_html=True)
+    st.dataframe(style_schedule(schedule_grid(y,m,result)),use_container_width=True,height=720)
+
+
 # --- Generation ---
 if senior_mode:
     with tabs[pos]:
@@ -7288,11 +7303,7 @@ if senior_mode:
         status=("ATLIKTA" if lang=="LT" else "DONE") if _generation_done else ("NEATLIKTA" if lang=="LT" else "NOT DONE")
         st.metric(tr("state"),status)
         if _state_draft_payload and not (_state_draft_health or {}).get("publishable") and not _repair_ready:
-            st.warning(
-                "Po ankstesnio generavimo pasikeitė įvestys arba taisyklės. Reikia sugeneruoti naują juodraštį."
-                if lang=="LT" else
-                "Inputs or rules changed after the previous generation. Generate a new draft."
-            )
+            render_invalid_draft_guard(_state_draft_health, compact=True)
         lifecycle_generation=db.get_schedule_lifecycle(year,month)
         generation_locked=bool(state.get("has_published")) or str(lifecycle_generation.get("state") or "") in ("working","swap_open","swap_closed","final")
         # V2.5.128: SP ir ŠR generavimo metu gauna tą patį privatų refinemento
@@ -7405,6 +7416,7 @@ if senior_mode:
                     {( "Patikra" if lang=="LT" else "Check"):("Juodraštis" if lang=="LT" else "Draft"),("Rezultatas" if lang=="LT" else "Result"):("Paruoštas tvirtinti" if lang=="LT" else "Ready for confirmation")},
                 ]
                 st.dataframe(pd.DataFrame(_generation_check_rows),use_container_width=True,hide_index=True,height=143)
+                render_generation_draft_preview(_display_health,year,month)
             elif _display_health.get("kind")=="repair_draft":
                 _rn=int(_display_health.get("repair_item_count",0) or 0)
                 st.warning(

@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-ENGINE_API_VERSION = "2.5.174"
+ENGINE_API_VERSION = "2.5.175"
 
 from dataclasses import dataclass, field, asdict, replace
 from datetime import date, timedelta
@@ -3856,11 +3856,10 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         fixed_gaps=_v2564_choose_fixed_gaps(year,month,slots,gap_meta,seconds=gap_retry)
     if fixed_gaps is None: return None
 
-    # V2.5.152 STRICT-THEN-PROVEN FAIRNESS SEARCH.
-    # A timeout/no-incumbent is NEVER permission to widen Friday/weekend fairness.
-    # Retry the identical strict model first. Only HiGHS status=2 (proven infeasible)
-    # may advance to a wider structural corridor. Friday and weekend relaxations are
-    # searched by the smallest joint radius so neither burden is casually sacrificed.
+    # Strict fairness first, then bounded recovery with unchanged HARD rules.
+    # Retry the identical strict model before widening Friday/weekend corridors.
+    # Status=2 means proven infeasible; other no-incumbent outcomes remain unknown.
+    # Search the smallest joint radius first and record why recovery was needed.
     # V2.5.168 OCT+ FEASIBILITY-FIRST.
     # The Oct+ model is much denser (4+4 Centro RO, Onko/TBL, Skopijos, SPS RO
     # AM+PM, restored SPS UG PM and HARD duty water-fill). On constrained cloud
@@ -3892,15 +3891,15 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
             feasibility_only=True
         )
         _diag=_diag2
-        if pattern is None and int(_diag.get("status",99))!=2:
-            # Still only a timeout/no-incumbent: fail closed and let the isolated
-            # worker retry cleanly. No HARD/fairness rule is silently widened.
-            return None
+        # No incumbent after the strict retry may use the bounded fairness
+        # recovery below. Timeout is recorded as UNKNOWN, never infeasible.
 
+    _strict_status = int(_diag.get("status",99))
     if pattern is None:
-        # The strict structural model is now PROVEN infeasible. Search the tightest
-        # joint weekend/Friday corridor. For each candidate, timeout -> same-corridor
-        # retry; only proven infeasibility allows the next wider candidate.
+        # Strict search exhausted; preserve all HARD constraints while trying
+        # slightly wider fairness corridors. Infeasibility is not implied.
+        # Search joint weekend/Friday corridors in increasing radius. Each gets
+        # a same-corridor retry before advancing; retain the first valid candidate.
         _candidates=[]
         for _fr in range(0,4):
             for _cap in range(1,5):
@@ -3927,11 +3926,12 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
                 )
                 if pattern is not None:
                     break
-                if int(_d2.get("status",99))!=2:
-                    return None
+                # A timeout at this fairness corridor does not forbid trying
+                # the next bounded corridor with the same HARD constraints.
         if pattern is None:
             return None
 
+    pattern["strict_search_status"] = _strict_status
     post_first=(15.0 if cohort_october_model(year,month) else min(45.0,max(15.0,time_limit*0.35)))
     assigned,critical_cap,noncritical_cap,post_log,post_obj=_v25105_assign_posts_resilient(year,month,people,slots,pattern,fixed_gaps,seconds=post_first)
     if assigned is None:
@@ -4054,7 +4054,7 @@ def _v2564_two_phase_fair_schedule(year, month, people, slots, targets, request_
         "critical_01_status":"FOUND_TWO_PHASE_0_1" if int(critical_cap)<=1 else "STRUCTURAL_RELAXATION_USED_TWO_PHASE",
         "critical_spread_quality_gate_passed":bool(max(critical_spreads.values())<=1),
         "structural_fairness_relaxed_for_zero_hard":bool(pattern.get("structural_relaxation_mode",False)),
-        "structural_fairness_relaxation_reason":("STRICT_WORK_PATTERN_WAS_PROVEN_INFEASIBLE_BEFORE_ANY_STRUCTURAL_WIDENING; TIGHTEST_PROVEN_FRONTIER_USED" if pattern.get("structural_relaxation_mode",False) else "NONE"),
+        "structural_fairness_relaxation_reason":(("STRICT_INFEASIBLE" if pattern.get("strict_search_status")==2 else "STRICT_SEARCH_BUDGET_EXHAUSTED_NOT_PROVEN_INFEASIBLE") if pattern.get("structural_relaxation_mode",False) else "NONE"),
         "noncritical_post_spreads":noncritical,
         "noncritical_worst_spread":worst_noncritical,
         "noncritical_guardrail_ceiling":int(noncritical_cap),
@@ -4434,7 +4434,7 @@ def build_repair_draft(year: int, month: int, people: List[Person]) -> SolveResu
         request_snapshot=serialize_people_request_snapshot(people),
     )
 
-def solve_schedule(year: int, month: int, people: List[Person], time_limit: float = 45.0, slots_override: Optional[List[Slot]] = None, targets_override: Optional[Dict[str,int]] = None) -> SolveResult:
+def prepare_generation_people(year, month, people):
     # V2.5.96 MONTHLY BASELINE FAIRNESS CONSTITUTION.
     # Every month starts from a clean fairness baseline. Historical ACTUAL/SYSTEM
     # exposure is retained for audit only and MUST NOT create compensatory catch-up
@@ -4461,6 +4461,18 @@ def solve_schedule(year: int, month: int, people: List[Person], time_limit: floa
     # impossible/redundant because of HARD as inactive (included_in_score=False).
     # They therefore remain auditable without depressing the active-wish denominator.
     people, preference_normalization = normalize_preferences_against_engine(people,year,month)
+    return people, preference_normalization
+
+
+def canonical_generation_snapshot(year, month, people):
+    prepared, _ = prepare_generation_people(year, month, people)
+    snapshot = serialize_people_request_snapshot(prepared)
+    snapshot["people"].sort(key=lambda row: row["initials"])
+    return snapshot
+
+
+def solve_schedule(year: int, month: int, people: List[Person], time_limit: float = 45.0, slots_override: Optional[List[Slot]] = None, targets_override: Optional[Dict[str,int]] = None) -> SolveResult:
+    people, preference_normalization = prepare_generation_people(year, month, people)
     request_snapshot=serialize_people_request_snapshot(people)
     fast_slots=list(slots_override) if slots_override is not None else make_slots(year,month)
     fast_targets=dict(targets_override) if targets_override is not None else calculate_targets(year,month,people)
